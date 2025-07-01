@@ -18,6 +18,10 @@ function Login() {
 
       if (data.success) {
         localStorage.setItem('userEmail', email);
+        localStorage.setItem('role', data.role || '');
+        localStorage.setItem('managerName', data.managerName || '');
+        localStorage.setItem('region', data.region || '');
+        localStorage.setItem('region2', data.region2 || '');
         navigate('/dashboard');
       } else {
         alert('Invalid email or password');
@@ -31,15 +35,14 @@ function Login() {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", backgroundColor: "#d71920", flexDirection: "column" }}>
       <img
-  src="/G&P-.png"
-  alt="Fiesta Logo"
-  style={{
-    width: "550px", // adjust this as needed, e.g. try 300px for an even larger size
-    maxWidth: "90%",
-    marginBottom: "20px"
-  }}
-/>
-
+        src="/G&P-.png"
+        alt="Fiesta Logo"
+        style={{
+          width: "550px",
+          maxWidth: "90%",
+          marginBottom: "20px"
+        }}
+      />
 
       <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", width: "300px" }}>
         <h2 style={{ textAlign: "center", color: "#d71920", marginBottom: "20px" }}>Agent Login</h2>
@@ -70,3 +73,4 @@ function Login() {
 }
 
 export default Login;
+
