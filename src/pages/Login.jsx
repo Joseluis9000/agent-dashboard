@@ -4,9 +4,17 @@ import { useNavigate } from 'react-router-dom';
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async () => {
+    if (!email.includes('@')) {
+      alert('Please enter a valid email');
+      return;
+    }
+
+    setLoading(true);
+
     try {
       const response = await fetch('https://us-central1-optimal-comfort-464220-t1.cloudfunctions.net/loginHandler', {
         method: 'POST',
@@ -22,13 +30,21 @@ function Login() {
         localStorage.setItem('managerName', data.managerName || '');
         localStorage.setItem('region', data.region || '');
         localStorage.setItem('region2', data.region2 || '');
-        navigate('/dashboard');
+
+        if (data.role === "regional") {
+          navigate('/regional-dashboard');
+        } else {
+          navigate('/dashboard');
+        }
+
       } else {
-        alert('Invalid email or password');
+        alert(data.error || 'Invalid email or password');
       }
     } catch (error) {
       console.error('Login error:', error);
       alert('There was an error logging in');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -63,9 +79,10 @@ function Login() {
         />
         <button
           onClick={handleLogin}
-          style={{ width: "100%", padding: "10px", backgroundColor: "#d71920", color: "#fff", border: "none", borderRadius: "4px", cursor: "pointer" }}
+          disabled={loading}
+          style={{ width: "100%", padding: "10px", backgroundColor: loading ? "#999" : "#d71920", color: "#fff", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer" }}
         >
-          Login
+          {loading ? "Logging in..." : "Login"}
         </button>
       </div>
     </div>
