@@ -224,17 +224,17 @@ function Dashboard() {
 
             <h4>A.R. Fee Carry Overs</h4>
             <div style={{ display: 'flex', gap: '5px' }}>
-              {carryoverBox("3 Weeks Old", commissionData.arcarryoverolderthan3weeks)}
-              {carryoverBox("2 Weeks Old", commissionData.arcarryovertwoweeksprior)}
-              {carryoverBox("1 Week Old", commissionData.arcarryoveroneweekprior)}
+              {carryoverBox("4+ Weeks Old", commissionData.arcarryoverolderthan3weeks)}
+              {carryoverBox("3 Weeks Old", commissionData.arcarryovertwoweeksprior)}
+              {carryoverBox("2 Week Old", commissionData.arcarryoveroneweekprior)}
               {carryoverBox("Current Week", commissionData.arcurrentweek)}
             </div>
 
             <h4>Scanning Violations Carry Overs</h4>
             <div style={{ display: 'flex', gap: '5px' }}>
-              {carryoverBox("3 Weeks Old", commissionData.svcarryoverolderthan3weeks)}
-              {carryoverBox("2 Weeks Old", commissionData.svcarryovertwoweeksprior)}
-              {carryoverBox("1 Week Old", commissionData.svcarryoveroneweekprior)}
+              {carryoverBox("4+ Weeks Old", commissionData.svcarryoverolderthan3weeks)}
+              {carryoverBox("3 Weeks Old", commissionData.svcarryovertwoweeksprior)}
+              {carryoverBox("2 Week Old", commissionData.svcarryoveroneweekprior)}
               {carryoverBox("Current Week", commissionData.svcurrentweek)}
             </div>
 
