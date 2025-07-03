@@ -31,10 +31,6 @@ exports.loginHandler = async (req, res) => {
       });
 
       const loginRows = loginResponse.data.values;
-      if (!loginRows || loginRows.length === 0) {
-        return res.json({ success: false, message: 'Login sheet is empty.' });
-      }
-
       const headers = loginRows[0].map(h => h.toLowerCase().trim());
       const emailIndex = headers.indexOf('emails');
       const passwordIndex = headers.indexOf('password');
@@ -75,10 +71,6 @@ exports.loginHandler = async (req, res) => {
       });
 
       const loginRows = loginResponse.data.values;
-      if (!loginRows || loginRows.length === 0) {
-        return res.json({ success: false, message: 'Login sheet is empty.' });
-      }
-
       const headers = loginRows[0].map(h => h.toLowerCase().trim());
       const emailIndex = headers.indexOf('emails');
       const titleIndex = headers.indexOf('title');
@@ -99,7 +91,7 @@ exports.loginHandler = async (req, res) => {
       const userRegion2 = userRow[region2Index];
       const userName = userRow[nameIndex];
 
-      // ✅ Only AGENT role currently implemented
+      // ✅ AGENT: Fetch personal sheets
       if (userTitle === 'agent') {
         const fetchSheetData = async (range) => {
           const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -113,9 +105,7 @@ exports.loginHandler = async (req, res) => {
             r[emailIdx]?.toLowerCase().trim() === email.toLowerCase().trim()
           ).map(r => {
             const obj = {};
-            headers.forEach((h, i) => {
-              obj[h] = r[i] || "";
-            });
+            headers.forEach((h, i) => obj[h] = r[i] || "");
             return obj;
           });
         };
@@ -136,7 +126,39 @@ exports.loginHandler = async (req, res) => {
         });
       }
 
-      // ✅ Placeholder for regional/admin
+      // ✅ REGIONAL: Fetch regional sheets
+      if (userTitle === 'regional') {
+        const fetchRegionalData = async (range) => {
+          const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+          const rows = response.data.values || [];
+          if (rows.length === 0) return [];
+
+          const headers = rows[0].map(h => h.toLowerCase().trim());
+          const regionIdx = headers.indexOf('region');
+
+          return rows.slice(1).filter(r =>
+            (r[regionIdx] === userRegion || r[regionIdx] === userRegion2)
+          ).map(r => {
+            const obj = {};
+            headers.forEach((h, i) => obj[h] = r[i] || "");
+            return obj;
+          });
+        };
+
+        const liveManagerDash = await fetchRegionalData('LIVE MANAGER DASH!A1:Z1000');
+        const kpiArchive = await fetchRegionalData('KPI ARCHIVE 2025!A1:Z1000');
+
+        return res.json({
+          success: true,
+          role: "regional",
+          name: userName || '',
+          region: userRegion || '',
+          region2: userRegion2 || '',
+          liveManagerDash,
+          kpiArchive
+        });
+      }
+
       return res.json({
         success: false,
         message: `Role '${userTitle}' GET logic not implemented yet.`
