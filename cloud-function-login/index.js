@@ -22,6 +22,7 @@ exports.loginHandler = async (req, res) => {
     if (req.method === 'POST') {
       const { email, password } = req.body;
       if (!email || !password) {
+        res.set('Cache-Control', 'no-store');
         return res.status(400).json({ success: false, message: "Missing email or password." });
       }
 
@@ -31,6 +32,11 @@ exports.loginHandler = async (req, res) => {
       });
 
       const loginRows = loginResponse.data.values;
+      if (!loginRows || loginRows.length === 0) {
+        res.set('Cache-Control', 'no-store');
+        return res.json({ success: false, message: 'Login sheet is empty.' });
+      }
+
       const headers = loginRows[0].map(h => h.toLowerCase().trim());
       const emailIndex = headers.indexOf('emails');
       const passwordIndex = headers.indexOf('password');
@@ -45,9 +51,11 @@ exports.loginHandler = async (req, res) => {
       );
 
       if (!userRow) {
+        res.set('Cache-Control', 'no-store');
         return res.json({ success: false, message: 'Invalid email or password.' });
       }
 
+      res.set('Cache-Control', 'no-store');
       return res.json({
         success: true,
         name: userRow[nameIndex] || '',
@@ -62,6 +70,7 @@ exports.loginHandler = async (req, res) => {
     if (req.method === 'GET') {
       const email = req.query.email;
       if (!email) {
+        res.set('Cache-Control', 'no-store');
         return res.status(400).json({ success: false, message: "Missing email parameter." });
       }
 
@@ -71,6 +80,11 @@ exports.loginHandler = async (req, res) => {
       });
 
       const loginRows = loginResponse.data.values;
+      if (!loginRows || loginRows.length === 0) {
+        res.set('Cache-Control', 'no-store');
+        return res.json({ success: false, message: 'Login sheet is empty.' });
+      }
+
       const headers = loginRows[0].map(h => h.toLowerCase().trim());
       const emailIndex = headers.indexOf('emails');
       const titleIndex = headers.indexOf('title');
@@ -83,6 +97,7 @@ exports.loginHandler = async (req, res) => {
       );
 
       if (!userRow) {
+        res.set('Cache-Control', 'no-store');
         return res.json({ success: false, message: 'User not found.' });
       }
 
@@ -91,7 +106,7 @@ exports.loginHandler = async (req, res) => {
       const userRegion2 = userRow[region2Index];
       const userName = userRow[nameIndex];
 
-      // ✅ AGENT: Fetch personal sheets
+      // ✅ AGENT role
       if (userTitle === 'agent') {
         const fetchSheetData = async (range) => {
           const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -105,7 +120,9 @@ exports.loginHandler = async (req, res) => {
             r[emailIdx]?.toLowerCase().trim() === email.toLowerCase().trim()
           ).map(r => {
             const obj = {};
-            headers.forEach((h, i) => obj[h] = r[i] || "");
+            headers.forEach((h, i) => {
+              obj[h] = r[i] || "";
+            });
             return obj;
           });
         };
@@ -115,6 +132,7 @@ exports.loginHandler = async (req, res) => {
         const violationsData = await fetchSheetData('SCANNING VIOLATIONS AND ARS!A1:Z1000');
         const svArHistoryData = await fetchSheetData('SV AND AR HISTORY!A1:Z1000');
 
+        res.set('Cache-Control', 'no-store');
         return res.json({
           success: true,
           role: "agent",
@@ -126,7 +144,7 @@ exports.loginHandler = async (req, res) => {
         });
       }
 
-      // ✅ REGIONAL: Fetch regional sheets
+      // ✅ REGIONAL role
       if (userTitle === 'regional') {
         const fetchRegionalData = async (range) => {
           const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -137,7 +155,7 @@ exports.loginHandler = async (req, res) => {
           const regionIdx = headers.indexOf('region');
 
           return rows.slice(1).filter(r =>
-            (r[regionIdx] === userRegion || r[regionIdx] === userRegion2)
+            r[regionIdx] === userRegion || r[regionIdx] === userRegion2
           ).map(r => {
             const obj = {};
             headers.forEach((h, i) => obj[h] = r[i] || "");
@@ -148,6 +166,7 @@ exports.loginHandler = async (req, res) => {
         const liveManagerDash = await fetchRegionalData('LIVE MANAGER DASH!A1:Z1000');
         const kpiArchive = await fetchRegionalData('KPI ARCHIVE 2025!A1:Z1000');
 
+        res.set('Cache-Control', 'no-store');
         return res.json({
           success: true,
           role: "regional",
@@ -159,16 +178,19 @@ exports.loginHandler = async (req, res) => {
         });
       }
 
-      return res.json({
-        success: false,
-        message: `Role '${userTitle}' GET logic not implemented yet.`
-      });
+      // ✅ Add admin GET logic here if needed
+
+      res.set('Cache-Control', 'no-store');
+      return res.json({ success: false, message: `Role '${userTitle}' GET logic not implemented.` });
     }
 
+    res.set('Cache-Control', 'no-store');
     res.status(405).send({ success: false, message: 'Method not allowed' });
 
   } catch (error) {
     console.error('Error:', error);
+    res.set('Cache-Control', 'no-store');
     return res.status(500).json({ success: false, message: 'Server error.', error: error.message });
   }
 };
+

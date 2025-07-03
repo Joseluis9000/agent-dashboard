@@ -3,8 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 function RegionalDashboard() {
   const [liveManagerDash, setLiveManagerDash] = useState([]);
-  const [kpiArchives, setKpiArchives] = useState({});
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [kpiArchive, setKpiArchive] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
@@ -22,12 +21,12 @@ function RegionalDashboard() {
         const data = await res.json();
         console.log("RegionalDashboard fetched data:", data);
 
-        if (data.success) {
+        if (data.success && data.role === "regional") {
           setLiveManagerDash(data.liveManagerDash || []);
-          setKpiArchives(data.kpiArchives || {});
+          setKpiArchive(data.kpiArchive || []);
         } else {
-          console.error("Fetch returned error:", data.error);
-          alert(data.error || "Failed to fetch data.");
+          console.error("Fetch returned error:", data.message || data.error);
+          alert(data.message || data.error || "Failed to fetch data.");
         }
       } catch (error) {
         console.error("Fetch error:", error);
@@ -37,11 +36,8 @@ function RegionalDashboard() {
     fetchData();
   }, [navigate]);
 
-  const kpiYears = Object.keys(kpiArchives).sort();
-  const currentKPIData = kpiArchives[selectedYear] || [];
-
-  const filteredKPIData = currentKPIData.filter((row, i) => {
-    if (i === 0) return true; // keep header
+  const filteredKPIData = kpiArchive.filter((row, i) => {
+    if (i === 0) return true; // header
     if (selectedMonth && !String(row[0]).toLowerCase().includes(selectedMonth.toLowerCase())) return false;
     return true;
   });
@@ -81,15 +77,15 @@ function RegionalDashboard() {
             <table>
               <thead>
                 <tr>
-                  {liveManagerDash[0].map((header, idx) => (
+                  {Object.keys(liveManagerDash[0]).map((header, idx) => (
                     <th key={idx} style={{ textAlign: 'left', padding: '5px 10px' }}>{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {liveManagerDash.slice(1).map((row, idx) => (
+                {liveManagerDash.map((row, idx) => (
                   <tr key={idx}>
-                    {row.map((cell, i) => (
+                    {Object.values(row).map((cell, i) => (
                       <td key={i} style={{ padding: '5px 10px' }}>{cell}</td>
                     ))}
                   </tr>
@@ -103,14 +99,7 @@ function RegionalDashboard() {
 
         <h2 style={{ marginTop: '30px' }}>KPI ARCHIVE</h2>
         <div style={{ marginBottom: '10px' }}>
-          <label>Year: </label>
-          <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
-            {kpiYears.map((year, idx) => (
-              <option key={idx} value={year}>{year}</option>
-            ))}
-          </select>
-
-          <label style={{ marginLeft: '20px' }}>Month: </label>
+          <label>Filter by Month: </label>
           <input
             type="text"
             placeholder="e.g. June"
@@ -163,3 +152,4 @@ const sidebarButtonStyle = {
 };
 
 export default RegionalDashboard;
+
