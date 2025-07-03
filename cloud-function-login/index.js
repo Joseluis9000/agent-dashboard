@@ -14,15 +14,39 @@ exports.loginHandler = async (req, res) => {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   const sheets = google.sheets({ version: 'v4', auth });
-
   const spreadsheetId = '1ih2vCXRj5jm6UjgTozwKlWt8dexLArdrxWvd7A82KYU';
 
   try {
-    // ✅ POST: Login authentication
+    // ✅ POST: Login authentication or RegionalTardyWarning
     if (req.method === 'POST') {
-      const { email, password } = req.body;
+      const { email, password, tardyWarningData } = req.body;
+
+      if (tardyWarningData) {
+        // ✅ Handle RegionalTardyWarning submission
+        const sheet = await sheets.spreadsheets.values.append({
+          spreadsheetId,
+          range: 'AgentTardyWarning!A1:I1',
+          valueInputOption: 'USER_ENTERED',
+          resource: {
+            values: [[
+              tardyWarningData.date,
+              tardyWarningData.agentName,
+              tardyWarningData.agentEmail,
+              tardyWarningData.region,
+              tardyWarningData.pointType,
+              tardyWarningData.subType,
+              tardyWarningData.points,
+              tardyWarningData.notes,
+              tardyWarningData.issuedBy
+            ]]
+          }
+        });
+
+        return res.json({ success: true, message: 'Agent tardy/warning recorded successfully.' });
+      }
+
+      // ✅ Login authentication
       if (!email || !password) {
-        res.set('Cache-Control', 'no-store');
         return res.status(400).json({ success: false, message: "Missing email or password." });
       }
 
@@ -31,9 +55,8 @@ exports.loginHandler = async (req, res) => {
         range: 'WEBSITE LOGINS!A1:Z1000',
       });
 
-      const loginRows = loginResponse.data.values;
-      if (!loginRows || loginRows.length === 0) {
-        res.set('Cache-Control', 'no-store');
+      const loginRows = loginResponse.data.values || [];
+      if (loginRows.length === 0) {
         return res.json({ success: false, message: 'Login sheet is empty.' });
       }
 
@@ -51,11 +74,9 @@ exports.loginHandler = async (req, res) => {
       );
 
       if (!userRow) {
-        res.set('Cache-Control', 'no-store');
         return res.json({ success: false, message: 'Invalid email or password.' });
       }
 
-      res.set('Cache-Control', 'no-store');
       return res.json({
         success: true,
         name: userRow[nameIndex] || '',
@@ -70,7 +91,6 @@ exports.loginHandler = async (req, res) => {
     if (req.method === 'GET') {
       const email = req.query.email;
       if (!email) {
-        res.set('Cache-Control', 'no-store');
         return res.status(400).json({ success: false, message: "Missing email parameter." });
       }
 
@@ -79,9 +99,8 @@ exports.loginHandler = async (req, res) => {
         range: 'WEBSITE LOGINS!A1:Z1000',
       });
 
-      const loginRows = loginResponse.data.values;
-      if (!loginRows || loginRows.length === 0) {
-        res.set('Cache-Control', 'no-store');
+      const loginRows = loginResponse.data.values || [];
+      if (loginRows.length === 0) {
         return res.json({ success: false, message: 'Login sheet is empty.' });
       }
 
@@ -97,7 +116,6 @@ exports.loginHandler = async (req, res) => {
       );
 
       if (!userRow) {
-        res.set('Cache-Control', 'no-store');
         return res.json({ success: false, message: 'User not found.' });
       }
 
@@ -106,7 +124,7 @@ exports.loginHandler = async (req, res) => {
       const userRegion2 = userRow[region2Index];
       const userName = userRow[nameIndex];
 
-      // ✅ AGENT role
+      // ✅ AGENT role data fetching
       if (userTitle === 'agent') {
         const fetchSheetData = async (range) => {
           const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -120,9 +138,7 @@ exports.loginHandler = async (req, res) => {
             r[emailIdx]?.toLowerCase().trim() === email.toLowerCase().trim()
           ).map(r => {
             const obj = {};
-            headers.forEach((h, i) => {
-              obj[h] = r[i] || "";
-            });
+            headers.forEach((h, i) => obj[h] = r[i] || "");
             return obj;
           });
         };
@@ -132,7 +148,6 @@ exports.loginHandler = async (req, res) => {
         const violationsData = await fetchSheetData('SCANNING VIOLATIONS AND ARS!A1:Z1000');
         const svArHistoryData = await fetchSheetData('SV AND AR HISTORY!A1:Z1000');
 
-        res.set('Cache-Control', 'no-store');
         return res.json({
           success: true,
           role: "agent",
@@ -144,7 +159,7 @@ exports.loginHandler = async (req, res) => {
         });
       }
 
-      // ✅ REGIONAL role
+      // ✅ REGIONAL role data fetching
       if (userTitle === 'regional') {
         const fetchRegionalData = async (range) => {
           const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
@@ -164,9 +179,8 @@ exports.loginHandler = async (req, res) => {
         };
 
         const liveManagerDash = await fetchRegionalData('LIVE MANAGER DASH!A1:Z1000');
-        const kpiArchive = await fetchRegionalData('KPI ARCHIVE 2025!A1:Z1000');
+        const kpiArchive = await fetchRegionalData('KPI ARCHIVE!A1:Z1000');
 
-        res.set('Cache-Control', 'no-store');
         return res.json({
           success: true,
           role: "regional",
@@ -178,18 +192,15 @@ exports.loginHandler = async (req, res) => {
         });
       }
 
-      // ✅ Add admin GET logic here if needed
-
-      res.set('Cache-Control', 'no-store');
+      // ✅ Placeholder for admin or other roles
       return res.json({ success: false, message: `Role '${userTitle}' GET logic not implemented.` });
     }
 
-    res.set('Cache-Control', 'no-store');
+    // ✅ Method not allowed
     res.status(405).send({ success: false, message: 'Method not allowed' });
 
   } catch (error) {
     console.error('Error:', error);
-    res.set('Cache-Control', 'no-store');
     return res.status(500).json({ success: false, message: 'Server error.', error: error.message });
   }
 };

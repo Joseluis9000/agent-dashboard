@@ -4,7 +4,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 function RegionalDashboard() {
   const [liveManagerDash, setLiveManagerDash] = useState([]);
   const [kpiArchive, setKpiArchive] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -36,12 +35,6 @@ function RegionalDashboard() {
     fetchData();
   }, [navigate]);
 
-  const filteredKPIData = kpiArchive.filter((row, i) => {
-    if (i === 0) return true; // header
-    if (selectedMonth && !String(row[0]).toLowerCase().includes(selectedMonth.toLowerCase())) return false;
-    return true;
-  });
-
   const isActive = (path) => location.pathname === path;
 
   return (
@@ -60,6 +53,12 @@ function RegionalDashboard() {
           style={{ ...sidebarButtonStyle, backgroundColor: isActive('/regional-svar') ? '#fff' : '#d32f2f', color: isActive('/regional-svar') ? '#d32f2f' : '#fff' }}
         >
           Agent Commissions
+        </button>
+        <button
+          onClick={() => navigate('/regional-tardy-warning')}
+          style={{ ...sidebarButtonStyle, backgroundColor: isActive('/regional-tardy-warning') ? '#fff' : '#d32f2f', color: isActive('/regional-tardy-warning') ? '#d32f2f' : '#fff' }}
+        >
+          Agent Tardy/Warnings
         </button>
         <button
           onClick={() => { localStorage.removeItem('userEmail'); navigate('/'); }}
@@ -98,28 +97,18 @@ function RegionalDashboard() {
         </div>
 
         <h2 style={{ marginTop: '30px' }}>KPI ARCHIVE</h2>
-        <div style={{ marginBottom: '10px' }}>
-          <label>Filter by Month: </label>
-          <input
-            type="text"
-            placeholder="e.g. June"
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-          />
-        </div>
-
         <div style={{ overflowX: 'auto', background: '#fff', padding: '10px', borderRadius: '5px', border: '1px solid #ddd' }}>
-          {filteredKPIData.length > 0 ? (
+          {kpiArchive.length > 0 ? (
             <table>
               <thead>
                 <tr>
-                  {filteredKPIData[0].map((header, idx) => (
+                  {kpiArchive[0].map((header, idx) => (
                     <th key={idx} style={{ textAlign: 'left', padding: '5px 10px' }}>{header}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredKPIData.slice(1).map((row, idx) => (
+                {kpiArchive.slice(1).map((row, idx) => (
                   <tr key={idx}>
                     {row.map((cell, i) => (
                       <td key={i} style={{ padding: '5px 10px' }}>{cell}</td>
@@ -129,7 +118,7 @@ function RegionalDashboard() {
               </tbody>
             </table>
           ) : (
-            <div>No KPI data found for this filter.</div>
+            <div>No KPI ARCHIVE data found.</div>
           )}
         </div>
       </div>
@@ -152,4 +141,5 @@ const sidebarButtonStyle = {
 };
 
 export default RegionalDashboard;
+
 
