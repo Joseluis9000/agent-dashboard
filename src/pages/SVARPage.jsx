@@ -1,15 +1,28 @@
+// src/pages/SVARPage.jsx
+
 import React, { useEffect, useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import Sidebar from '../components/AgentDashboard/Sidebar';
+import SvarDataTable from '../components/AgentDashboard/SvarDataTable';
+import styles from '../components/AgentDashboard/SVARPage.module.css';
 
 function SVARPage() {
-  const [svArData, setSvArData] = useState([]);
-  const [svHistory, setSvHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
+  // Data states
+  const [currentViolations, setCurrentViolations] = useState([]);
+  const [violationsHistory, setViolationsHistory] = useState([]);
+  
+  // ✅ NEW: State to track the selected week's index instead of a show/hide boolean
+  const [selectedHistoryIndex, setSelectedHistoryIndex] = useState(null);
+
+  // UI states
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
       const userEmail = localStorage.getItem('userEmail');
       if (!userEmail) {
         navigate('/');
@@ -18,143 +31,104 @@ function SVARPage() {
 
       try {
         const res = await fetch(`https://script.google.com/macros/s/AKfycbySrsUGSUFtKg9vwQujCQgOfNl-QTOp2D5MM-ADXY4OmSCGQ3lEk8BC_STDrByL95K4/exec?email=${userEmail}`);
+        if (!res.ok) {
+            throw new Error(`Network response was not ok (status: ${res.status})`);
+        }
         const data = await res.json();
 
         if (data.success) {
-          setSvArData(data.violationsData ? [data.violationsData] : []);
-          setSvHistory(data.svArHistoryData || []);
+          const historyData = data.svArHistoryData || [];
+          setCurrentViolations(data.violationsData ? [data.violationsData] : []);
+          setViolationsHistory(historyData);
+
+          // ✅ NEW: Default the selector to the first (most recent) historical record
+          if (historyData.length > 0) {
+            setSelectedHistoryIndex(0);
+          }
         } else {
-          alert("Failed to fetch data.");
+          throw new Error(data.message || "Failed to fetch SV/AR data.");
         }
-      } catch (error) {
-        console.error("Fetch error:", error);
-        alert("Network error.");
+      } catch (err) {
+        console.error("Fetch error:", err);
+        setError(err.message);
+      } finally {
+        setIsLoading(false);
       }
     };
 
     fetchData();
   }, [navigate]);
 
-  const cleanDate = (dateStr) => dateStr ? dateStr.split('T')[0] : "N/A";
-
-  const totalARFees = svHistory.reduce((acc, cur) => acc + (Number(cur.arfeeamount) || 0), 0).toFixed(2);
-  const totalSVFees = svHistory.reduce((acc, cur) => acc + (Number(cur.svfeeamount) || 0), 0).toFixed(2);
-
   const handleLogout = () => {
     localStorage.removeItem('userEmail');
     navigate('/');
   };
 
-  const navLinkStyle = (path) => ({
-    display: "block",
-    backgroundColor: location.pathname === path ? "#fff" : "#d32f2f",
-    color: location.pathname === path ? "#d32f2f" : "#fff",
-    textDecoration: "none",
-    padding: "10px",
-    borderRadius: "5px",
-    marginBottom: "10px",
-    textAlign: "center",
-    fontWeight: "bold",
-    border: "2px solid #fff"
-  });
+  const totalARFees = violationsHistory.reduce((acc, cur) => acc + (Number(cur.arfeeamount) || 0), 0);
+  const totalSVFees = violationsHistory.reduce((acc, cur) => acc + (Number(cur.svfeeamount) || 0), 0);
+  const formatCurrency = (value) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  // ✅ NEW: Get the single historical item that is currently selected
+  const selectedHistoryItem = (selectedHistoryIndex !== null && violationsHistory[selectedHistoryIndex])
+    ? [violationsHistory[selectedHistoryIndex]] // The SvarDataTable expects an array
+    : [];
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", fontFamily: "Arial, sans-serif" }}>
-      {/* Sidebar */}
-      <div style={{ backgroundColor: "#d32f2f", color: "#fff", width: "220px", padding: "20px" }}>
-        <img src="/fiesta-logo.png" alt="Fiesta Logo" style={{ width: "100%", marginBottom: "20px" }} />
-        <nav>
-          <Link to="/dashboard" style={navLinkStyle('/dashboard')}>Dashboard</Link>
-          <Link to="/sv-ar" style={navLinkStyle('/sv-ar')}>Current SV & AR</Link>
-        </nav>
-        <button
-          onClick={handleLogout}
-          style={{
-            display: "block",
-            width: "100%",
-            backgroundColor: "yellow",
-            color: "#d32f2f",
-            border: "none",
-            padding: "10px",
-            borderRadius: "5px",
-            cursor: "pointer",
-            marginTop: "10px",
-            fontWeight: "bold",
-            textAlign: "center"
-          }}
-        >
-          Logout
-        </button>
-      </div>
-
-      {/* Main Content */}
-      <div style={{ flex: 1, backgroundColor: "#f9f9f9", padding: "20px" }}>
-        {/* YTD Fee Totals */}
-        <div style={{ backgroundColor: "#d32f2f", color: "#fff", padding: "10px", borderRadius: "5px 5px 0 0", fontWeight: "bold" }}>
-          YTD Fee Totals
-        </div>
-        <div style={{ marginBottom: "20px", backgroundColor: "#fff", padding: "10px", borderRadius: "0 0 5px 5px" }}>
-          <p><strong>AR Fees:</strong> ${totalARFees}</p>
-          <p><strong>SV Fees:</strong> ${totalSVFees}</p>
-        </div>
-
-        {/* Current SV & AR */}
-        <div style={{ backgroundColor: "#d32f2f", color: "#fff", padding: "10px", borderRadius: "5px 5px 0 0", fontWeight: "bold" }}>
-          Current Scanning Violations & ARs
-        </div>
-        {svArData.length > 0 ? (
-          svArData.map((item, index) => (
-            <div key={index} style={{ backgroundColor: "#fff", padding: "10px", borderRadius: "0 0 5px 5px", marginBottom: "10px" }}>
-              {Object.entries(item).map(([key, value]) => (
-                <div key={key}>
-                  <strong>{key}:</strong> {key.includes('_date') ? cleanDate(value) : value || "N/A"}
-                </div>
-              ))}
-            </div>
-          ))
-        ) : (
-          <div style={{ backgroundColor: "#fff", padding: "10px" }}>No current SV & AR data found.</div>
-        )}
-
-        {/* History Toggle */}
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          style={{
-            backgroundColor: "#d32f2f",
-            color: "#fff",
-            border: "none",
-            padding: "10px",
-            borderRadius: "5px",
-            cursor: "pointer",
-            marginTop: "10px",
-            fontWeight: "bold"
-          }}
-        >
-          {showHistory ? "Hide SV & AR History" : "Show SV & AR History"}
-        </button>
-
-        {/* SV & AR History */}
-        {showHistory && (
-          <div style={{ marginTop: "20px" }}>
-            <div style={{ backgroundColor: "#d32f2f", color: "#fff", padding: "10px", borderRadius: "5px 5px 0 0", fontWeight: "bold" }}>
-              SV & AR History
-            </div>
-            {svHistory.length > 0 ? (
-              svHistory.map((item, index) => (
-                <div key={index} style={{ backgroundColor: "#fff", padding: "10px", borderRadius: "0 0 5px 5px", marginBottom: "10px" }}>
-                  {Object.entries(item).map(([key, value]) => (
-                    <div key={key}>
-                      <strong>{key}:</strong> {key.includes('_date') ? cleanDate(value) : value || "N/A"}
-                    </div>
-                  ))}
-                </div>
-              ))
-            ) : (
-              <div style={{ backgroundColor: "#fff", padding: "10px" }}>No SV & AR history found.</div>
-            )}
+    <div className={styles.dashboardContainer}>
+      <Sidebar onLogout={handleLogout} />
+      <main className={styles.mainContent}>
+        <h1>Scanning Violations & AR</h1>
+        {isLoading ? (
+          <div className={styles.centered}>Loading...</div>
+        ) : error ? (
+          <div className={`${styles.centered} ${styles.error}`}>
+            <h3>Could not load data</h3>
+            <p>{error}</p>
           </div>
+        ) : (
+          <>
+            <div className={styles.card}>
+              <h3>YTD Fee Totals</h3>
+              <div className={styles.totalsContainer}>
+                <p><strong>AR Fees:</strong> {formatCurrency(totalARFees)}</p>
+                <p><strong>SV Fees:</strong> {formatCurrency(totalSVFees)}</p>
+              </div>
+            </div>
+
+            <SvarDataTable
+              title="Current Scanning Violations & ARs"
+              data={currentViolations}
+            />
+
+            {/* ✅ NEW: Dropdown selector for history */}
+            <div className={styles.card}>
+              <h3>SV & AR History</h3>
+              {violationsHistory.length > 0 ? (
+                <select
+                  className={styles.weekSelector}
+                  value={selectedHistoryIndex}
+                  onChange={e => setSelectedHistoryIndex(Number(e.target.value))}
+                >
+                  {violationsHistory.map((item, index) => (
+                    <option key={index} value={index}>
+                      {/* Using sv_week_start_date as the display text, fallback to ar_week_start_date */}
+                      Week of { (item.sv_week_start_date || item.ar_week_start_date || '').split('T')[0] }
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p>No history available.</p>
+              )}
+            </div>
+            
+            {/* ✅ UPDATED: The data table now shows only the selected historical item */}
+            <SvarDataTable
+              title="Historical Details"
+              data={selectedHistoryItem}
+            />
+          </>
         )}
-      </div>
+      </main>
     </div>
   );
 }
