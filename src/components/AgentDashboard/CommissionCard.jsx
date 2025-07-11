@@ -19,26 +19,22 @@ const getStatusColor = (value, threshold = 0) => {
 // Helper to format the bonus tier as a percentage
 const formatBonusTier = (tier) => {
   const num = Number(tier);
-  // If it's a valid number and not zero, format as a percent
   if (!isNaN(num) && num > 0) {
-    // ✅ UPDATED: Allows for up to 2 decimal places in the percentage
     return num.toLocaleString('en-US', { style: 'percent', maximumFractionDigits: 2 });
   }
-  // Otherwise, return the original text (e.g., "Not Met")
   return tier;
 };
-
 
 const CommissionCard = ({ title, data, isHistory = false }) => {
   const [showQualifications, setShowQualifications] = useState(false);
 
-  // If no data is provided, don't render anything
   if (!data) return null;
 
   const weekRange = `${data.week_start_date?.split('T')[0] || ''} - ${data.week_end_date?.split('T')[0] || ''}`;
 
   return (
     <div className={styles.card}>
+      {/* ... (rest of the component JSX is the same) ... */}
       <h3>{title}</h3>
       <p className={styles.weekRange}>{weekRange}</p>
 
@@ -99,12 +95,36 @@ const CommissionCard = ({ title, data, isHistory = false }) => {
             Commission Qualifications
           </button>
           {showQualifications && (
+            // ✅ UPDATED QUALIFICATIONS BOX CONTENT
             <div className={styles.qualificationsBox}>
-              <p><b>10% Commission:</b> Agents qualify if they sell a minimum of 10 NBS.</p>
-              <p><b>12.5% Commission:</b> Agents qualify if they sell a minimum of 17 NBS and achieve at least $3,500 in combined NBS & Endorsement revenue before deductions.</p>
-              <p><b>Minimum COMMISSION Qualification:</b> Must have $500+ after deductions to qualify for commission.</p>
-              <p><b>Revenue Calculation:</b> NB/RW + Endo - deductions.</p>
-              <p><b>AR Fees and Scanning Violations:</b> Deducted from final commission.</p>
+              <h4>1. Commission Qualification</h4>
+              <p>✅ <strong>10% Commission:</strong> Agents qualify for a 10% commission if they sell a minimum of <strong>10 NBs</strong>.</p>
+              <p>✅ <strong>12.5% Commission:</strong> Agents qualify for a 12.5% commission if they sell a minimum of <strong>17 NBs</strong> and achieve at least <strong>$3,500</strong> in combined NB & Endorsement revenue before deductions.</p>
+              <p>✅ <strong>Minimum Commission Qualification:</strong> The amount remaining after NB/RW, Endorsement, and Gross Pay deductions must be <strong>$500 or more</strong> to qualify for commission for that week.</p>
+
+              <h4>2. Revenue Calculation</h4>
+              <p>✅ <strong>Calculate Total Revenue:</strong> NB/RW Revenue and Endorsement Revenue are added together.</p>
+              <p>✅ <strong>Apply Deductions:</strong></p>
+              <ul className={styles.deductionList}>
+                <li>NB Sales Deduction: Deduct <strong>$20 per NB</strong> sold from the total revenue.</li>
+                <li>Endorsement Fee: Deduct <strong>20%</strong> of total Endorsement Revenue.</li>
+                <li>Referrals/Pay Out: Deducted from total revenue.</li>
+                <li>Gross Pay Deduction: Deduct the agent’s gross pay.</li>
+              </ul>
+              <p>✅ <strong>After Deduction Revenue:</strong> Must be <strong>$500 or more</strong> to qualify for commission.</p>
+              <p>✅ <strong>Re-Issues & Renewals:</strong> Revenue from re-issues and renewals is subject to a <strong>20% Corp charge</strong>. The remaining revenue is added after other deductions.</p>
+
+              <h4>3. Commission Calculation</h4>
+              <p>✅ <strong>Determine Commission Rate:</strong> Agents receive either 10% or 12.5% based on the qualification criteria.</p>
+              <p>✅ <strong>Calculate Commission:</strong> The final revenue amount is multiplied by the applicable commission rate.</p>
+
+              <h4>4. Adjustments</h4>
+              <p>✅ <strong>AR Fees and Scanning Violations:</strong> Any AR fees or scanning violations will be deducted from the agent’s final commission. If the agent did not make commission, the fee is carried over.</p>
+              
+              <h4>5. After-Hours Posting Policy (New Rule)</h4>
+              <p>✅ Policies posted after hours to the underwriting group will be <strong>disqualified</strong> from the NB# count needed for commission.</p>
+              <p>✅ BF (Bind Fees) for such policies will also be <strong>disqualified</strong> from being added to NB Fees for that week.</p>
+              <p>🔴 <strong>Exception:</strong> If the policy was sold at closing and that was the reason for the late post, it will still count.</p>
             </div>
           )}
         </>

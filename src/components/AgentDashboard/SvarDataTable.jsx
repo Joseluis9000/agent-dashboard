@@ -49,15 +49,16 @@ const SvarDataTable = ({ title, data }) => {
     <div className={styles.card}>
       <h3>{title}</h3>
       {data.map((item, index) => {
-        // ✅ NEW: Logic to separate fields into AR, SV, and General groups
         const generalData = {};
         const arData = {};
         const svData = {};
 
         Object.entries(item).forEach(([key, value]) => {
-          if (key.toLowerCase().startsWith('ar')) {
+          const lowerKey = key.toLowerCase();
+          // ✅ UPDATED: Added a check for 'policynumber' to include it with AR Details
+          if (lowerKey.startsWith('ar') || lowerKey === 'policynumber') {
             arData[key] = value;
-          } else if (key.toLowerCase().startsWith('sv')) {
+          } else if (lowerKey.startsWith('sv')) {
             svData[key] = value;
           } else {
             generalData[key] = value;
@@ -66,10 +67,8 @@ const SvarDataTable = ({ title, data }) => {
 
         return (
           <div key={index} className={styles.tableWrapper}>
-            {/* Render general data first if it exists */}
             {Object.keys(generalData).length > 0 && <DetailsTable data={generalData} />}
 
-            {/* Container for the two horizontal boxes */}
             <div className={styles.horizontalContainer}>
               <div className={styles.violationBox}>
                 <h4>AR Details</h4>
