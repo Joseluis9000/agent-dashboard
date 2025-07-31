@@ -1,3 +1,5 @@
+// src/pages/Login.jsx
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -6,6 +8,9 @@ function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  // ✅ YOUR LOGIN HANDLER SCRIPT URL
+  const loginScriptUrl = 'https://script.google.com/macros/s/AKfycbyTJiYTFun9DOC3O0yOr_NeCVIKs3EHlyymdyjATbb775PsYENxxphNVy-IANVYHsjU/exec';
 
   const handleLogin = async () => {
     if (!email.includes('@')) {
@@ -16,21 +21,21 @@ function Login() {
     setLoading(true);
 
     try {
-      const response = await fetch('https://us-central1-optimal-comfort-464220-t1.cloudfunctions.net/loginHandler', {
+      const response = await fetch(loginScriptUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // ✅ USE TEXT/PLAIN CONTENT TYPE FOR RELIABILITY
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ email, password }),
       });
 
       const data = await response.json();
 
-      if (data.success) {
+      if (data.status === 'success') {
         localStorage.setItem('userEmail', email);
         localStorage.setItem('role', data.role || '');
-        localStorage.setItem('managerName', data.managerName || '');
+        localStorage.setItem('userName', data.name || '');
         localStorage.setItem('region', data.region || '');
-        localStorage.setItem('region2', data.region2 || '');
-
+        
         if (data.role === "regional") {
           navigate('/regional-dashboard');
         } else {
@@ -38,7 +43,7 @@ function Login() {
         }
 
       } else {
-        alert(data.error || 'Invalid email or password');
+        alert(data.message || 'Invalid email or password');
       }
     } catch (error) {
       console.error('Login error:', error);
@@ -90,4 +95,3 @@ function Login() {
 }
 
 export default Login;
-

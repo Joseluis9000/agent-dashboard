@@ -142,7 +142,8 @@ exports.loginHandler = async (req, res) => {
             return obj;
           });
         };
-
+        
+        // ✅ FIX: Now fetches and returns the full commissionData array
         const commissionData = await fetchSheetData('Weekly Commission!A1:Z1000');
         const commissionHistoryData = await fetchSheetData('Commission History!A1:Z1000');
         const violationsData = await fetchSheetData('SCANNING VIOLATIONS AND ARS!A1:Z1000');
@@ -152,7 +153,7 @@ exports.loginHandler = async (req, res) => {
           success: true,
           role: "agent",
           name: userName || '',
-          commissionData: commissionData[0] || {},
+          commissionData: commissionData,
           commissionHistoryData,
           violationsData,
           svArHistoryData
@@ -204,4 +205,3 @@ exports.loginHandler = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error.', error: error.message });
   }
 };
-
