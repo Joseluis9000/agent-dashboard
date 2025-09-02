@@ -8,11 +8,11 @@ const Sidebar = ({ onLogout }) => {
     const navigate = useNavigate();
     const location = useLocation();
 
-    // ✅ MAKE SURE THIS ARRAY CONTAINS THE NEW OBJECT
     const menuItems = [
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/sv-ar', label: "Scanning Violations & AR's" },
-        { path: '/disqualified-policies', label: 'Disqualified Policies' } // <-- THIS IS THE KEY
+        { path: '/disqualified-policies', label: 'Disqualified Policies' },
+        { path: '/ticketing-system', label: 'Submit a Ticket' } // ✅ New link added here
     ];
 
     return (

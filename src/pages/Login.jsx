@@ -23,7 +23,6 @@ function Login() {
     try {
       const response = await fetch(loginScriptUrl, {
         method: 'POST',
-        // ✅ USE TEXT/PLAIN CONTENT TYPE FOR RELIABILITY
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ email, password }),
       });
@@ -32,11 +31,17 @@ function Login() {
 
       if (data.status === 'success') {
         localStorage.setItem('userEmail', email);
-        localStorage.setItem('role', data.role || '');
+        localStorage.setItem('userRole', data.role || '');
         localStorage.setItem('userName', data.name || '');
-        localStorage.setItem('region', data.region || '');
+        localStorage.setItem('userRegion', data.region || '');
         
-        if (data.role === "regional") {
+        // ✅ --- KEY CHANGE ---
+        // Added the check for the 'supervisor' role.
+        if (data.role === "admin") {
+          navigate('/admin/tickets');
+        } else if (data.role === "supervisor") {
+          navigate('/supervisor/office-numbers');
+        } else if (data.role === "regional") {
           navigate('/regional-dashboard');
         } else {
           navigate('/dashboard');
@@ -66,7 +71,7 @@ function Login() {
       />
 
       <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", width: "300px" }}>
-        <h2 style={{ textAlign: "center", color: "#d71920", marginBottom: "20px" }}>Agent Login</h2>
+        <h2 style={{ textAlign: "center", color: "#d71920", marginBottom: "20px" }}>Login</h2>
 
         <input
           type="text"
