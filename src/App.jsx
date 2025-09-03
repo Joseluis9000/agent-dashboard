@@ -14,7 +14,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import AdminTickets from './pages/AdminTickets';
 import SupervisorDashboard from './pages/SupervisorDashboard';
 import OfficeNumbers from './pages/OfficeNumbers';
-import SupervisorTickets from './pages/SupervisorTickets'; // ✅ 1. Import the new page
+import SupervisorTickets from './pages/SupervisorTickets';
 
 function App() {
   return (
@@ -40,6 +40,7 @@ function App() {
           }
         >
           <Route path="tickets" element={<AdminTickets />} />
+          <Route path="office-numbers" element={<OfficeNumbers />} />
         </Route>
 
         {/* Protected Supervisor Routes */}
@@ -52,7 +53,7 @@ function App() {
           }
         >
           <Route path="office-numbers" element={<OfficeNumbers />} />
-          <Route path="tickets" element={<SupervisorTickets />} /> {/* ✅ 2. Add the new route */}
+          <Route path="tickets" element={<SupervisorTickets />} />
         </Route>
       </Routes>
     </Router>

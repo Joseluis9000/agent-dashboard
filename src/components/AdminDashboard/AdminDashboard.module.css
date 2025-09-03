@@ -166,8 +166,6 @@
     background-color: #e74c3c; /* Lighter red */
 }
 
-/* Add this to your AdminDashboard.module.css file */
-
 .actionButton {
     background-color: #7f8c8d;
     color: white;
@@ -178,139 +176,6 @@
     cursor: pointer;
 }
 
-/* ADD THESE STYLES TO THE BOTTOM OF YOUR CSS FILE */
-
-/* Modal Styles */
-.modalBackdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.modalContent {
-    background-color: #34495e; /* Match theme */
-    color: #ecf0f1;
-    padding: 2rem;
-    border-radius: 8px;
-    width: 90%;
-    max-width: 600px;
-}
-
-.modalHeader {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #2c3e50;
-    padding-bottom: 1rem;
-    margin-bottom: 1rem;
-}
-
-.modalHeader h2 { margin: 0; }
-
-.closeButton {
-    background: none;
-    border: none;
-    color: #ecf0f1;
-    font-size: 2rem;
-    cursor: pointer;
-}
-
-/* Form elements inside modal */
-.detailGroup {
-    margin-bottom: 1.5rem;
-}
-
-.detailGroup label {
-    display: block;
-    margin-bottom: 0.5rem;
-    color: #bdc3c7;
-}
-
-.detailGroup select, .detailGroup textarea {
-    width: 100%;
-    padding: 10px;
-    border-radius: 5px;
-    border: 1px solid #2c3e50;
-    background-color: #2c3e50;
-    color: #ecf0f1;
-    font-size: 1rem;
-}
-
-.modalActions {
-    text-align: right;
-    margin-top: 2rem;
-}
-
-.modalActions button {
-    background-color: #3498db;
-    color: white;
-    padding: 12px 25px;
-}
-
-/* ADD THESE STYLES TO THE BOTTOM OF YOUR CSS FILE */
-
-/* Action Menu Dropdown */
-.actionMenuContainer { position: relative; display: inline-block; }
-
-.dropdownMenu {
-    position: absolute; right: 0; top: 100%; background-color: #ffffff;
-    border: 1px solid #e0e0e0; border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); z-index: 100;
-    min-width: 150px; padding: 0.5rem 0; display: flex; flex-direction: column;
-}
-
-.dropdownMenu button {
-    background: none; border: none; text-align: left;
-    padding: 0.75rem 1rem; cursor: pointer; color: #333; width: 100%;
-}
-
-.dropdownMenu button:hover { background-color: #f7f9fc; }
-
-/* Modal Styles */
-.modalBackdrop {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background-color: rgba(0, 0, 0, 0.6); display: flex;
-    justify-content: center; align-items: center; z-index: 1000;
-}
-
-.modalContent {
-    background-color: #34495e; color: #ecf0f1; padding: 2rem;
-    border-radius: 8px; width: 90%; max-width: 600px;
-}
-
-.modalHeader {
-    display: flex; justify-content: space-between; align-items: center;
-    border-bottom: 1px solid #2c3e50; padding-bottom: 1rem; margin-bottom: 1rem;
-}
-
-.modalHeader h2 { margin: 0; }
-
-.closeButton {
-    background: none; border: none; color: #ecf0f1;
-    font-size: 2rem; cursor: pointer;
-}
-
-.detailGroup { margin-bottom: 1.5rem; }
-
-.detailGroup label { display: block; margin-bottom: 0.5rem; color: #bdc3c7; }
-
-.detailGroup select, .detailGroup textarea {
-    width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #2c3e50;
-    background-color: #2c3e50; color: #ecf0f1; font-size: 1rem;
-}
-
-.modalActions { text-align: right; margin-top: 2rem; }
-
-.modalActions button { background-color: #3498db; color: white; padding: 12px 25px; }
-
-/* Add this new style for the claim button */
 .claimButton {
     background-color: #3498db; /* Light blue */
     color: white;
@@ -326,15 +191,14 @@
     background-color: #2980b9; /* Slightly darker blue */
 }
 
-/* Add this new style for the primary action button */
 .primaryActionButton {
     background-color: #e74c3c; /* Red, matching Not Started */
     color: white;
     border: none;
-    padding: 12px 25px; /* Larger padding */
+    padding: 12px 25px;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 1rem; /* Slightly larger font */
+    font-size: 1rem;
     font-weight: bold;
     transition: background-color 0.2s;
 }
@@ -343,7 +207,6 @@
     background-color: #c0392b; /* Darker red on hover */
 }
 
-/* Also ensure the back button looks good */
 .backButton {
     background-color: #7f8c8d; /* Grey for back button */
     color: white;
@@ -359,87 +222,39 @@
     background-color: #5d6d7e; /* Darker grey */
 }
 
-/* New styles for a more professional form layout */
-.addTicketForm {
-    background-color: #2c3e50; /* Darker background for the form container */
-    padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-    max-width: 600px;
-    margin: 30px auto; /* Center the form */
-    display: grid;
-    gap: 20px; /* Space between form fields */
-    grid-template-columns: 1fr; /* Default to single column */
-}
+/* === Modal, Dropdown, and Form Styles === */
+/* ... (your existing modal, dropdown, and form styles) ... */
 
-@media (min-width: 768px) {
-    .addTicketForm {
-        grid-template-columns: repeat(2, 1fr); /* Two columns on larger screens */
-    }
-    .addTicketForm .fullWidth {
-        grid-column: 1 / -1; /* Make description and buttons span full width */
-    }
-}
-
-
-.addTicketForm label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: bold;
-    color: #ecf0f1; /* Light text for labels */
-}
-
-.addTicketForm input[type="text"],
-.addTicketForm select,
-.addTicketForm textarea {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #34495e;
-    border-radius: 4px;
-    background-color: #34495e; /* Darker input background */
-    color: #ecf0f1;
-    font-size: 0.95rem;
-    box-sizing: border-box; /* Include padding in width */
-}
-
-.addTicketForm textarea {
-    resize: vertical; /* Allow vertical resizing */
-    min-height: 100px;
-}
-
-.addTicketForm input[type="text"]:focus,
-.addTicketForm select:focus,
-.addTicketForm textarea:focus {
-    border-color: #3498db; /* Highlight on focus */
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.3);
-}
-
-.addTicketForm .formActions {
-    grid-column: 1 / -1; /* Make buttons span full width */
+/* ✅ === 8. NEW Office Numbers Dashboard Layout === */
+.filters {
     display: flex;
-    justify-content: flex-end; /* Align submit button to the right */
-    gap: 15px;
-    margin-top: 10px;
+    gap: 1rem;
 }
 
-.addTicketForm .formActions button[type="submit"] {
-    background-color: #2ecc71; /* Green submit button */
-    color: white;
-    border: none;
-    padding: 12px 25px;
+.filters select {
+    padding: 8px 12px;
     border-radius: 5px;
-    cursor: pointer;
+    border: 1px solid #34495e;
+    background-color: #2c3e50;
+    color: #ecf0f1;
     font-size: 1rem;
-    font-weight: bold;
-    transition: background-color 0.2s;
 }
 
-.addTicketForm .formActions button[type="submit"]:hover {
-    background-color: #27ae60;
+.dashboardGrid {
+    display: grid;
+    grid-template-columns: 1fr; /* Default to single column */
+    gap: 1.5rem;
+    margin-top: 2rem;
 }
 
-.addTicketForm .formActions button[type="submit"]:disabled {
-    background-color: #7f8c8d;
-    cursor: not-allowed;
+/* On larger screens, use a 2/3 and 1/3 split */
+@media (min-width: 992px) {
+    .dashboardGrid {
+        grid-template-columns: 2fr 1fr;
+    }
+}
+
+.sideTable h3 {
+    margin: 0 0 1rem 0;
+    color: #ffffff;
 }
