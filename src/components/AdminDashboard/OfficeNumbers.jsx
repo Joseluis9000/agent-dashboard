@@ -1,161 +1,146 @@
 // src/pages/OfficeNumbers.jsx
+
 import React, { useState, useEffect } from 'react';
-import supabase from '../supabaseClient'; // default export from src/supabaseClient.js
+import { supabase } from '../supabaseClient';
 import styles from '../components/AdminDashboard/AdminDashboard.module.css';
 
-const toDay = (s) => new Date(s).toISOString().slice(0, 10); // 'YYYY-MM-DD'
-const formatMonth = (s) =>
-  new Date(s).toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-const fmtMoney = (n) =>
-  (n ?? n === 0)
-    ? Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : '';
+const OfficeNumbers = () => {
+    const [salesData, setSalesData] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [monthOptions, setMonthOptions] = useState([]);
+    const [selectedMonth, setSelectedMonth] = useState('');
 
-export default function OfficeNumbers() {
-  const [salesData, setSalesData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [monthOptions, setMonthOptions] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState('');
+    useEffect(() => {
+        const fetchSalesData = async () => {
+            setLoading(true);
+            const { data, error } = await supabase
+                .from('office_numbers') // Changed from monthly_sales
+                .select('*')
+                .order('month_start_date', { ascending: false });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
+            if (error) {
+                setError(error.message);
+            } else {
+                setSalesData(data || []);
+                if (data && data.length > 0) {
+                    const uniqueMonths = [...new Set(data.map(item => item.month_start_date))];
+                    setMonthOptions(uniqueMonths);
+                    setSelectedMonth(uniqueMonths[0]);
+                }
+            }
+            setLoading(false);
+        };
+        fetchSalesData();
+    }, []);
 
-        // quick sanity logs (remove later)
-        console.log('Supabase exists?', !!supabase);
+    const formatMonth = (dateString) => new Date(dateString).toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const formatCurrency = (number) => parseFloat(number || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-        const { data, error } = await supabase
-          .from('monthly_sales')
-          .select('*')
-          .order('month_start_date', { ascending: false });
+    // --- Data Processing ---
+    const filteredData = salesData.filter(item => item.month_start_date === selectedMonth);
 
-        if (error) {
-          setError(error.message);
-          return;
+    const regionalData = filteredData.reduce((acc, row) => {
+        const region = row.region || 'Unknown';
+        if (!acc[region]) {
+            acc[region] = { offices: [], totals: {} };
         }
+        acc[region].offices.push(row);
+        return acc;
+    }, {});
 
-        const rows = data ?? [];
-        setSalesData(rows);
+    let grandTotal = { total_policies: 0, total_premium: 0 };
+    for (const region in regionalData) {
+        const regionTotals = regionalData[region].offices.reduce((acc, office) => {
+            acc.total_policies = (acc.total_policies || 0) + (office.total_policies || 0);
+            acc.total_premium = (acc.total_premium || 0) + (office.total_premium || 0);
+            return acc;
+        }, { total_policies: 0, total_premium: 0 });
+        regionalData[region].totals = regionTotals;
+        grandTotal.total_policies += regionTotals.total_policies;
+        grandTotal.total_premium += regionTotals.total_premium;
+    }
 
-        const months = [...new Set(rows.map((r) => toDay(r.month_start_date)))];
-        setMonthOptions(months);
-        if (months.length) setSelectedMonth(months[0]);
-      } catch (e) {
-        setError(String(e.message || e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    if (loading) return <h2>Loading Office Numbers...</h2>;
+    if (error) return <h2 style={{ color: 'red' }}>Error: {error}</h2>;
 
-  const filteredData = selectedMonth
-    ? salesData.filter((r) => toDay(r.month_start_date) === selectedMonth)
-    : salesData;
+    return (
+        <div>
+            <div className={styles.pageHeader}>
+                <h1>Office Performance</h1>
+                <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} style={{ padding: '8px', fontSize: '1rem' }}>
+                    {monthOptions.map(month => (
+                        <option key={month} value={month}>{formatMonth(month)}</option>
+                    ))}
+                </select>
+            </div>
 
-  if (loading) return <h2>Loading Office Numbers...</h2>;
-  if (error) return <h2 style={{ color: 'red' }}>Error: {error}</h2>;
+            {/* Region Totals Cards */}
+            <div className={styles.regionTotalsContainer}>
+                {Object.keys(regionalData).sort().map(region => (
+                    <div key={region} className={styles.regionCard}>
+                        <h3>{region}</h3>
+                        <p>{regionalData[region].totals.total_policies.toLocaleString()} <span>Policies</span></p>
+                        <p>{formatCurrency(regionalData[region].totals.total_premium)} <span>Premium</span></p>
+                    </div>
+                ))}
+                <div className={styles.regionCard} style={{borderColor: '#2ecc71'}}>
+                    <h3>Grand Total</h3>
+                    <p>{grandTotal.total_policies.toLocaleString()} <span>Policies</span></p>
+                    <p>{formatCurrency(grandTotal.total_premium)} <span>Premium</span></p>
+                </div>
+            </div>
 
-  return (
-    <div>
-      <div className={styles.pageHeader}>
-        <h1>Office Numbers & Performance</h1>
-        {monthOptions.length > 0 && (
-          <div>
-            <label htmlFor="month-select" style={{ marginRight: 10 }}>
-              Select Month:
-            </label>
-            <select
-              id="month-select"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              style={{ padding: 8, fontSize: '1rem', borderRadius: 5 }}
-            >
-              {monthOptions.map((m) => (
-                <option key={m} value={m}>
-                  {formatMonth(m)}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
+            {/* Tables for each region */}
+            {Object.keys(regionalData).sort().map(region => (
+                <div key={region} className={styles.regionTableContainer}>
+                    <h2>{region}</h2>
+                    <table className={styles.ticketsTable}>
+                        <thead>
+                            <tr>
+                                <th>Office</th>
+                                <th>New Business #</th>
+                                <th>New Business Fees</th>
+                                <th>NB Avg</th>
+                                <th style={{width: '20px'}}></th>
+                                <th>Renewal #</th>
+                                <th>Renewal Fees</th>
+                                <th>Renewal Avg</th>
+                                <th style={{width: '20px'}}></th>
+                                <th>Taxes #</th>
+                                <th>Tax Fees</th>
+                                <th>Tax Avg</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {regionalData[region].offices.sort((a, b) => a.office.localeCompare(b.office)).map((row, index) => (
+                                <React.Fragment key={row.id}>
+                                    <tr>
+                                        <td>{row.office}</td>
+                                        <td>{row.new_business_count}</td>
+                                        <td>{row.new_business_fees}</td>
+                                        <td>{row.nb_avg}</td>
+                                        <td></td>
+                                        <td>{row.renewal_count}</td>
+                                        <td>{row.renewal_fees}</td>
+                                        <td>{row.renewal_avg}</td>
+                                        <td></td>
+                                        <td>{row.taxes_count}</td>
+                                        <td>{row.tax_fees}</td>
+                                        <td>{row.tax_avg}</td>
+                                    </tr>
+                                    {/* Add separator row, but not after the last item */}
+                                    {index < regionalData[region].offices.length - 1 && (
+                                        <tr><td colSpan="12" className={styles.separatorRow}></td></tr>
+                                    )}
+                                </React.Fragment>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ))}
+        </div>
+    );
+};
 
-      <div style={{ overflowX: 'auto' }}>
-        <table className={styles.ticketsTable}>
-          <thead>
-            <tr>
-              <th>Office</th>
-              <th>Region</th>
-              <th>New Business #</th>
-              <th>New Business Fees</th>
-              <th>NB Avg</th>
-              <th>CC Transactions</th>
-              <th>CC Fees</th>
-              <th>CC Avg</th>
-              <th>Endorsement #</th>
-              <th>Endorsement Fees</th>
-              <th>Endorsement Avg</th>
-              <th>Installment #</th>
-              <th>Installment Fees</th>
-              <th>Installment Avg</th>
-              <th>DMV #</th>
-              <th>DMV Fees</th>
-              <th>DMV Avg</th>
-              <th>Reissue #</th>
-              <th>Reissue Fees</th>
-              <th>Reissue Avg</th>
-              <th>Renewal #</th>
-              <th>Renewal Fees</th>
-              <th>Renewal Avg</th>
-              <th>Taxes #</th>
-              <th>Tax Fees</th>
-              <th>Tax Avg</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredData.length ? (
-              filteredData.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.office}</td>
-                  <td>{row.region}</td>
-                  <td>{row.new_business_count}</td>
-                  <td>${fmtMoney(row.new_business_fees)}</td>
-                  <td>${fmtMoney(row.nb_avg)}</td>
-                  <td>{row.cc_transactions}</td>
-                  <td>${fmtMoney(row.cc_fees)}</td>
-                  <td>${fmtMoney(row.cc_avg)}</td>
-                  <td>{row.endorsement_count}</td>
-                  <td>${fmtMoney(row.endorsement_fees)}</td>
-                  <td>${fmtMoney(row.endorsement_avg)}</td>
-                  <td>{row.installment_count}</td>
-                  <td>${fmtMoney(row.installment_fees)}</td>
-                  <td>${fmtMoney(row.installment_avg)}</td>
-                  <td>{row.dmv_count}</td>
-                  <td>${fmtMoney(row.dmv_fees)}</td>
-                  <td>${fmtMoney(row.dmv_avg)}</td>
-                  <td>{row.reissue_count}</td>
-                  <td>${fmtMoney(row.reissue_fees)}</td>
-                  <td>${fmtMoney(row.reissue_avg)}</td>
-                  <td>{row.renewal_count}</td>
-                  <td>${fmtMoney(row.renewal_fees)}</td>
-                  <td>${fmtMoney(row.renewal_avg)}</td>
-                  <td>{row.taxes_count}</td>
-                  <td>${fmtMoney(row.tax_fees)}</td>
-                  <td>${fmtMoney(row.tax_avg)}</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan="26" style={{ textAlign: 'center', padding: 20 }}>
-                  No data found for the selected month.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
+export default OfficeNumbers;

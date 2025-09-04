@@ -22,7 +22,7 @@ const StatCard = ({ title, value, previousValue, formatAs = 'number' }) => {
     };
 
     return (
-        <div className={styles.summaryCard}> {/* Changed from statCard to summaryCard */}
+        <div className={styles.summaryCard}> {/* Use summaryCard for consistent styling */}
             <h4>{title}</h4>
             <p>{formatValue(value)}</p>
             <span style={changeStyle}>
