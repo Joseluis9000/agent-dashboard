@@ -12,7 +12,8 @@ const Sidebar = ({ onLogout }) => {
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/sv-ar', label: "Scanning Violations & AR's" },
         { path: '/disqualified-policies', label: 'Disqualified Policies' },
-        { path: '/ticketing-system', label: 'Submit a Ticket' } // ✅ New link added here
+        { path: '/ticketing-system', label: 'Submit a Ticket' },
+        { path: '/eod-report', label: 'EOD Report' } // ✅ New link added here
     ];
 
     return (

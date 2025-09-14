@@ -1,0 +1,308 @@
+/* src/pages/EODReport.module.css */
+.dashboardContainer {
+    display: flex;
+    min-height: 100vh;
+    background-color: #f4f7f6;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: 2rem 3rem;
+    overflow-y: auto;
+}
+
+.pageHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.pageHeader h1 {
+    margin: 0;
+    font-size: 2rem;
+    color: #333;
+}
+
+.card {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    margin-bottom: 2rem; /* Space between stacked cards */
+}
+
+.card h2 {
+    margin-top: 0;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+    font-size: 1.4rem;
+    color: #0056b3;
+}
+
+.card p {
+    color: #666;
+    margin-bottom: 1rem;
+}
+
+.logTextarea {
+    width: 100%;
+    min-height: 150px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    padding: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.errorText {
+    color: #d93025;
+    margin-top: 1rem;
+    font-size: 0.85rem;
+}
+
+.tableContainer {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.dataTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.dataTable thead {
+    background-color: #f8f9fa;
+}
+
+.dataTable th, .dataTable td {
+    border: 1px solid #ddd;
+    padding: 8px 10px;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.dataTable th {
+    font-weight: 600;
+}
+
+/* New Grid for Bottom Section */
+.bottomGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 2rem;
+}
+
+.summaryColumn, .entryColumn {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.resultsGrid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+}
+
+/* ✅ Increased font size for Step 3 */
+.resultItem {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 0; /* Increased padding */
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 1.1rem; /* Increased font size */
+}
+.resultItem:last-child { border-bottom: none; }
+
+.resultKey {
+    text-transform: capitalize;
+    color: #444; /* Darker text for readability */
+    font-weight: 500;
+}
+
+.resultValue {
+    font-family: monospace;
+    font-weight: bold;
+    color: #0056b3;
+}
+
+.depositsGrid {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* Reduced size of Final Deposits */
+.depositItem {
+    background-color: #f8f9fa;
+    padding: 1.25rem;
+    border-radius: 8px;
+    border-left: 6px solid #28a745;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.depositKey {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.depositValue {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #155724;
+    font-family: monospace;
+}
+
+.inputGroup {
+    margin-bottom: 1.5rem;
+}
+
+.inputGroup label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+}
+
+.inputGroup input[type="text"],
+.inputGroup input[type="number"],
+.notesTextarea {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 1rem;
+}
+
+.referralSection {
+    border-top: 1px solid #eee;
+    padding-top: 1.5rem;
+}
+
+.referralSection > label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 1rem;
+}
+
+.referralGrid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1.5fr auto;
+    gap: 1rem;
+    align-items: end;
+    margin-bottom: 1rem;
+}
+
+.referralHeader {
+    font-weight: bold;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.referralGrid input {
+    width: 100%;
+}
+
+.addButton, .removeButton {
+    padding: 0.5rem 0.75rem;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.addButton {
+    background-color: #17a2b8;
+    color: white;
+    width: 100%;
+}
+
+.removeButton {
+    background-color: #dc3545;
+    color: white;
+}
+
+/* Increased size of Cash Balancing Section */
+.balancingSection {
+    margin-top: 1rem;
+    padding: 2rem; 
+    border: 1px solid #90caf9; 
+    border-radius: 8px;
+    background-color: #e3f2fd; 
+}
+
+.balancingSection h3 {
+    margin-top: 0;
+    text-align: center;
+    font-size: 1.5rem; 
+}
+
+/* ✅ Increased font size for Cash Balancing */
+.balanceItem {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 0; /* Increased padding */
+    font-size: 1.3rem; /* Increased font size */
+}
+
+.balanceItem strong {
+    font-size: 1.8rem; /* Increased font size */
+    font-family: monospace;
+    font-weight: 700;
+}
+
+.balanceItem input {
+    font-size: 1.8rem; /* Increased font size */
+    font-weight: 700;
+    padding: 0.5rem;
+    text-align: right;
+    width: 220px; /* Slightly wider */
+    border: 1px solid #90caf9;
+}
+
+.divider {
+    border: none;
+    border-top: 1px dashed #90caf9;
+    margin: 1rem 0;
+}
+
+.over { color: #dc3545; font-weight: 700; }
+.short { color: #dc3545; font-weight: 700; }
+
+.verificationSection {
+    border-top: 1px solid #eee;
+    padding-top: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.checkboxGroup {
+    display: flex;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.checkboxGroup input {
+    margin-right: 0.75rem;
+    width: 18px;
+    height: 18px;
+}
+
+.submitButton {
+    display: block;
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: white;
+    background-color: #007bff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 1.5rem;
+}

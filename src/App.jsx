@@ -15,6 +15,7 @@ import AdminTickets from './pages/AdminTickets';
 import SupervisorDashboard from './pages/SupervisorDashboard';
 import OfficeNumbers from './pages/OfficeNumbers';
 import SupervisorTickets from './pages/SupervisorTickets';
+import EODReport from './pages/EODReport'; // ✅ 1. Import the new page
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
         <Route path="/sv-ar" element={<SVARPage />} />
         <Route path="/disqualified-policies" element={<DisqualifiedPolicies />} />
         <Route path="/ticketing-system" element={<TicketingSystem />} />
+        <Route path="/eod-report" element={<EODReport />} /> {/* ✅ 2. Add the new route */}
 
         {/* Protected Admin Routes */}
         <Route
