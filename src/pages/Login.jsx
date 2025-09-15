@@ -1,102 +1,88 @@
 // src/pages/Login.jsx
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom'; // ✅ 1. Import Link
+import { supabase } from '../supabaseClient';
+import styles from './Login.module.css';
 
-function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+const Login = () => {
+    const navigate = useNavigate();
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
 
-  // ✅ YOUR LOGIN HANDLER SCRIPT URL
-  const loginScriptUrl = 'https://script.google.com/macros/s/AKfycbyTJiYTFun9DOC3O0yOr_NeCVIKs3EHlyymdyjATbb775PsYENxxphNVy-IANVYHsjU/exec';
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
 
-  const handleLogin = async () => {
-    if (!email.includes('@')) {
-      alert('Please enter a valid email');
-      return;
-    }
+        try {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: email,
+                password: password,
+            });
 
-    setLoading(true);
+            if (error) {
+                throw error;
+            }
 
-    try {
-      const response = await fetch(loginScriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ email, password }),
-      });
+            if (data.user) {
+                const role = data.user.user_metadata?.role;
 
-      const data = await response.json();
-
-      if (data.status === 'success') {
-        localStorage.setItem('userEmail', email);
-        localStorage.setItem('userRole', data.role || '');
-        localStorage.setItem('userName', data.name || '');
-        localStorage.setItem('userRegion', data.region || '');
-        
-        // ✅ --- KEY CHANGE ---
-        // Added the check for the 'supervisor' role.
-        if (data.role === "admin") {
-          navigate('/admin/tickets');
-        } else if (data.role === "supervisor") {
-          navigate('/supervisor/office-numbers');
-        } else if (data.role === "regional") {
-          navigate('/regional-dashboard');
-        } else {
-          navigate('/dashboard');
+                if (role === "admin") {
+                    navigate('/admin');
+                } else if (role === "supervisor") {
+                    navigate('/supervisor');
+                } else if (role === "regional") {
+                    navigate('/regional-dashboard');
+                } else {
+                    navigate('/dashboard');
+                }
+            }
+        } catch (error) {
+            setError(error.message);
+        } finally {
+            setLoading(false);
         }
+    };
 
-      } else {
-        alert(data.message || 'Invalid email or password');
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      alert('There was an error logging in');
-    } finally {
-      setLoading(false);
-    }
-  };
+    return (
+        <div className={styles.loginContainer}>
+            <img src="/G&P-.png" alt="Fiesta Logo" className={styles.logo} />
+            <div className={styles.loginBox}>
+                <h2>Login</h2>
+                <form onSubmit={handleLogin}>
+                    <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email"
+                        required
+                    />
+                    <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Password"
+                        required
+                    />
+                    
+                    {error && <p className={styles.errorText}>{error}</p>}
+                    
+                    <button type="submit" className={styles.loginButton} disabled={loading}>
+                        {loading ? "Logging in..." : "Login"}
+                    </button>
 
-  return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", backgroundColor: "#d71920", flexDirection: "column" }}>
-      <img
-        src="/G&P-.png"
-        alt="Fiesta Logo"
-        style={{
-          width: "550px",
-          maxWidth: "90%",
-          marginBottom: "20px"
-        }}
-      />
+                    {/* ✅ 2. ADD THIS LINK */}
+                    <Link to="/forgot-password" className={styles.forgotLink}>
+                        Forgot your password?
+                    </Link>
 
-      <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", width: "300px" }}>
-        <h2 style={{ textAlign: "center", color: "#d71920", marginBottom: "20px" }}>Login</h2>
-
-        <input
-          type="text"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-          style={{ width: "100%", padding: "10px", marginBottom: "10px", borderRadius: "4px", border: "1px solid #ccc" }}
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          style={{ width: "100%", padding: "10px", marginBottom: "20px", borderRadius: "4px", border: "1px solid #ccc" }}
-        />
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          style={{ width: "100%", padding: "10px", backgroundColor: loading ? "#999" : "#d71920", color: "#fff", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer" }}
-        >
-          {loading ? "Logging in..." : "Login"}
-        </button>
-      </div>
-    </div>
-  );
-}
+                </form>
+            </div>
+        </div>
+    );
+};
 
 export default Login;

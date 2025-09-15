@@ -1,0 +1,249 @@
+/* src/pages/EODHistory.module.css */
+
+/* --- Main Layout & Header --- */
+.dashboardContainer {
+    display: flex;
+    background-color: #f8f9fa; /* Lighter background for more contrast */
+    min-height: 100vh;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: 2rem 3rem; /* More horizontal padding */
+}
+
+.pageHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1.5rem; /* Increased gap for header elements */
+    padding: 1rem 1.5rem; /* Add padding around the header */
+    background-color: #ffffff; /* White background for the header bar */
+    border-radius: 12px; /* Rounded corners for the header bar */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05); /* Subtle shadow for header */
+}
+
+.pageHeader h1 {
+    font-size: 2.25rem;
+    color: #212529; /* Darker, more professional text */
+    margin: 0; /* Remove default margin */
+}
+
+.selectors {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.selectorGroup {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem; /* Space between label and input */
+}
+
+.selectorGroup label {
+    font-weight: 600; /* Bolder label */
+    color: #495057;
+    font-size: 1rem;
+}
+
+.selectorGroup input[type="date"],
+.selectorGroup select {
+    padding: 10px 14px; /* Slightly larger inputs with more horizontal padding */
+    border: 1px solid #ced4da;
+    border-radius: 8px; /* Rounded corners */
+    font-size: 1rem;
+    background-color: #fff;
+    transition: border-color 0.2s, box-shadow 0.2s; /* Smooth transitions */
+    appearance: none; /* Remove default select arrow */
+    -webkit-appearance: none; /* For WebKit browsers */
+    -moz-appearance: none; /* For Firefox */
+    background-image: url('data:image/svg+xml;utf8,<svg fill="#6c757d" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/><path d="M0 0h24v24H0z" fill="none"/></svg>'); /* Custom dropdown arrow */
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 24px;
+    padding-right: 30px; /* Make space for custom arrow */
+}
+
+.selectorGroup input[type="date"]:focus,
+.selectorGroup select:focus {
+    border-color: #80bdff; /* Blue border on focus */
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); /* Subtle blue shadow on focus */
+    outline: none; /* Remove default outline */
+}
+
+/* --- Main Content Grid --- */
+.reportsGrid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+}
+
+@media (min-width: 1200px) {
+    .reportsGrid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* --- Card Styling --- */
+.card {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 16px;
+    border: 1px solid #e9ecef;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.07);
+    /* Removed transform and box-shadow on hover for cards */
+    transition: box-shadow 0.2s ease-in-out; /* Keep shadow transition for consistency, but no jump */
+}
+
+/* No .card:hover now, so no jump effect */
+/* .card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.09);
+} */
+
+
+.cardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #dee2e6;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+}
+
+.card h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    color: #343a40;
+    border: none;
+    padding: 0;
+}
+
+.breakdownTitle {
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+    color: #495057;
+    font-weight: 600;
+}
+
+/* --- Data Display Grids --- */
+.summaryGrid, .detailGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    text-align: left;
+}
+
+.summaryGrid div, .detailGrid div {
+    background-color: #fff;
+    padding: 1rem;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+}
+
+.summaryGrid span, .detailGrid span {
+    display: block;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.summaryGrid strong, .detailGrid strong {
+    font-size: 1.75rem;
+    color: #212529;
+    font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+    font-weight: 600;
+}
+
+/* --- Agent Breakdown Table --- */
+.breakdownTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 1rem;
+}
+
+.breakdownTable th {
+    font-weight: 600;
+    text-align: left;
+    padding: 12px;
+    border-bottom: 2px solid #dee2e6;
+    color: #495057;
+}
+
+.breakdownTable td {
+    padding: 12px;
+    border-bottom: 1px solid #e9ecef;
+    color: #343a40;
+}
+
+.breakdownTable tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.breakdownTable tr:last-child td {
+    border-bottom: none;
+}
+
+.breakdownTable td:not(:first-child) {
+    text-align: right;
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 1.05rem;
+}
+
+/* --- Other Elements --- */
+.editButton {
+    background-color: #ffc107;
+    color: #212529;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.editButton:hover {
+    background-color: #e0a800;
+}
+
+.receiptsSection {
+    margin-top: 2rem;
+}
+
+.receiptsSection h3 {
+    margin-bottom: 1rem;
+}
+
+.receiptsSection ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+.receiptsSection li a {
+    color: #007bff;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.receiptsSection li a:hover {
+    text-decoration: underline;
+}
+
+.short {
+    color: #dc3545;
+}
+
+.errorText {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Add this rule to bring back the shadow hover effect */
+.card:hover {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.09); /* Deeper shadow on hover */
+}

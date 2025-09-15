@@ -13,7 +13,8 @@ const Sidebar = ({ onLogout }) => {
         { path: '/sv-ar', label: "Scanning Violations & AR's" },
         { path: '/disqualified-policies', label: 'Disqualified Policies' },
         { path: '/ticketing-system', label: 'Submit a Ticket' },
-        { path: '/eod-report', label: 'EOD Report' } // ✅ New link added here
+        { path: '/eod-report', label: 'EOD Report' },
+        { path: '/office-eods', label: 'Office & Agent EODs' } // ✅ New link added here
     ];
 
     return (

@@ -1,0 +1,93 @@
+.modalBackdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent black overlay */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* Ensure it's on top of other content */
+}
+
+.modalContent {
+    background-color: white;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    max-width: 450px;
+    width: 90%; /* Responsive width */
+    transform: scale(0.95); /* Slight animation on appearance */
+    animation: fadeInScale 0.2s ease-out forwards;
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.checkmark {
+    font-size: 4rem;
+    line-height: 1;
+    margin-bottom: 20px;
+    color: #4CAF50; /* A nice green for success */
+}
+
+.modalContent h2 {
+    font-size: 2rem;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.modalContent p {
+    font-size: 1.1rem;
+    color: #666;
+    margin-bottom: 30px;
+}
+
+.buttonGroup {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    flex-wrap: wrap; /* Allow buttons to wrap on smaller screens */
+}
+
+.primaryButton, .secondaryButton {
+    padding: 12px 25px;
+    border-radius: 8px;
+    border: none;
+    font-weight: bold;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: transform 0.1s ease-in-out, background-color 0.2s ease;
+    min-width: 180px; /* Ensure buttons have a minimum width */
+}
+
+.primaryButton {
+    background-color: #007bff; /* Blue */
+    color: white;
+}
+
+.primaryButton:hover {
+    background-color: #0056b3; /* Darker blue */
+    transform: translateY(-2px);
+}
+
+.secondaryButton {
+    background-color: #f0f0f0; /* Light grey */
+    color: #333;
+    border: 1px solid #ccc;
+}
+
+.secondaryButton:hover {
+    background-color: #e0e0e0; /* Darker grey */
+    transform: translateY(-2px);
+}

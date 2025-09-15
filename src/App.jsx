@@ -15,7 +15,10 @@ import AdminTickets from './pages/AdminTickets';
 import SupervisorDashboard from './pages/SupervisorDashboard';
 import OfficeNumbers from './pages/OfficeNumbers';
 import SupervisorTickets from './pages/SupervisorTickets';
-import EODReport from './pages/EODReport'; // ✅ 1. Import the new page
+import EODReport from './pages/EODReport';
+import EODHistory from './pages/EODHistory';
+import ForgotPassword from './pages/ForgotPassword'; // ✅ 1. Import new page
+import ResetPassword from './pages/ResetPassword';   // ✅ 2. Import new page
 
 function App() {
   return (
@@ -24,13 +27,34 @@ function App() {
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} /> {/* ✅ 3. Add route */}
+        <Route path="/reset-password" element={<ResetPassword />} />   {/* ✅ 4. Add route */}
 
-        {/* Agent Routes */}
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/sv-ar" element={<SVARPage />} />
-        <Route path="/disqualified-policies" element={<DisqualifiedPolicies />} />
-        <Route path="/ticketing-system" element={<TicketingSystem />} />
-        <Route path="/eod-report" element={<EODReport />} /> {/* ✅ 2. Add the new route */}
+        {/* Protected Agent Routes */}
+        <Route
+          path="/dashboard"
+          element={<ProtectedRoute><Dashboard /></ProtectedRoute>}
+        />
+        <Route
+          path="/sv-ar"
+          element={<ProtectedRoute><SVARPage /></ProtectedRoute>}
+        />
+        <Route
+          path="/disqualified-policies"
+          element={<ProtectedRoute><DisqualifiedPolicies /></ProtectedRoute>}
+        />
+        <Route
+          path="/ticketing-system"
+          element={<ProtectedRoute><TicketingSystem /></ProtectedRoute>}
+        />
+        <Route
+          path="/eod-report"
+          element={<ProtectedRoute><EODReport /></ProtectedRoute>}
+        />
+        <Route
+          path="/office-eods"
+          element={<ProtectedRoute><EODHistory /></ProtectedRoute>}
+        />
 
         {/* Protected Admin Routes */}
         <Route
