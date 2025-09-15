@@ -17,8 +17,9 @@ import OfficeNumbers from './pages/OfficeNumbers';
 import SupervisorTickets from './pages/SupervisorTickets';
 import EODReport from './pages/EODReport';
 import EODHistory from './pages/EODHistory';
-import ForgotPassword from './pages/ForgotPassword'; // ✅ 1. Import new page
-import ResetPassword from './pages/ResetPassword';   // ✅ 2. Import new page
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import AdminManageUsers from './pages/AdminManageUsers'; // ✅ 1. Import the new page
 
 function App() {
   return (
@@ -27,8 +28,8 @@ function App() {
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Login />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} /> {/* ✅ 3. Add route */}
-        <Route path="/reset-password" element={<ResetPassword />} />   {/* ✅ 4. Add route */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* Protected Agent Routes */}
         <Route
@@ -67,6 +68,7 @@ function App() {
         >
           <Route path="tickets" element={<AdminTickets />} />
           <Route path="office-numbers" element={<OfficeNumbers />} />
+          <Route path="manage-users" element={<AdminManageUsers />} /> {/* ✅ 2. Add the new route */}
         </Route>
 
         {/* Protected Supervisor Routes */}

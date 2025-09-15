@@ -1,0 +1,120 @@
+/* src/pages/AdminManageUsers.module.css */
+
+.dashboardContainer {
+    display: flex;
+    background-color: #f4f7f6;
+    min-height: 100vh;
+}
+
+.mainContent {
+    flex-grow: 1;
+    padding: 2rem;
+}
+
+.pageHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    background-color: #343a40; /* Dark background for the header */
+    color: #ffffff; /* White text for the header */
+    padding: 1.5rem 2rem;
+    border-radius: 12px;
+}
+
+.pageHeader h1 {
+    font-size: 2rem;
+    margin: 0; /* Remove default margins */
+}
+
+.primaryButton {
+    background-image: linear-gradient(to right, #007bff, #0056b3);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+}
+
+.primaryButton:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 123, 255, 0.3);
+}
+
+.card {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th, .table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.table th {
+    background-color: #f8f9fa;
+    font-weight: bold;
+}
+
+.table tr:hover {
+    background-color: #c6c8cb;
+}
+
+.actionButton {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.actionButton:hover {
+    background-color: #5a6268;
+}
+
+.deleteButton {
+    background-color: #dc3545; /* Red for destructive actions */
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    margin-left: 10px; /* Space between buttons */
+}
+
+.deleteButton:hover {
+    background-color: #c82333;
+}
+
+.feedback {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    background-color: #d4edda;
+    color: #155724;
+    font-weight: bold;
+}
+
+.error {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 8px;
+    background-color: #f8d7da;
+    color: #721c24;
+    font-weight: bold;
+}

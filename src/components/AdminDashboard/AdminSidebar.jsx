@@ -16,13 +16,19 @@ const AdminSidebar = ({ onLogout }) => {
                 >
                     Manage Tickets
                 </NavLink>
-
-                {/* ✅ New link for Office Numbers added below */}
                 <NavLink 
                     to="/admin/office-numbers" 
                     className={({ isActive }) => (isActive ? styles.activeLink : styles.navLink)}
                 >
                     Office Numbers
+                </NavLink>
+
+                {/* ✅ New link for User Management added below */}
+                <NavLink 
+                    to="/admin/manage-users" 
+                    className={({ isActive }) => (isActive ? styles.activeLink : styles.navLink)}
+                >
+                    Manage Users
                 </NavLink>
             </nav>
             <div className={styles.logoutSection}>
