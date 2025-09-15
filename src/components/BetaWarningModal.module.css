@@ -59,3 +59,38 @@
 .closeButton:hover {
     background-color: #0056b3;
 }
+
+/* Add these styles to your BetaWarningModal.module.css */
+
+/* Make the modal wider to accommodate the video */
+.modalContent {
+    background: #ffffff;
+    padding: 25px 35px;
+    border-radius: 12px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+    text-align: center;
+    width: 90%;
+    max-width: 650px; /* Increased max-width */
+    border-top: 8px solid #f0ad4e;
+}
+
+/* Container to hold the video and maintain its aspect ratio */
+.videoContainer {
+    position: relative;
+    padding-bottom: 56.25%; /* 16:9 Aspect Ratio */
+    height: 0;
+    overflow: hidden;
+    max-width: 100%;
+    background: #000;
+    margin: 20px 0;
+    border-radius: 8px; /* Rounded corners for the video player */
+}
+
+/* Make the iframe fill the container */
+.videoContainer iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}

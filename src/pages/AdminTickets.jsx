@@ -1,6 +1,7 @@
 // src/pages/AdminTickets.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../AuthContext';
 import { supabase } from '../supabaseClient';
 import styles from '../components/AdminDashboard/AdminDashboard.module.css';
 import ActionMenu from '../components/AdminDashboard/ActionMenu';
@@ -8,7 +9,8 @@ import Modal from '../components/AdminDashboard/Modal';
 import TicketDetails from '../components/AdminDashboard/TicketDetails';
 
 const AdminTickets = () => {
-    // --- Data for the new dynamic dropdowns ---
+    const { user } = useAuth();
+
     const ticketCategories = {
         "AR & Scanning Violations": ["AR Dispute or Question", "Scanning Violation Dispute", "AR/Violation Follow-Up Needed", "Report a System or Posting Error", "Other"],
         "HR (Human Resources)": ["Attendance or Behavior Concern", "Hiring Reccomendation", "Employee Documentation Update", "General HR Inquiry", "Other"],
@@ -23,7 +25,6 @@ const AdminTickets = () => {
     
     const urgencyOptions = ['Low', 'Medium', 'High', 'Critical'];
 
-    // --- State for View Toggling & Form ---
     const [view, setView] = useState('list');
     const [office, setOffice] = useState('');
     const [csrName, setCsrName] = useState('');
@@ -33,37 +34,41 @@ const AdminTickets = () => {
     const [description, setDescription] = useState('');
     const [formMessage, setFormMessage] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
-
-    // --- Existing State ---
     const [tickets, setTickets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const adminEmail = localStorage.getItem('userEmail');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState(null);
 
     const handleOpenModal = (ticket) => { setSelectedTicket(ticket); setIsModalOpen(true); };
     const handleCloseModal = () => { setIsModalOpen(false); setSelectedTicket(null); };
 
-    const fetchTickets = async () => {
+    const fetchTickets = useCallback(async () => {
         setLoading(true);
         const { data, error } = await supabase.from('tickets').select('*').order('created_at', { ascending: false });
         if (error) setError(error.message);
         else setTickets(data);
         setLoading(false);
-    };
+    }, []);
 
-    useEffect(() => { fetchTickets(); }, []);
+    useEffect(() => {
+        fetchTickets();
+    }, [fetchTickets]);
 
     const handleClaimTicket = async (ticketId) => {
+        if (!user) return alert("Cannot perform action: user not found.");
+        const adminEmail = user.email;
+
         const { error } = await supabase.from('tickets').update({ status: 'In Progress', assigned_to: adminEmail }).eq('id', ticketId);
         if (error) alert('Error: ' + error.message);
         else fetchTickets();
     };
 
-    // --- Function to Handle Form Submission ---
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!user) return alert("Cannot perform action: user not found.");
+        const adminEmail = user.email;
+
         setIsSubmitting(true);
         setFormMessage('');
         const finalDescription = `${csrName} - ${description}`;
@@ -91,9 +96,8 @@ const AdminTickets = () => {
         return <span className={`${styles.badge} ${styles[urgencyClass]}`}>{urgency}</span>;
     };
 
-    // ✅ --- UPDATED SUMMARY LOGIC ---
     const allActiveTickets = tickets.filter(t => t.status !== 'Completed' && t.status !== 'Cancelled');
-    const assignedToMeTickets = allActiveTickets.filter(t => t.assigned_to === adminEmail);
+    const assignedToMeTickets = allActiveTickets.filter(t => t.assigned_to === user?.email);
     const completedTickets = tickets.filter(t => t.status === 'Completed' || t.status === 'Cancelled');
     const notStarted = allActiveTickets.filter(t => !t.assigned_to).length;
     const inProgress = allActiveTickets.filter(t => t.assigned_to).length;
@@ -103,7 +107,6 @@ const AdminTickets = () => {
     if (loading) return <h2>Loading...</h2>;
     if (error) return <h2 style={{ color: 'red' }}>Error: {error}</h2>;
 
-    // --- ADD TICKET FORM VIEW ---
     if (view === 'form') {
         return (
             <div>
@@ -155,10 +158,8 @@ const AdminTickets = () => {
         );
     }
 
-    // --- MAIN LIST VIEW ---
     return (
         <div>
-            {/* Summary Cards */}
             <div className={styles.summaryCards}>
                 <div className={styles.summaryCard} style={{borderLeftColor: '#e74c3c'}}><h4>Not Started</h4><p>{notStarted}</p></div>
                 <div className={styles.summaryCard} style={{borderLeftColor: '#f39c12'}}><h4>In Progress</h4><p>{inProgress}</p></div>
@@ -166,13 +167,11 @@ const AdminTickets = () => {
                 <div className={styles.summaryCard}><h4>Total</h4><p>{totalTickets}</p></div>
             </div>
 
-            {/* Header with styled "Add Ticket" button */}
             <div className={styles.pageHeader}>
                 <h1>Manage All Tickets</h1>
                 <button onClick={() => setView('form')} className={styles.primaryActionButton}>Add Ticket</button>
             </div>
 
-            {/* TABLE 1: Manage All Tickets */}
             <table className={styles.ticketsTable}>
                 <thead>
                     <tr>
@@ -203,7 +202,6 @@ const AdminTickets = () => {
                 </tbody>
             </table>
 
-            {/* TABLE 2: Assigned Tickets */}
             <div className={styles.pageHeader} style={{marginTop: '2rem'}}><h1>Assigned Tickets</h1></div>
             <table className={styles.ticketsTable}>
                 <thead>
@@ -229,7 +227,6 @@ const AdminTickets = () => {
                 </tbody>
             </table>
 
-            {/* TABLE 3: Completed Tickets */}
             <div className={styles.pageHeader} style={{marginTop: '2rem'}}><h1>Completed Tickets</h1></div>
             <table className={styles.ticketsTable}>
                 <thead>
@@ -255,7 +252,6 @@ const AdminTickets = () => {
                 </tbody>
             </table>
 
-            {/* Modal */}
             <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={`Edit Ticket #${selectedTicket?.id}`}>
                 {selectedTicket && (
                     <TicketDetails ticket={selectedTicket} onClose={handleCloseModal} onUpdate={fetchTickets} />

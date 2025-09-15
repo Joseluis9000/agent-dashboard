@@ -1,0 +1,9 @@
+.layoutContainer {
+    display: flex;
+    min-height: 100vh;
+}
+
+.content {
+    flex-grow: 1;
+    background-color: #f4f7f6;
+}

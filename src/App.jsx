@@ -2,7 +2,11 @@
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './AuthContext';
+// REMOVED: No longer need ProtectedRoute here
+import AuthLayout from './layouts/AuthLayout';
+import AdminLayout from './layouts/AdminLayout';
+import SupervisorLayout from './layouts/SupervisorLayout'; // ✅ 1. Import the new layout
 
 // Page Imports
 import Login from './pages/Login';
@@ -19,72 +23,47 @@ import EODReport from './pages/EODReport';
 import EODHistory from './pages/EODHistory';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import AdminManageUsers from './pages/AdminManageUsers'; // ✅ 1. Import the new page
+import AdminManageUsers from './pages/AdminManageUsers';
 
 function App() {
   return (
-    <Router>
-      <Routes>
-        {/* Public Routes */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Login />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
+    <AuthProvider>
+      <Router>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
-        {/* Protected Agent Routes */}
-        <Route
-          path="/dashboard"
-          element={<ProtectedRoute><Dashboard /></ProtectedRoute>}
-        />
-        <Route
-          path="/sv-ar"
-          element={<ProtectedRoute><SVARPage /></ProtectedRoute>}
-        />
-        <Route
-          path="/disqualified-policies"
-          element={<ProtectedRoute><DisqualifiedPolicies /></ProtectedRoute>}
-        />
-        <Route
-          path="/ticketing-system"
-          element={<ProtectedRoute><TicketingSystem /></ProtectedRoute>}
-        />
-        <Route
-          path="/eod-report"
-          element={<ProtectedRoute><EODReport /></ProtectedRoute>}
-        />
-        <Route
-          path="/office-eods"
-          element={<ProtectedRoute><EODHistory /></ProtectedRoute>}
-        />
+          {/* Protected Agent Routes */}
+          <Route element={<AuthLayout />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/sv-ar" element={<SVARPage />} />
+            <Route path="/disqualified-policies" element={<DisqualifiedPolicies />} />
+            <Route path="/ticketing-system" element={<TicketingSystem />} />
+            <Route path="/eod-report" element={<EODReport />} />
+            <Route path="/office-eods" element={<EODHistory />} />
+          </Route>
 
-        {/* Protected Admin Routes */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminDashboard />
-            </ProtectedRoute>
-          }
-        >
-          <Route path="tickets" element={<AdminTickets />} />
-          <Route path="office-numbers" element={<OfficeNumbers />} />
-          <Route path="manage-users" element={<AdminManageUsers />} /> {/* ✅ 2. Add the new route */}
-        </Route>
+          {/* Protected Admin Routes */}
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminDashboard />} />
+            <Route path="tickets" element={<AdminTickets />} />
+            <Route path="office-numbers" element={<OfficeNumbers />} />
+            <Route path="manage-users" element={<AdminManageUsers />} />
+          </Route>
 
-        {/* Protected Supervisor Routes */}
-        <Route
-          path="/supervisor"
-          element={
-            <ProtectedRoute allowedRoles={['supervisor', 'admin']}>
-              <SupervisorDashboard />
-            </ProtectedRoute>
-          }
-        >
-          <Route path="office-numbers" element={<OfficeNumbers />} />
-          <Route path="tickets" element={<SupervisorTickets />} />
-        </Route>
-      </Routes>
-    </Router>
+          {/* ✅ 2. UPDATED SUPERVISOR ROUTES TO USE THE NEW LAYOUT */}
+          <Route path="/supervisor" element={<SupervisorLayout />}>
+            <Route index element={<SupervisorDashboard />} />
+            <Route path="office-numbers" element={<OfficeNumbers />} />
+            <Route path="tickets" element={<SupervisorTickets />} />
+          </Route>
+
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 }
 

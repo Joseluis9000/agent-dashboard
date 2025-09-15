@@ -1,44 +1,30 @@
-// src/components/ProtectedRoute.jsx
-
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient'; // Make sure this path is correct
+import { useAuth } from '../AuthContext'; // ✅ 1. Import our new hook
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
-    const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
+    // 2. Get the user and loading state from the global context
+    const { user, loading } = useAuth();
 
-    useEffect(() => {
-        const fetchUser = async () => {
-            // This fetches the current user session from Supabase's secure storage
-            const { data: { user } } = await supabase.auth.getUser();
-            setUser(user);
-            setLoading(false);
-        };
-        fetchUser();
-    }, []);
-
-    // 1. While we're checking for a user, show a loading message
+    // While the context is loading the session, show a loading message
     if (loading) {
-        return <div>Loading...</div>; // Or a loading spinner component
+        return <div>Loading...</div>;
     }
 
-    // 2. If no user is logged in, redirect to the login page
+    // If loading is done and there is no user, redirect to login
     if (!user) {
         return <Navigate to="/login" replace />;
     }
 
-    // 3. If roles are specified, check if the user has one of the allowed roles
+    // If roles are required, check them against the user's metadata
     if (allowedRoles) {
-        // This assumes your role is stored in user_metadata.role
         const userRole = user.user_metadata?.role; 
         if (!userRole || !allowedRoles.includes(userRole)) {
-            // If the user's role is not allowed, redirect them to a safe page
             return <Navigate to="/dashboard" replace />; 
         }
     }
 
-    // 4. If all checks pass, render the component
+    // If all checks pass, render the page
     return children;
 };
 

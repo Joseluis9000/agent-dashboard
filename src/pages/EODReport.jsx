@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import Sidebar from '../components/AgentDashboard/Sidebar';
 import styles from './EODReport.module.css';
 import BetaWarningModal from '../components/BetaWarningModal';
 import { supabase } from '../supabaseClient';
@@ -146,7 +145,7 @@ const EODReport = () => {
         const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
         summary.trust_deposit = (totalPremium + summary.convenience_fee + nbRwCorpFee + feeRoyalty) - (summary.dmv_premium + totalCreditPayment);
         summary.dmv_deposit = summary.dmv_premium;
-        summary.revenue_deposit = totalFee - (summary.convenience_fee + nbRwCorpFee + feeRoyalty + (parseFloat(expenses) || 0) + totalReferralsPaid);
+        summary.revenue_deposit = totalFee - (summary.convenience_fee + nbRwCorpFee + feeRoyalty + (parseFloat(expensesAmount) || 0) + totalReferralsPaid);
         return summary;
     };
     
@@ -258,7 +257,6 @@ const EODReport = () => {
                     .eq('id', editingReportId);
                 if (error) throw error;
             } else {
-                // MODIFIED: Get the newly created report back from the database
                 const { data: newReport, error } = await supabase
                     .from('eod_reports')
                     .insert([reportData])
@@ -266,8 +264,6 @@ const EODReport = () => {
                     .single();
 
                 if (error) throw error;
-
-                // Set the form to "edit mode" for the report just created
                 setEditingReportId(newReport.id);
             }
 
@@ -280,8 +276,6 @@ const EODReport = () => {
             setIsSubmitting(false);
         }
     };
-    
-    const handleLogout = () => navigate('/login');
 
     const totalCashCollected = eodDataMemo ? eodDataMemo.cash_premium + eodDataMemo.cash_fee : 0;
     const totalReferralsPaid = referrals.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
@@ -294,10 +288,9 @@ const EODReport = () => {
     const cashDifference = cashInHand ? parseFloat(cashInHand) - expectedCashInHand : 0;
 
     return (
-        <div className={styles.dashboardContainer}>
+        <>
             {isModalOpen && <BetaWarningModal onClose={() => setIsModalOpen(false)} />}
             
-            <Sidebar onLogout={handleLogout} />
             <main className={styles.mainContent}>
                 <div className={styles.pageHeader}>
                     <h1>{editingReportId ? 'Edit EOD Report' : 'Agent End of Day Report'}</h1>
@@ -498,7 +491,7 @@ const EODReport = () => {
                                     className={styles.submitButton}
                                     disabled={isSubmitting || transactions.length === 0}
                                 >
-                                    {isSubmitting ? 'Submitting...' : 'Submit EOD Report'}
+                                    {isSubmitting ? 'Submitting...' : (editingReportId ? 'Update Report' : 'Submit EOD Report')}
                                 </button>
                             </div>
                         </div>
@@ -513,7 +506,7 @@ const EODReport = () => {
                     onGoToDashboard={() => navigate('/office-eods')}
                 />
             )}
-        </div>
+        </>
     );
 };
 

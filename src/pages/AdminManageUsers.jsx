@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-// REMOVED: AdminSidebar import is no longer needed in this file
+// REMOVED: No longer need to import a sidebar component here
 import styles from './AdminManageUsers.module.css'; 
 import CreateUserModal from '../components/Modals/CreateUserModal';
 
@@ -88,11 +88,11 @@ const AdminManageUsers = () => {
         }
     };
 
-    // REMOVED: handleLogout is managed by the main layout, not this page
-
+    // REMOVED: handleLogout is now managed by AdminLayout
+    
     return (
         <>
-            {/* REMOVED: The outer div and the <AdminSidebar /> component */}
+            {/* REMOVED: The <div className={styles.dashboardContainer}> and <AdminSidebar /> */}
             <main className={styles.mainContent}>
                 <div className={styles.pageHeader}>
                     <h1>Manage Users</h1>
