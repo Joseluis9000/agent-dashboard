@@ -1,0 +1,148 @@
+.container {
+  padding: 2rem;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.dateNavigator {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.dateNavigator h2 {
+  font-size: 1.5rem;
+  color: #333;
+  margin: 0;
+}
+
+.dateNavigator button, .newButton {
+  background-color: #f0f0f0;
+  border: 1px solid #ccc;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.newButton {
+  background-color: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+/* --- Layout: single column always --- */
+.tablesGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  min-width: 0;
+}
+
+/* Remove 2-column breakpoint */
+@media (min-width: 1200px) {
+  .tablesGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tableCard {
+  background: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  min-width: 0;
+}
+
+.tableCard h3 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 1rem;
+}
+
+/* No horizontal scroll needed */
+.tableContainer {
+  width: 100%;
+  overflow: visible;
+}
+
+/* Tables fill their container */
+.tableContainer > table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+/* Allow content to wrap instead of forcing scroll */
+th, td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+  white-space: normal;      /* changed from nowrap */
+  word-break: break-word;   /* prevents long text from breaking layout */
+  vertical-align: middle;
+}
+
+th {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.statusSelect {
+  padding: 0.4rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  font-weight: bold;
+}
+
+.pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+.charged {
+  background-color: #d4edda;
+  color: #155724;
+}
+.voided {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.refId {
+  display: block;
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin-top: 2px;
+}
+
+.actionButtons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.editButton, .deleteButton {
+  border: none;
+  padding: 0.4rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+.editButton {
+  background-color: #e3f2fd;
+  color: #007bff;
+}
+
+.deleteButton {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+

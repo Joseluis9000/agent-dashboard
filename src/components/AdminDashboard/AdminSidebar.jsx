@@ -52,6 +52,17 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
         >
           Manage Users
         </NavLink>
+
+        {/* ✅ Updated Link */}
+        <NavLink
+          to="/admin/violations" // Points to the new dashboard page
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Manage Violations
+        </NavLink>
+        
       </nav>
 
       <div className={styles.logoutSection}>
@@ -64,4 +75,3 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 };
 
 export default AdminSidebar;
-

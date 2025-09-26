@@ -3,10 +3,9 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
-// REMOVED: No longer need ProtectedRoute here
 import AuthLayout from './layouts/AuthLayout';
 import AdminLayout from './layouts/AdminLayout';
-import SupervisorLayout from './layouts/SupervisorLayout'; // ✅ 1. Import the new layout
+import SupervisorLayout from './layouts/SupervisorLayout';
 
 // Page Imports
 import Login from './pages/Login';
@@ -24,6 +23,8 @@ import EODHistory from './pages/EODHistory';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import AdminManageUsers from './pages/AdminManageUsers';
+import EnterViolation from './pages/admin/EnterViolation';
+import ManageViolations from './pages/admin/ManageViolations'; // ✅ 1. IMPORT THE NEW DASHBOARD
 
 function App() {
   return (
@@ -52,9 +53,13 @@ function App() {
             <Route path="tickets" element={<AdminTickets />} />
             <Route path="office-numbers" element={<OfficeNumbers />} />
             <Route path="manage-users" element={<AdminManageUsers />} />
+            
+            {/* ✅ 2. REPLACE the old route with these two new ones */}
+            <Route path="violations" element={<ManageViolations />} />
+            <Route path="enter-violation" element={<EnterViolation />} />
           </Route>
 
-          {/* ✅ 2. UPDATED SUPERVISOR ROUTES TO USE THE NEW LAYOUT */}
+          {/* Protected Supervisor Routes */}
           <Route path="/supervisor" element={<SupervisorLayout />}>
             <Route index element={<SupervisorDashboard />} />
             <Route path="office-numbers" element={<OfficeNumbers />} />

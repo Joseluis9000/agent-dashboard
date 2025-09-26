@@ -1,3 +1,10 @@
+/* In src/index.css */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ✅ Add this rule below the @tailwind lines */
+table {
+  width: auto; /* Resets the default Tailwind table width */
+}
