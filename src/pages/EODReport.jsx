@@ -6,11 +6,15 @@ import { supabase } from '../supabaseClient';
 import SuccessModal from '../components/Modals/SuccessModal';
 
 const HEADERS = ['Receipt', 'ID', 'Customer', 'Customer Type', 'Date / Time', 'CSR', 'Office', 'Type', 'Company', 'Policy', 'Financed', 'Reference #', 'Method', 'Premium', 'Fee', 'Total'];
+const FEE_TYPES = ['Broker Fee', 'Endorsement Fee', 'Reinstatement Fee', 'Renewal Fee', 'Payment Fee', 'Tax Prep Fee', 'Registration Fee'];
+
+const findFeeType = (companyName = '') => {
+    return FEE_TYPES.find(fee => companyName.includes(fee)) || '';
+};
 
 const EODReport = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    
     const reportToEdit = location.state?.reportToEdit;
 
     const [editingReportId, setEditingReportId] = useState(null);
@@ -21,6 +25,7 @@ const EODReport = () => {
     const [expensesAmount, setExpensesAmount] = useState('');
     const [expensesExplanation, setExpensesExplanation] = useState('');
     const [referrals, setReferrals] = useState([{ clientName: '', amount: '', policyNumber: '', id: 1 }]);
+    const [arCorrections, setArCorrections] = useState([{ receiptNumber: '', premium: '', fee: '', ccFee: '', feeType: '', id: Date.now() }]);
     const [agentInitials, setAgentInitials] = useState('');
     const [verifiedReceipts, setVerifiedReceipts] = useState(false);
     const [verifiedDocs, setVerifiedDocs] = useState(false);
@@ -44,16 +49,15 @@ const EODReport = () => {
     useEffect(() => {
         if (reportToEdit) {
             setEditingReportId(reportToEdit.id);
-            const rawText = (reportToEdit.raw_transactions || []).map(t => 
-                HEADERS.map(h => t[h] || '').join('\t')
-            ).join('\n');
-            
+            const rawText = (reportToEdit.raw_transactions || []).map(t => HEADERS.map(h => t[h] || '').join('\t')).join('\n');
             setLogText(rawText);
             setTransactions(reportToEdit.raw_transactions || []);
-            setCashInHand(reportToEdit.total_cash_in_hand || '');
+            setCashInHand(String(reportToEdit.total_cash_in_hand || ''));
             setExpensesAmount(reportToEdit.expenses_amount || '');
             setExpensesExplanation(reportToEdit.expenses_explanation || '');
             setReferrals(reportToEdit.referrals && reportToEdit.referrals.length > 0 ? reportToEdit.referrals : [{ clientName: '', amount: '', policyNumber: '', id: 1 }]);
+            const loadedCorrections = reportToEdit.ar_corrections || [];
+            setArCorrections(loadedCorrections.length > 0 ? loadedCorrections : [{ receiptNumber: '', premium: '', fee: '', ccFee: '', feeType: '', id: Date.now() }]);
             setAgentInitials(reportToEdit.agent_initials || '');
             setVerifiedReceipts(reportToEdit.verified_receipts_match || false);
             setVerifiedDocs(reportToEdit.verified_docs_uploaded || false);
@@ -63,43 +67,25 @@ const EODReport = () => {
 
     useEffect(() => {
         const checkForExistingReport = async (currentUser) => {
-            if (!currentUser || reportToEdit) return;
-            const today = new Date().toISOString().split('T')[0];
-            const dateStart = `${today}T00:00:00.000Z`;
-            const dateEnd = `${today}T23:59:59.999Z`;
-
-            const { data } = await supabase
-                .from('eod_reports')
-                .select('id')
-                .eq('agent_email', currentUser.email)
-                .gte('created_at', dateStart)
-                .lte('created_at', dateEnd)
-                .limit(1)
-                .single();
-
+            if (!currentUser || reportToEdit || transactions.length === 0) return;
+            const reportDate = transactions[0]['Date / Time'].split(' ')[0];
+            const { data } = await supabase.from('eod_reports').select('id').eq('agent_email', currentUser.email).eq('report_date', reportDate).limit(1).single();
             if (data) {
-                alert("You have already submitted a report for today. You can edit it from the 'Office & Agent EODs' page.");
+                alert("You have already submitted a report for this date. You can edit it from the 'Office & Agent EODs' page.");
                 navigate('/office-eods');
             }
         };
+        if (user) checkForExistingReport(user);
+    }, [user, reportToEdit, navigate, transactions]);
 
-        if (user) {
-            checkForExistingReport(user);
-        }
-    }, [user, reportToEdit, navigate]);
-
-    const handleFileChange = (event) => {
-        setReceiptFiles([...event.target.files]);
-    };
+    const handleFileChange = (event) => setReceiptFiles([...event.target.files]);
 
     const parsePastedText = (text) => {
         const lines = text.trim().split('\n');
         return lines.map(line => {
             const columns = line.split('\t');
             const transaction = {};
-            HEADERS.forEach((header, index) => {
-                transaction[header] = columns[index] || '';
-            });
+            HEADERS.forEach((header, index) => { transaction[header] = columns[index] || ''; });
             return transaction;
         });
     };
@@ -154,37 +140,86 @@ const EODReport = () => {
         return calculateSummary(transactions, expensesAmount, referrals);
     }, [transactions, expensesAmount, referrals]);
 
+    const commissionableSummary = useMemo(() => {
+        if (!eodDataMemo) return null;
+        const arReceiptNumbers = new Set(arCorrections.map(c => c.receiptNumber?.trim()).filter(p => p));
+        if (arReceiptNumbers.size === 0) return eodDataMemo;
+        const arCorrectedTransactions = transactions.filter(t => arReceiptNumbers.has(t.Receipt));
+        if (arCorrectedTransactions.length === 0) return eodDataMemo;
+        const arSummary = calculateSummary(arCorrectedTransactions, 0, []);
+        const finalSummary = {};
+        for (const key in eodDataMemo) {
+            const totalValue = eodDataMemo[key];
+            const arValue = arSummary[key] || 0;
+            if (typeof totalValue === 'number' && !key.includes('_deposit')) {
+                finalSummary[key] = totalValue - arValue;
+            } else {
+                finalSummary[key] = totalValue;
+            }
+        }
+        return finalSummary;
+    }, [eodDataMemo, transactions, arCorrections]);
+
     const handlePaste = (e) => {
         e.preventDefault();
         const pastedText = e.clipboardData.getData('text');
         setLogText(pastedText);
         setError('');
         try {
-            const parsedTransactions = parsePastedText(pastedText);
-            setTransactions(parsedTransactions);
+            setTransactions(parsePastedText(pastedText));
         } catch (err) {
             setError("Failed to parse the data. Please ensure it is tab-separated.");
             setTransactions([]);
         }
     };
     
+    const handleArCorrectionChange = (index, event) => {
+        const newReceiptNumber = event.target.value;
+        const newArCorrections = [...arCorrections];
+        const currentCorrection = { ...newArCorrections[index], receiptNumber: newReceiptNumber };
+        const matchingTransactions = transactions.filter(t => t.Receipt === newReceiptNumber);
+
+        if (matchingTransactions.length > 0) {
+            let totalPremium = 0, mainFee = 0, convenienceFee = 0, detectedFeeType = '';
+            matchingTransactions.forEach(t => {
+                totalPremium += parseFloat(t.Premium) || 0;
+                const currentFee = parseFloat(t.Fee) || 0;
+                if (t.Company.includes('Convenience Fee')) {
+                    convenienceFee += currentFee;
+                } else if (currentFee > 0) {
+                    mainFee += currentFee;
+                    if (!detectedFeeType) detectedFeeType = findFeeType(t.Company);
+                }
+            });
+            currentCorrection.premium = totalPremium.toFixed(2);
+            currentCorrection.fee = mainFee.toFixed(2);
+            currentCorrection.ccFee = convenienceFee.toFixed(2);
+            currentCorrection.feeType = detectedFeeType;
+        } else {
+            currentCorrection.premium = '';
+            currentCorrection.fee = '';
+            currentCorrection.ccFee = '';
+            currentCorrection.feeType = '';
+        }
+        newArCorrections[index] = currentCorrection;
+        setArCorrections(newArCorrections);
+    };
+
+    const addArCorrection = () => setArCorrections([...arCorrections, { receiptNumber: '', premium: '', fee: '', ccFee: '', feeType: '', id: Date.now() }]);
+    const removeArCorrection = (index) => setArCorrections(arCorrections.filter((_, i) => i !== index));
     const handleReferralChange = (index, event) => {
         const newReferrals = [...referrals];
         newReferrals[index][event.target.name] = event.target.value;
         setReferrals(newReferrals);
     };
-
-    const addReferral = () => {
-        setReferrals([...referrals, { clientName: '', amount: '', policyNumber: '', id: Date.now() }]);
-    };
-
-    const removeReferral = (index) => {
-        const newReferrals = referrals.filter((_, i) => i !== index);
-        setReferrals(newReferrals);
-    };
+    const addReferral = () => setReferrals([...referrals, { clientName: '', amount: '', policyNumber: '', id: Date.now() }]);
+    const removeReferral = (index) => setReferrals(referrals.filter((_, i) => i !== index));
 
     const validateForm = () => {
         const errors = {};
+        if (cashInHand === null || String(cashInHand).trim() === '') {
+            errors.cashInHand = "Actual cash in hand is required.";
+        }
         if (parseFloat(expensesAmount) > 0 && !expensesExplanation.trim()) {
             errors.expensesExplanation = "An explanation is required for expenses.";
         }
@@ -196,6 +231,15 @@ const EODReport = () => {
         });
         if (!agentInitials.trim()) {
             errors.agentInitials = "Agent initials are required.";
+        }
+        if (!verifiedReceipts) {
+            errors.verifiedReceipts = "You must verify receipts match.";
+        }
+        if (!verifiedDocs) {
+            errors.verifiedDocs = "You must verify documents are uploaded.";
+        }
+        if (receiptFiles.length === 0 && (!reportToEdit || !reportToEdit.receipt_urls || reportToEdit.receipt_urls.length === 0)) {
+            errors.receiptFiles = "At least one receipt/deposit slip must be uploaded.";
         }
         if (transactions.length === 0) {
             alert("Cannot submit an empty report. Please paste transaction data.");
@@ -221,7 +265,9 @@ const EODReport = () => {
             const uploadedUrls = [];
             if (receiptFiles.length > 0) {
                 const uploadPromises = receiptFiles.map(file => {
-                    const filePath = `public/${user.id}/${Date.now()}_${file.name}`;
+                    // **MODIFIED**: Sanitize the filename before creating the path
+                    const sanitizedName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+                    const filePath = `public/${user.id}/${Date.now()}_${sanitizedName}`;
                     return supabase.storage.from('receipts').upload(filePath, file);
                 });
                 const uploadResults = await Promise.all(uploadPromises);
@@ -233,7 +279,10 @@ const EODReport = () => {
             }
 
             const currentOffice = transactions[0]?.Office || 'N/A';
+            const transactionDate = transactions.length > 0 ? transactions[0]['Date / Time'].split(' ')[0] : new Date().toISOString().split('T')[0];
+
             const reportData = {
+                report_date: transactionDate,
                 agent_email: user.email, 
                 office_number: currentOffice,
                 ...eodDataMemo,
@@ -242,6 +291,7 @@ const EODReport = () => {
                 expenses_amount: parseFloat(expensesAmount) || 0,
                 expenses_explanation: expensesExplanation,
                 referrals: referrals.filter(r => r.clientName && r.amount),
+                ar_corrections: arCorrections.filter(c => c.receiptNumber),
                 agent_initials: agentInitials,
                 notes: notes,
                 verified_receipts_match: verifiedReceipts,
@@ -251,22 +301,13 @@ const EODReport = () => {
             };
 
             if (editingReportId) {
-                const { error } = await supabase
-                    .from('eod_reports')
-                    .update(reportData)
-                    .eq('id', editingReportId);
+                const { error } = await supabase.from('eod_reports').update(reportData).eq('id', editingReportId);
                 if (error) throw error;
             } else {
-                const { data: newReport, error } = await supabase
-                    .from('eod_reports')
-                    .insert([reportData])
-                    .select()
-                    .single();
-
+                const { data: newReport, error } = await supabase.from('eod_reports').insert([reportData]).select().single();
                 if (error) throw error;
                 setEditingReportId(newReport.id);
             }
-
             setShowSuccessModal(true);
         } catch (error) {
             console.error('Error submitting EOD report:', error.message);
@@ -329,13 +370,14 @@ const EODReport = () => {
                     </div>
                 )}
                 
-                {transactions.length > 0 && eodDataMemo && (
+                {transactions.length > 0 && commissionableSummary && (
                     <div className={styles.bottomGrid}>
                         <div className={styles.summaryColumn}>
                              <div className={styles.card}>
                                 <h2>Step 3: Auto-Calculated Summary</h2>
+                                <p style={{fontSize: '0.8rem', fontStyle: 'italic', opacity: 0.8, marginTop: '-10px', marginBottom: '15px'}}>Note: A/R Corrections are excluded from this summary.</p>
                                 <div className={styles.resultsGrid}>
-                                    {Object.entries(eodDataMemo).filter(([key]) => !key.includes('_deposit')).map(([key, value]) => (
+                                    {Object.entries(commissionableSummary).filter(([key]) => !key.includes('_deposit')).map(([key, value]) => (
                                         <div key={key} className={styles.resultItem}>
                                             <span className={styles.resultKey}>{key.replace(/_/g, ' ')}:</span>
                                             <span className={styles.resultValue}>
@@ -380,6 +422,36 @@ const EODReport = () => {
                                 </div>
                                 
                                 <div className={styles.referralSection}>
+                                    <label>A/R Corrections</label>
+                                    <p style={{fontSize: '0.8rem', fontStyle: 'italic', opacity: 0.8, margin: '0 0 10px 0'}}>Enter the Receipt # to auto-fill details and exclude it from your commissionable summary.</p>
+                                    <div className={styles.arCorrectionGrid}>
+                                        <div className={styles.referralHeader}>Receipt #</div>
+                                        <div className={styles.referralHeader}>Premium</div>
+                                        <div className={styles.referralHeader}>Fee</div>
+                                        <div className={styles.referralHeader}>CC Fee</div>
+                                        <div className={styles.referralHeader}>Fee Type</div>
+                                        <div /> 
+                                        {arCorrections.map((corr, index) => (
+                                            <React.Fragment key={corr.id}>
+                                                <input type="text" name="receiptNumber" value={corr.receiptNumber} onChange={e => handleArCorrectionChange(index, e)} placeholder="Receipt #" />
+                                                <input type="number" name="premium" value={corr.premium} placeholder="Premium" disabled />
+                                                <input type="number" name="fee" value={corr.fee} placeholder="Fee" disabled />
+                                                <input type="number" name="ccFee" value={corr.ccFee} placeholder="CC Fee" disabled />
+                                                <select name="feeType" value={corr.feeType} disabled>
+                                                    <option value="">{corr.feeType || 'Fee Type'}</option>
+                                                </select>
+                                                <div>
+                                                    {arCorrections.length > 1 && (
+                                                        <button type="button" onClick={() => removeArCorrection(index)} className={styles.removeButton}>-</button>
+                                                    )}
+                                                </div>
+                                            </React.Fragment>
+                                        ))}
+                                    </div>
+                                     <button type="button" onClick={addArCorrection} className={styles.addButton}>+ Add A/R Correction</button>
+                                </div>
+
+                                <div className={styles.referralSection}>
                                     <label>Referral Payments</label>
                                     <div className={styles.referralGrid}>
                                         <div className={styles.referralHeader}>Client Name</div>
@@ -413,30 +485,20 @@ const EODReport = () => {
                                 <div className={styles.balancingSection}>
                                     <h3>Cash Balancing</h3>
                                     <div className={styles.balanceItem}>
-                                        <span>Cash Needed for DMV Deposit:</span>
-                                        <strong>${cashForDMV.toFixed(2)}</strong>
-                                    </div>
-                                    <div className={styles.balanceItem}>
-                                        <span>Cash Needed for Trust Deposit:</span>
-                                        <strong>${cashForTrust.toFixed(2)}</strong>
-                                    </div>
-                                    <div className={styles.balanceItem}>
-                                        <span>Cash Needed for Revenue Deposit:</span>
-                                        <strong>${cashForRevenue.toFixed(2)}</strong>
-                                    </div>
-                                    <hr className={styles.divider} />
-                                    <div className={styles.balanceItem}>
                                         <span>(=) Total Expected Cash in Hand:</span>
                                         <strong>${expectedCashInHand.toFixed(2)}</strong>
                                     </div>
-                                    <hr className={styles.divider} />
                                     <div className={styles.balanceItem}>
                                         <label htmlFor="cashInHand">Your Actual Cash in Hand:</label>
                                         <input id="cashInHand" type="number" value={cashInHand} onChange={e => setCashInHand(e.target.value)} placeholder="Cash Amount" />
                                     </div>
+                                    {formErrors.cashInHand && <span className={styles.errorText}>{formErrors.cashInHand}</span>}
                                     <div className={styles.balanceItem}>
                                         <span>Difference (Over / Short):</span>
-                                        <strong className={cashDifference === 0 ? '' : (cashDifference > 0 ? styles.over : styles.short)}>
+                                        <strong className={
+                                            (cashDifference < 0 || cashDifference > 5) ? styles.short : 
+                                            (cashDifference > 0 && cashDifference <= 5) ? styles.over : ''
+                                        }>
                                             ${cashDifference.toFixed(2)}
                                         </strong>
                                     </div>
@@ -452,22 +514,13 @@ const EODReport = () => {
                                     <div className={styles.checkboxGroup}>
                                         <input type="checkbox" id="verifyReceipts" checked={verifiedReceipts} onChange={() => setVerifiedReceipts(!verifiedReceipts)} />
                                         <label htmlFor="verifyReceipts">I verified all names, accounting types, and amounts match MATRIX receipts.</label>
+                                        {formErrors.verifiedReceipts && <span className={styles.errorText}>{formErrors.verifiedReceipts}</span>}
                                     </div>
                                     <div className={styles.checkboxGroup}>
                                         <input type="checkbox" id="verifyDocs" checked={verifiedDocs} onChange={() => setVerifiedDocs(!verifiedDocs)} />
                                         <label htmlFor="verifyDocs">I checked all transactions and ensured all supporting documents are uploaded.</label>
+                                        {formErrors.verifiedDocs && <span className={styles.errorText}>{formErrors.verifiedDocs}</span>}
                                     </div>
-                                    <div className={styles.inputGroup}>
-                                        <label>Notes</label>
-                                        <textarea
-                                            className={styles.notesTextarea}
-                                            value={notes}
-                                            onChange={e => setNotes(e.target.value)}
-                                            placeholder="Add any relevant notes for the day here..."
-                                            rows="4"
-                                        />
-                                    </div>
-                                    
                                     <div className={styles.inputGroup}>
                                         <label>Upload Receipts / Deposit Slips</label>
                                         <input 
@@ -482,6 +535,17 @@ const EODReport = () => {
                                                 ))}
                                             </ul>
                                         )}
+                                        {formErrors.receiptFiles && <span className={styles.errorText}>{formErrors.receiptFiles}</span>}
+                                    </div>
+                                    <div className={styles.inputGroup}>
+                                        <label>Notes</label>
+                                        <textarea
+                                            className={styles.notesTextarea}
+                                            value={notes}
+                                            onChange={e => setNotes(e.target.value)}
+                                            placeholder="Add any relevant notes for the day here..."
+                                            rows="4"
+                                        />
                                     </div>
                                 </div>
                                 
@@ -501,7 +565,7 @@ const EODReport = () => {
 
             {showSuccessModal && (
                 <SuccessModal 
-                    message={`Your EOD report has been ${editingReportId ? 'updated' : 'saved'} correctly.`}
+                    message={`Your EOD report has been ${reportToEdit ? 'updated' : 'saved'} correctly.`}
                     onClose={() => setShowSuccessModal(false)}
                     onGoToDashboard={() => navigate('/office-eods')}
                 />

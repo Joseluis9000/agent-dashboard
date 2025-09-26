@@ -30,7 +30,7 @@
     border-radius: 8px;
     padding: 1.5rem 2rem;
     box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    margin-bottom: 2rem; /* Space between stacked cards */
+    margin-bottom: 2rem;
 }
 
 .card h2 {
@@ -59,8 +59,9 @@
 
 .errorText {
     color: #d93025;
-    margin-top: 1rem;
+    margin-top: 0.5rem;
     font-size: 0.85rem;
+    display: block; /* Ensures it takes its own line */
 }
 
 .tableContainer {
@@ -89,7 +90,6 @@
     font-weight: 600;
 }
 
-/* New Grid for Bottom Section */
 .bottomGrid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -108,19 +108,18 @@
     gap: 0.75rem;
 }
 
-/* ✅ Increased font size for Step 3 */
 .resultItem {
     display: flex;
     justify-content: space-between;
-    padding: 0.75rem 0; /* Increased padding */
+    padding: 0.75rem 0;
     border-bottom: 1px solid #f0f0f0;
-    font-size: 1.1rem; /* Increased font size */
+    font-size: 1.1rem;
 }
 .resultItem:last-child { border-bottom: none; }
 
 .resultKey {
     text-transform: capitalize;
-    color: #444; /* Darker text for readability */
+    color: #444;
     font-weight: 500;
 }
 
@@ -136,7 +135,6 @@
     gap: 1rem;
 }
 
-/* Reduced size of Final Deposits */
 .depositItem {
     background-color: #f8f9fa;
     padding: 1.25rem;
@@ -171,7 +169,8 @@
 
 .inputGroup input[type="text"],
 .inputGroup input[type="number"],
-.notesTextarea {
+.notesTextarea,
+.arCorrectionGrid select {
     width: 100%;
     padding: 0.75rem;
     border: 1px solid #ccc;
@@ -227,53 +226,59 @@
     color: white;
 }
 
-/* Increased size of Cash Balancing Section */
 .balancingSection {
     margin-top: 1rem;
-    padding: 2rem; 
-    border: 1px solid #90caf9; 
+    padding: 1.5rem;
+    border: 1px solid #90caf9;
     border-radius: 8px;
-    background-color: #e3f2fd; 
+    background-color: #e3f2fd;
 }
 
 .balancingSection h3 {
     margin-top: 0;
     text-align: center;
-    font-size: 1.5rem; 
+    font-size: 1.5rem;
 }
 
-/* ✅ Increased font size for Cash Balancing */
 .balanceItem {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1.25rem 0; /* Increased padding */
-    font-size: 1.3rem; /* Increased font size */
+    padding: 1rem 0;
+    font-size: 1.2rem;
 }
 
 .balanceItem strong {
-    font-size: 1.8rem; /* Increased font size */
+    font-size: 1.5rem;
     font-family: monospace;
     font-weight: 700;
 }
 
 .balanceItem input {
-    font-size: 1.8rem; /* Increased font size */
+    font-size: 1.5rem;
     font-weight: 700;
     padding: 0.5rem;
     text-align: right;
-    width: 220px; /* Slightly wider */
+    width: 200px;
     border: 1px solid #90caf9;
 }
 
 .divider {
     border: none;
     border-top: 1px dashed #90caf9;
-    margin: 1rem 0;
+    margin: 0.5rem 0;
 }
 
-.over { color: #dc3545; font-weight: 700; }
-.short { color: #dc3545; font-weight: 700; }
+/* **FIXED**: Corrected the color for the .over class */
+.over {
+    color: #28a745; /* Green */
+    font-weight: 700;
+}
+
+.short {
+    color: #dc3545; /* Red */
+    font-weight: 700;
+}
 
 .verificationSection {
     border-top: 1px solid #eee;
@@ -283,14 +288,20 @@
 
 .checkboxGroup {
     display: flex;
-    align-items: center;
+    align-items: flex-start; /* Aligns checkbox with the start of the text */
     margin-bottom: 1rem;
 }
 
 .checkboxGroup input {
+    margin-top: 0.2rem; /* Aligns checkbox better with text */
     margin-right: 0.75rem;
     width: 18px;
     height: 18px;
+}
+
+.checkboxGroup .errorText {
+    margin-left: 26px; /* Indents error message under the checkbox label */
+    margin-top: 0.25rem;
 }
 
 .submitButton {
@@ -305,4 +316,17 @@
     border-radius: 8px;
     cursor: pointer;
     margin-top: 1.5rem;
+}
+
+.arCorrectionGrid {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr 1fr 1.5fr 40px; 
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.arCorrectionGrid select {
+    width: 100%;
+    min-width: 0;
 }

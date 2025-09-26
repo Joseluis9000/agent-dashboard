@@ -1,9 +1,73 @@
-.layoutContainer {
-    display: flex;
-    min-height: 100vh;
+/* === Admin Layout Styles === */
+
+/* Sidebar width variable (must match AdminSidebar width) */
+:root {
+  --sidebar-w: 260px;
+  /* Provide safe fallbacks for text colors if global tokens aren't present */
+  --txt-1: #0f172a;
+  --txt-2: #475569;
 }
 
-.content {
-    flex-grow: 1;
-    background-color: #f4f7f6;
+/* Layout container (parent) */
+.layoutContainer {
+  min-height: 100vh;
+  /* display:flex;  <-- not needed because the sidebar is fixed */
+  background: #f6f8fb; /* optional light background */
 }
+
+/* Main content area */
+.content {
+  /* Leave space for the fixed sidebar */
+  margin-left: var(--sidebar-w);
+  min-height: 100vh;
+  padding: 24px;
+  box-sizing: border-box;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.6),
+    rgba(255, 255, 255, 0)
+  );
+  color: var(--txt-1);
+  overflow-x: hidden;
+}
+
+/* Mobile behavior: sidebar overlays, content goes full width */
+@media (max-width: 768px) {
+  .content {
+    margin-left: 0; /* let sidebar slide over content */
+  }
+}
+
+/* ---- Stat card helpers (used by extended StatCard.jsx) ---- */
+
+/* Title / label style */
+.summaryCardTitle {
+  margin: 0 0 .35rem 0;
+  font-size: .95rem;
+  color: var(--txt-2, #475569);
+  font-weight: 700;
+}
+
+/* Big numeric value */
+.summaryCardBig {
+  margin: 0;
+  font-size: clamp(1.35rem, 2.4vw, 1.9rem);
+  font-weight: 900;
+  letter-spacing: .1px;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  color: var(--txt-1, #0f172a);
+}
+
+/* Mid-weight secondary line (e.g., fees) */
+.summaryCardMid {
+  margin: .1rem 0 .1rem 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--txt-1, #0f172a);
+}
+
+/* Green border highlight (e.g., Grand Total) */
+.summaryCardHighlight {
+  border: 2px solid #22c55e;
+}
+
