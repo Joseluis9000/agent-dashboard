@@ -9,35 +9,40 @@ import Sidebar from '../components/AgentDashboard/Sidebar';
 import styles from './AuthLayout.module.css';
 
 const AuthLayout = () => {
-    const navigate = useNavigate();
-    const { user, loading } = useAuth();
+  const navigate = useNavigate();
+  const { user, loading } = useAuth();
 
-    const handleLogout = async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) {
-            console.error('Error logging out:', error);
-        }
-        navigate('/login', { replace: true }); 
-    };
-
-    if (loading) {
-        return <div>Loading session...</div>;
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Error logging out:', error);
+      }
+    } finally {
+      // ✅ Keep agent pages consistent: they read userEmail from localStorage
+      localStorage.removeItem('userEmail');
+      navigate('/login', { replace: true });
     }
+  };
 
-    if (!user) {
-        // This is where 'Navigate' is used
-        return <Navigate to="/login" replace />;
-    }
+  if (loading) {
+    return <div>Loading session...</div>;
+  }
 
-    // If there is a user, show the sidebar and the specific page content
-    return (
-        <div className={styles.layoutContainer}>
-            <Sidebar onLogout={handleLogout} />
-            <main className={styles.content}>
-                <Outlet />
-            </main>
-        </div>
-    );
+  if (!user) {
+    // This is where 'Navigate' is used
+    return <Navigate to="/login" replace />;
+  }
+
+  // If there is a user, show the sidebar and the specific page content
+  return (
+    <div className={styles.layoutContainer}>
+      <Sidebar onLogout={handleLogout} />
+      <main className={styles.content}>
+        <Outlet />
+      </main>
+    </div>
+  );
 };
 
-export default AuthLayout;
+export default AuthLayout; // ✅ make sure it’s exported

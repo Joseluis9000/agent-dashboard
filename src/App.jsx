@@ -24,7 +24,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import AdminManageUsers from './pages/AdminManageUsers';
 import EnterViolation from './pages/admin/EnterViolation';
-import ManageViolations from './pages/admin/ManageViolations'; // ✅ 1. IMPORT THE NEW DASHBOARD
+import ManageViolations from './pages/admin/ManageViolations'; // Admin dashboard for violations
+import AgentViolations from './pages/AgentViolations';         // ✅ NEW: Agent view
 
 function App() {
   return (
@@ -45,6 +46,7 @@ function App() {
             <Route path="/ticketing-system" element={<TicketingSystem />} />
             <Route path="/eod-report" element={<EODReport />} />
             <Route path="/office-eods" element={<EODHistory />} />
+            <Route path="/agent/violations" element={<AgentViolations />} /> {/* ✅ NEW */}
           </Route>
 
           {/* Protected Admin Routes */}
@@ -53,8 +55,6 @@ function App() {
             <Route path="tickets" element={<AdminTickets />} />
             <Route path="office-numbers" element={<OfficeNumbers />} />
             <Route path="manage-users" element={<AdminManageUsers />} />
-            
-            {/* ✅ 2. REPLACE the old route with these two new ones */}
             <Route path="violations" element={<ManageViolations />} />
             <Route path="enter-violation" element={<EnterViolation />} />
           </Route>
@@ -65,7 +65,6 @@ function App() {
             <Route path="office-numbers" element={<OfficeNumbers />} />
             <Route path="tickets" element={<SupervisorTickets />} />
           </Route>
-
         </Routes>
       </Router>
     </AuthProvider>

@@ -66,26 +66,24 @@
   padding-bottom: 1rem;
 }
 
-/* No horizontal scroll needed */
+/* Tables fill their container */
 .tableContainer {
   width: 100%;
-  overflow: visible;
+  overflow: visible; /* we'll switch to auto only on very small screens */
 }
 
-/* Tables fill their container */
 .tableContainer > table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: auto; /* keep auto; we’ll guide the Category column via width rules below */
 }
 
-/* Allow content to wrap instead of forcing scroll */
 th, td {
   padding: 0.75rem;
   text-align: left;
   border-bottom: 1px solid #eee;
-  white-space: normal;      /* changed from nowrap */
-  word-break: break-word;   /* prevents long text from breaking layout */
+  white-space: normal;
+  word-break: break-word;
   vertical-align: middle;
 }
 
@@ -93,6 +91,69 @@ th {
   font-weight: 600;
   font-size: 0.9rem;
   color: #555;
+}
+
+/* =========================
+   CATEGORY COLUMN TIDYING
+   (5th column in your table)
+   ========================= */
+
+/* Give Category a predictable width so it behaves across sizes */
+.tableContainer table th:nth-child(5),
+.tableContainer table td:nth-child(5) {
+  width: 160px;       /* preferred width on desktop */
+  max-width: 160px;
+}
+
+/* Truncate long category labels with ellipsis on mid/large screens */
+.tableContainer table td:nth-child(5) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* single line by default */
+  font-weight: 600;    /* make it stand out a bit */
+  color: #2b4c7e;
+}
+
+/* Slightly reduce the header label so it doesn't wrap early */
+.tableContainer table th:nth-child(5) {
+  white-space: nowrap;
+}
+
+/* Medium screens: tighten the category width a bit */
+@media (max-width: 1100px) {
+  .tableContainer table th:nth-child(5),
+  .tableContainer table td:nth-child(5) {
+    width: 140px;
+    max-width: 140px;
+  }
+}
+
+/* Small screens: allow a clean two-line wrap for Category
+   (better than squishing or long horizontal scroll) */
+@media (max-width: 900px) {
+  .tableContainer table td:nth-child(5) {
+    white-space: normal;               /* allow wrapping */
+    display: -webkit-box;              /* enable line clamp */
+    -webkit-line-clamp: 2;             /* show up to 2 lines */
+    -webkit-box-orient: vertical;
+    overflow: hidden;                  /* hide overflow after 2 lines */
+  }
+
+  /* Slightly tighter cells overall for small screens */
+  th, td {
+    padding: 0.6rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* Very narrow screens: fall back to horizontal scroll instead of wrecking layout */
+@media (max-width: 700px) {
+  .tableContainer {
+    overflow-x: auto;      /* enable scroll only when really needed */
+  }
+  .tableContainer > table {
+    min-width: 900px;      /* keep a sensible minimum so columns remain readable */
+  }
 }
 
 .statusSelect {

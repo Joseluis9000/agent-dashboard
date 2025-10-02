@@ -25,6 +25,7 @@
 
 .formCard {
     max-width: 1600px; /* Increased max width for more columns */
+    width: 100%;
     margin: 0 auto;
     background: #fff;
     padding: 2rem;
@@ -55,30 +56,47 @@
     cursor: pointer;
 }
 
+/* ===== DENSE 11-COLUMN GRID =====
+   Agent | Office | Region | Type | Category | Client | Policy/Ref | Var | Fee | Details | -  */
 .entryGrid {
     display: grid;
-    grid-template-columns: 1.5fr 1.5fr 1.5fr 1.5fr 1.5fr 1.5fr 0.75fr 0.75fr 2fr 40px;
-    gap: 1rem;
+    grid-template-columns:
+        1.1fr  /* Agent */
+        1.0fr  /* Office */
+        1.0fr  /* Region */
+        1.05fr /* Violation Type */
+        1.05fr /* Violation Category */
+        1.1fr  /* Client Name */
+        0.9fr  /* Policy / Ref */
+        0.55fr /* Variance */
+        0.55fr /* Fee */
+        1.1fr  /* Details */
+        0.25fr /* Remove btn */;
+    column-gap: 10px;
+    row-gap: 12px;
     align-items: center;
 }
 
 .gridHeader {
     font-weight: bold;
-    font-size: 0.8rem;
+    font-size: 0.9rem; /* slightly smaller so labels fit */
     color: #555;
     padding-bottom: 0.5rem;
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    white-space: nowrap; /* prevent header wrap */
 }
 
 .entryGrid input,
 .entryGrid select {
     width: 100%;
+    min-width: 0;           /* prevents overflow inside grid cells */
     padding: 0.6rem;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 0.9rem;
+    box-sizing: border-box;
 }
 
 .feeInput {
@@ -92,7 +110,7 @@
     border: none;
     border-radius: 4px;
     height: 38px;
-    width: 38px;
+    width: 100%;  /* fill its narrow grid cell */
     cursor: pointer;
     font-weight: bold;
     font-size: 1.2rem;
@@ -256,4 +274,14 @@
     border-radius: 4px;
     font-weight: bold;
     cursor: pointer;
+}
+
+/* ===== Responsive handling: allow horizontal scroll instead of squishing columns ===== */
+@media (max-width: 1100px) {
+    .formCard {
+        overflow-x: auto;
+    }
+    .entryGrid {
+        min-width: 1100px; /* ensures a scrollbar appears on small screens */
+    }
 }
