@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthContext';
-import styles from './AgentViolations.module.css'; // ✅ NEW CSS just for this page
+import styles from './AgentViolations.module.css';
 
 /** Monday–Sunday helper (UTC-safe) */
 const getWeekRange = (date) => {
@@ -15,6 +15,7 @@ const getWeekRange = (date) => {
   return { start: monday.toISOString().split('T')[0], end: sunday.toISOString().split('T')[0] };
 };
 
+// Backwards-compatible helper while old rows still say "AR Shortage"
 const isAR = (vt) => vt === 'AR Violation' || vt === 'AR Shortage';
 
 const AgentViolations = () => {
@@ -23,32 +24,50 @@ const AgentViolations = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [violations, setViolations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
 
   const week = useMemo(() => getWeekRange(currentDate), [currentDate]);
+  // Prefer the authenticated user; keep localStorage as a last-ditch fallback
   const userEmail = user?.email || localStorage.getItem('userEmail') || null;
 
   const fetchViolations = useCallback(async () => {
-    if (!userEmail) return;
-    setLoading(true);
-    setError(null);
+    // Wait until the auth context finishes the initial check
+    if (authLoading) return;
 
-    const { data, error } = await supabase
-      .from('violations')
-      .select('*')
-      .eq('week_start_date', week.start)
-      .eq('agent_email', userEmail)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching agent violations:', error);
-      setError('Failed to fetch violations.');
+    // If we still don't have an email, stop the spinner and show a hint
+    if (!userEmail) {
       setViolations([]);
-    } else {
-      setViolations(data || []);
+      setError('Could not determine your user email. Please log out and sign back in.');
+      setLoading(false);
+      return;
     }
-    setLoading(false);
-  }, [userEmail, week.start]);
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error } = await supabase
+        .from('violations')
+        .select('*')
+        .eq('week_start_date', week.start)
+        .eq('agent_email', userEmail)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[AgentViolations] supabase error:', error);
+        setError(error.message || 'Failed to fetch violations.');
+        setViolations([]);
+      } else {
+        setViolations(data || []);
+      }
+    } catch (e) {
+      console.error('[AgentViolations] unexpected fetch error:', e);
+      setError('Unexpected error loading violations.');
+      setViolations([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [authLoading, userEmail, week.start]);
 
   useEffect(() => {
     fetchViolations();
@@ -65,20 +84,26 @@ const AgentViolations = () => {
     setCurrentDate(nd);
   };
 
-  const arList = violations.filter((v) => isAR(v.violation_type));
-  const scList = violations.filter((v) => v.violation_type === 'Scanning Violation');
+  const arList = useMemo(() => violations.filter((v) => isAR(v.violation_type)), [violations]);
+  const scList = useMemo(
+    () => violations.filter((v) => v.violation_type === 'Scanning Violation'),
+    [violations]
+  );
 
-  const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const fmtMoney = (n) => `$${Number(n || 0).toFixed(2)}`;
   const sum = (arr, key) => arr.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
 
-  const totals = useMemo(() => ({
-    arCount: arList.length,
-    arFees: sum(arList, 'fee_amount'),
-    scCount: scList.length,
-    scFees: sum(scList, 'fee_amount'),
-    allCount: violations.length,
-    allFees: sum(violations, 'fee_amount'),
-  }), [arList, scList, violations]);
+  const totals = useMemo(
+    () => ({
+      arCount: arList.length,
+      arFees: sum(arList, 'fee_amount'),
+      scCount: scList.length,
+      scFees: sum(scList, 'fee_amount'),
+      allCount: violations.length,
+      allFees: sum(violations, 'fee_amount'),
+    }),
+    [arList, scList, violations]
+  );
 
   const renderCardList = (rows) => {
     if (!rows.length) return <p>No violations for this period.</p>;
@@ -92,8 +117,8 @@ const AgentViolations = () => {
             <p><strong>Category:</strong> {v.violation_category || '—'}</p>
             <p><strong>Client:</strong> {v.client_name}</p>
             <p><strong>Policy #:</strong> {v.reference_id}</p>
-            <p><strong>Variance:</strong> {fmt(v.variance_amount)}</p>
-            <p><strong>Fee:</strong> {fmt(v.fee_amount)}</p>
+            <p><strong>Variance:</strong> {fmtMoney(v.variance_amount)}</p>
+            <p><strong>Fee:</strong> {fmtMoney(v.fee_amount)}</p>
             <p><strong>Status:</strong> {v.status || 'Pending'}</p>
             <p><strong>Entered By:</strong> {v.manager_email ? v.manager_email.split('@')[0] : 'N/A'}</p>
             {v.details ? <p className={styles.details}><strong>Details:</strong> {v.details}</p> : null}
@@ -103,11 +128,9 @@ const AgentViolations = () => {
     );
   };
 
+  // While AuthProvider is still resolving the initial session, keep a simple splash
   if (authLoading) {
     return <div className={styles.mainContent}><p>Loading session…</p></div>;
-  }
-  if (!userEmail) {
-    return <div className={styles.mainContent}><p>Could not determine your user email. Please log out and sign back in.</p></div>;
   }
 
   return (
@@ -125,9 +148,9 @@ const AgentViolations = () => {
       <div className={styles.card}>
         <h2 className={styles.cardTitle}>This Week Totals</h2>
         <div className={styles.totalsContainer}>
-          <p><strong>AR Violations:</strong> {totals.arCount} • {fmt(totals.arFees)}</p>
-          <p><strong>Scanning Violations:</strong> {totals.scCount} • {fmt(totals.scFees)}</p>
-          <p><strong>Total:</strong> {totals.allCount} • {fmt(totals.allFees)}</p>
+          <p><strong>AR Violations:</strong> {totals.arCount} • {fmtMoney(totals.arFees)}</p>
+          <p><strong>Scanning Violations:</strong> {totals.scCount} • {fmtMoney(totals.scFees)}</p>
+          <p><strong>Total:</strong> {totals.allCount} • {fmtMoney(totals.allFees)}</p>
         </div>
       </div>
 
@@ -153,4 +176,5 @@ const AgentViolations = () => {
 };
 
 export default AgentViolations;
+
 

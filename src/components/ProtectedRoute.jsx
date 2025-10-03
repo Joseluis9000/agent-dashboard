@@ -1,31 +1,22 @@
+// src/components/ProtectedRoute.jsx
 import React from 'react';
-import { Navigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext'; // ✅ 1. Import our new hook
+import { Navigate, Outlet } from 'react-router-dom';
+import { useAuth } from '../AuthContext';
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
-    // 2. Get the user and loading state from the global context
-    const { user, loading } = useAuth();
+export default function ProtectedRoute({ allowedRoles }) {
+  const { user, profile, loading } = useAuth();
 
-    // While the context is loading the session, show a loading message
-    if (loading) {
-        return <div>Loading...</div>;
-    }
+  // While Auth is loading, render nothing (or a small spinner)
+  if (loading) return null;
 
-    // If loading is done and there is no user, redirect to login
-    if (!user) {
-        return <Navigate to="/login" replace />;
-    }
+  // Not signed in? -> Login
+  if (!user) return <Navigate to="/login" replace />;
 
-    // If roles are required, check them against the user's metadata
-    if (allowedRoles) {
-        const userRole = user.user_metadata?.role; 
-        if (!userRole || !allowedRoles.includes(userRole)) {
-            return <Navigate to="/dashboard" replace />; 
-        }
-    }
+  // If specific roles are required, enforce them
+  if (allowedRoles && !allowedRoles.includes(profile?.role)) {
+    return <Navigate to="/" replace />;
+  }
 
-    // If all checks pass, render the page
-    return children;
-};
-
-export default ProtectedRoute;
+  // All good — render nested routes
+  return <Outlet />;
+}

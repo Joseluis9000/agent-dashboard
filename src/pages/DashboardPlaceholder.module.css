@@ -41,3 +41,46 @@
     line-height: 1.6;
     margin-bottom: 15px;
 }
+
+.ctaRow {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.ctaButton,
+.ctaButtonSecondary,
+.ctaButtonAccent {
+  display: inline-block;
+  text-decoration: none;
+  font-weight: 700;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.ctaButton {
+  background: #007bff;
+  color: #fff;
+  border-color: #007bff;
+}
+
+.ctaButtonSecondary {
+  background: #f0f0f0;
+  color: #333;
+  border-color: #ccc;
+}
+
+.ctaButtonAccent {
+  background: #28a745;
+  color: #fff;
+  border-color: #28a745;
+}
+
+.helperText {
+  margin-top: 0.75rem;
+  color: #6c757d;
+  font-size: 0.9rem;
+}
