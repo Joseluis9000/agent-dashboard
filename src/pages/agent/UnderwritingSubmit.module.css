@@ -1,0 +1,291 @@
+/* =======================
+   Tokens / base
+   ======================= */
+:root {
+  --ui-bg: #f7f9fb;
+  --card-bg: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+
+  --primary: #0d6efd;
+  --primary-600: #0b5ed7;
+  --success: #198754;
+  --warning: #f59e0b;
+
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.08);
+}
+
+/* =======================
+   Page / headings
+   ======================= */
+.container {
+  padding: 1.5rem 2rem;
+  background: var(--ui-bg);
+  color: var(--text);
+  min-height: 100%;
+}
+
+.title {
+  margin: 0 0 1.1rem;
+  font-size: 1.9rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* =======================
+   Card
+   ======================= */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+/* =======================
+   Form grid
+   ======================= */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.grid input,
+.grid select,
+textarea {
+  width: 100%;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #fff;
+  outline: none;
+  font-size: 0.95rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.grid input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+.grid input:focus,
+.grid select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+}
+
+/* Office selector + "remember" */
+.officeGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rememberOffice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* =======================
+   Textarea (main form)
+   ======================= */
+textarea {
+  min-height: 110px;
+  margin-top: 0.8rem;
+  resize: vertical;
+}
+
+/* =======================
+   Buttons
+   ======================= */
+.submit {
+  margin-top: 0.8rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
+}
+
+.submit:hover { background: var(--primary-600); }
+.submit:active { transform: translateY(1px); }
+
+/* arrows / “Today” in week selector also use this */
+.refreshBtn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0.45rem 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
+}
+.refreshBtn:hover { background: var(--primary-600); }
+.refreshBtn:active { transform: translateY(1px); }
+
+/* =======================
+   Messages / alerts
+   ======================= */
+.message {
+  margin-top: 0.6rem;
+  color: var(--success);
+  font-weight: 700;
+}
+
+/* =======================
+   Table
+   ======================= */
+.tableWrap {
+  overflow: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+  font-variant-numeric: tabular-nums;
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+
+th, td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.95rem;
+}
+
+tbody tr:hover {
+  background: #fbfdff;
+}
+
+/* Note/long text cells */
+.notesCell {
+  max-width: 420px;
+  white-space: pre-wrap;
+}
+
+/* =======================
+   Chat composer
+   ======================= */
+.composerRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  position: relative;
+  margin-top: 8px;
+}
+
+.composerRow textarea {
+  flex: 1;
+  min-height: 90px;
+}
+
+.composerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  position: relative; /* positioning context for emoji panel */
+}
+
+.emojiBtn {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.emojiBtn:hover { background: #f8fafc; }
+
+.emojiIcon { font-size: 18px; line-height: 1; }
+
+.emojiPanel {
+  position: absolute;
+  bottom: 52px; /* sits above the button row */
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+  z-index: 50;
+}
+
+.emojiPick {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sendBtn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.sendBtn:hover { background: var(--primary-600); }
+
+.closeBtn {
+  background: #fff;
+  color: #374151;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+.closeBtn:hover { background: #f8fafc; }
+
+/* =======================
+   Responsive
+   ======================= */
+@media (max-width: 1200px) {
+  .grid { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+

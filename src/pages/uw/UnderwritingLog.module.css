@@ -1,0 +1,70 @@
+/* Keep this tiny: only the log table + columns + badge. The page container/card
+   still come from UnderwritingDashboard.module.css so UI stays consistent. */
+
+:root {
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --muted: #6b7280;
+
+  --bg-amber: #fff4e5;
+  --bg-green: #eaf7f1;
+  --bg-red: #fde8ea;
+  --bg-info: #e8f7ff;
+}
+
+/* Wider base so cells aren’t crushed */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1400px; /* bump from 1100 -> 1400 for breathing room */
+  font-variant-numeric: tabular-nums;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  color: #334155;
+  z-index: 1;
+}
+
+.table th,
+.table td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.95rem;
+}
+
+/* Column sizing (keeps short things short + prevents vertical lettering) */
+.colStatus   { width: 120px; }
+.colDate     { width: 190px; white-space: nowrap; }
+.colOffice   { width: 80px;  white-space: nowrap; }
+.colTxn      { width: 150px; white-space: nowrap; }
+.colPolicy   { width: 150px; white-space: nowrap; }
+.colCustomer { min-width: 200px; white-space: normal; word-break: normal; }
+.colAgent    { min-width: 240px; white-space: nowrap; }
+.colAssign   { min-width: 220px; white-space: nowrap; }
+.colNotes    { min-width: 420px; white-space: pre-wrap; }
+
+/* Status badge (compact) */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid;
+}
+.badgeApproved { color: #166534; background: var(--bg-green);  border-color: #93d2b4; }
+.badgeCleared  { composes: badgeApproved; }
+.badgeLocate   { color: #075985; background: var(--bg-info);   border-color: #9ad8f4; }
+.badgeDeclined { color: #9f1239; background: var(--bg-red);    border-color: #f0a3ad; }
+.badgeNeutral  { color: #0f172a; background: #eef2f7;          border-color: var(--border-strong); }
