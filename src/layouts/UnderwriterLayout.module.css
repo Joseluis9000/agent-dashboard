@@ -1,0 +1,122 @@
+/* Telegram turquoise + clean panel styling */
+:root {
+  --uw-bg-1: #26A5E4; /* Telegram brand-ish */
+  --uw-bg-2: #1E97CF;
+  --uw-bg-3: #1789BC;
+  --uw-text: #ffffff;
+  --uw-text-dim: rgba(255, 255, 255, 0.75);
+  --uw-active: rgba(255, 255, 255, 0.18);
+  --uw-hover: rgba(255, 255, 255, 0.12);
+  --uw-border: rgba(255, 255, 255, 0.2);
+}
+
+.layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f7f9fb;
+}
+
+/* Sidebar */
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 240px;
+  background: linear-gradient(180deg, var(--uw-bg-1), var(--uw-bg-2) 55%, var(--uw-bg-3));
+  color: var(--uw-text);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+}
+
+/* Brand: logo with text UNDER it */
+.brand {
+  display: flex;
+  flex-direction: column;    /* stack logo + text */
+  align-items: center;       /* center the text under logo */
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.logo {
+  width: 300px;
+  height: 300px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+}
+
+.brandText {
+  display: block;
+  margin-top: -4px;          /* tucks label a bit closer to logo */
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--uw-text);
+  text-align: center;        /* center label under logo */
+}
+
+.nav {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--uw-border);
+}
+
+.navItem {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--uw-text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.04s ease-in-out;
+}
+
+.navItem:hover {
+  background: var(--uw-hover);
+  border-color: var(--uw-border);
+}
+
+.active {
+  background: var(--uw-active);
+  border-color: var(--uw-border);
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--uw-border);
+}
+
+.logout {
+  width: 100%;
+  background: #ffffff;
+  color: #0b6ea9;
+  font-weight: 700;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: transform 0.05s ease, box-shadow 0.15s ease;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+}
+
+.logout:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+}
+
+/* Main content area shifts right of the fixed sidebar */
+.main {
+  flex: 1;
+  margin-left: 240px; /* matches .sidebar width */
+  padding: 20px 28px;
+}
