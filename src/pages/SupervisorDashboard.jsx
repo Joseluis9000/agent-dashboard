@@ -1,26 +1,20 @@
 // src/pages/SupervisorDashboard.jsx
 
 import React from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
-import SupervisorSidebar from '../components/SupervisorDashboard/SupervisorSidebar';
-import styles from '../components/SupervisorDashboard/SupervisorDashboard.module.css'; 
+import { Outlet } from 'react-router-dom';
 
 const SupervisorDashboard = () => {
-    const navigate = useNavigate();
+  // This page component now only returns the content that will
+  // appear inside the layout you already fixed.
+  return (
+    <div>
+      <h1>Welcome, Supervisor!</h1>
+      <p>Select an option from the sidebar to get started.</p>
 
-    const handleLogout = () => {
-        localStorage.clear(); // Clears all user data
-        navigate('/login');
-    };
-
-    return (
-        <div className={styles.dashboardContainer}>
-            <SupervisorSidebar onLogout={handleLogout} />
-            <main className={styles.mainContent}>
-                <Outlet /> {/* Child pages like OfficeNumbers will render here */}
-            </main>
-        </div>
-    );
+      {/* This <Outlet> allows nested routes like /supervisor/tickets to render here */}
+      <Outlet />
+    </div>
+  );
 };
 
 export default SupervisorDashboard;

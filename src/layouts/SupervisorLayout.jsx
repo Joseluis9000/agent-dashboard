@@ -1,38 +1,30 @@
+// src/layouts/SupervisorLayout.jsx
+
 import React from 'react';
-import { Outlet, Navigate, useNavigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
-import { supabase } from '../supabaseClient';
-import AdminSidebar from '../components/AdminDashboard/AdminSidebar'; // Assuming supervisors use the AdminSidebar
-import styles from './AdminLayout.module.css'; // Reusing the same layout styles
+import { Outlet, useNavigate } from 'react-router-dom';
+
+// 1. Import the correct SUPERVISOR sidebar, not the admin one.
+import SupervisorSidebar from '../components/SupervisorDashboard/SupervisorSidebar';
+
+// 2. Use the styles associated with the supervisor dashboard for consistency.
+import styles from '../components/SupervisorDashboard/SupervisorDashboard.module.css';
 
 const SupervisorLayout = () => {
     const navigate = useNavigate();
-    const { user, loading } = useAuth();
 
-    const handleLogout = async () => {
-        await supabase.auth.signOut();
-        navigate('/login', { replace: true });
+    const handleLogout = () => {
+        // This can be expanded with supabase.auth.signOut() if needed
+        localStorage.clear();
+        navigate('/login');
     };
 
-    if (loading) {
-        return <div>Loading session...</div>;
-    }
-
-    if (!user) {
-        return <Navigate to="/login" replace />;
-    }
-    
-    const userRole = user.user_metadata?.role;
-    if (userRole !== 'supervisor' && userRole !== 'admin') {
-        // If not a supervisor or admin, redirect to their default dashboard
-        return <Navigate to="/dashboard" replace />;
-    }
-
     return (
-        <div className={styles.layoutContainer}>
-            {/* You can create a dedicated SupervisorSidebar later if needed */}
-            <AdminSidebar onLogout={handleLogout} />
-            <main className={styles.content}>
+        <div className={styles.dashboardContainer}>
+            {/* 3. Render the correct SupervisorSidebar component */}
+            <SupervisorSidebar onLogout={handleLogout} />
+            
+            <main className={styles.mainContent}>
+                {/* Child routes like SupervisorTickets will render here */}
                 <Outlet />
             </main>
         </div>
