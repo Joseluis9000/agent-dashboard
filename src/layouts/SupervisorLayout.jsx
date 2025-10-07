@@ -2,25 +2,27 @@
 
 import React from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-
-// 1. Import the correct SUPERVISOR sidebar, not the admin one.
 import SupervisorSidebar from '../components/SupervisorDashboard/SupervisorSidebar';
-
-// 2. Use the styles associated with the supervisor dashboard for consistency.
 import styles from '../components/SupervisorDashboard/SupervisorDashboard.module.css';
+
+// 1. Import your Supabase client
+import { supabase } from '../supabaseClient';
 
 const SupervisorLayout = () => {
     const navigate = useNavigate();
 
-    const handleLogout = () => {
-        // This can be expanded with supabase.auth.signOut() if needed
+    // 2. Make the function 'async' to handle the Supabase sign-out
+    const handleLogout = async () => {
+        // 3. Add the command to sign out from Supabase
+        await supabase.auth.signOut();
+        
+        // These lines clean up local data and redirect the user
         localStorage.clear();
-        navigate('/login');
+        navigate('/login', { replace: true });
     };
 
     return (
         <div className={styles.dashboardContainer}>
-            {/* 3. Render the correct SupervisorSidebar component */}
             <SupervisorSidebar onLogout={handleLogout} />
             
             <main className={styles.mainContent}>

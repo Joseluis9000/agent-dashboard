@@ -77,23 +77,23 @@ export default function UnderwritingSubmit() {
 
   /* Form state */
   const [form, setForm] = useState({
-    effective_date: isoDate(new Date()),  // ⬅️ default to today
+    effective_date: isoDate(new Date()),  // default to today
     office_code: '',
-    transaction_type: 'NB',               // ⬅️ NB | EN
+    transaction_type: 'NB',               // NB | EN
     policy_number: '',
     customer_name: '',
     phone_number: '',
     premium: '',
     total_bf: '',
     split_pay: '',
-    details: '',
+    details: '',                          // will be used as first chat message
     priority: 3,
   });
   const [rememberOffice, setRememberOffice] = useState(true);
 
   /* My submissions state */
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState({ pending: [], accepted: [] });
   const [uwMap, setUwMap] = useState({}); // { userId: 'FirstName' }
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -180,13 +180,16 @@ export default function UnderwritingSubmit() {
     if (error) {
       console.error('loadMine error:', error);
       setMsg(`Error loading submissions: ${error.message}`);
-      setItems([]);
+      setItems({ pending: [], accepted: [] });
       setUwMap({});
       setLoading(false);
       return;
     }
 
-    setItems(data || []);
+    // Separate pending vs. accepted
+    const pending = (data || []).filter((r) => (r.status || '').toLowerCase() !== 'approved');
+    const accepted = (data || []).filter((r) => (r.status || '').toLowerCase() === 'approved');
+    setItems({ pending, accepted });
 
     // Build Underwriter first-name map via profiles
     const ids = Array.from(
@@ -243,23 +246,28 @@ export default function UnderwritingSubmit() {
 
     const now = new Date().toISOString();
 
+    // Build submission payload; details field is *not* stored — we push it as first message.
     const payload = {
       agent_id: user.id,
       agent_email: user.email,
 
       effective_date: form.effective_date || null,
       office_code: form.office_code.trim(),
-      transaction_type: form.transaction_type || null, // ⬅️ NEW
+      transaction_type: form.transaction_type || null,
       policy_number: form.policy_number.trim(),
       customer_name: form.customer_name?.trim() || null,
       phone_number: form.phone_number?.trim() || null,
       premium: Number.isFinite(premiumNum) ? premiumNum : null,
-      details: form.details?.trim() || null,
 
       attachments: {
         total_bf: Number.isFinite(totalBfNum) ? totalBfNum : null,
         split_pay_amount: Number.isFinite(splitPayNum) ? splitPayNum : null,
       },
+
+      // First conversation message (if provided)
+      pending_items: form.details?.trim()
+        ? [{ from: 'agent', text: form.details.trim(), at: now, by: user.email }]
+        : [],
 
       status: 'Submitted',
       priority: Number(form.priority) || 3,
@@ -269,17 +277,48 @@ export default function UnderwritingSubmit() {
       last_updated_by_email: user.email,
     };
 
-    const { error } = await supabase.from('uw_submissions').insert(payload);
+    const { data: inserted, error } = await supabase
+      .from('uw_submissions')
+      .insert(payload)
+      .select('id')   // keep the id so we can link total_bf
+      .single();
+
     if (error) {
       setMsg(`Error: ${error.message}`);
       return;
     }
 
+    // ✅ Save total_bf in its own table (no reading)
+    if (Number.isFinite(totalBfNum)) {
+      const bfRow = {
+        policy_number: form.policy_number.trim(),
+        amount: totalBfNum,
+        office_code: form.office_code.trim() || null,
+        agent_id: user.id,
+        agent_email: user.email,
+        submission_id: inserted?.id ?? null, // optional link to uw_submissions
+        created_at: now,
+        updated_at: now,
+      };
+
+      // Try upsert if a unique constraint exists, otherwise fallback to insert
+      let bfErr = null;
+      let upsertRes = await supabase
+        .from('total_bf')
+        .upsert(bfRow, { onConflict: 'policy_number' });
+      if (upsertRes.error) {
+        // Fallback to plain insert (in case no unique constraint)
+        const ins2 = await supabase.from('total_bf').insert(bfRow);
+        bfErr = ins2.error;
+      }
+      if (bfErr) console.error('total_bf save error:', bfErr);
+    }
+
     setMsg('Submitted!');
     setForm((f) => ({
-      effective_date: isoDate(new Date()),                      // ⬅️ reset to today
+      effective_date: isoDate(new Date()),
       office_code: localStorage.getItem('default_office_code') || '',
-      transaction_type: 'NB',                                   // ⬅️ reset default
+      transaction_type: 'NB',
       policy_number: '',
       customer_name: '',
       phone_number: '',
@@ -348,6 +387,218 @@ export default function UnderwritingSubmit() {
     );
   }
 
+  const PendingRow = (r) => {
+    const canMessage = (r.status || '').toLowerCase() !== 'approved';
+    const last = lastMessage(r);
+    return (
+      <tr key={r.id} style={{ background: '#fff5f5' /* subtle red */ }}>
+        <td>{new Date(r.created_at).toLocaleString()}</td>
+        <td>{r.office_code || '—'}</td>
+        <td>{r.transaction_type || '—'}</td>
+        <td>{r.policy_number || '—'}</td>
+        <td>{r.customer_name || '—'}</td>
+        <td>{r.status || '—'}</td>
+        <td>{prettyUnderwriter(r)}</td>
+        <td className={styles.notesCell}>{r.uw_notes || '—'}</td>
+        <td style={{ minWidth: 320 }}>
+          {/* Collapsed preview */}
+          {openChatRow !== r.id && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {last ? (
+                <div
+                  style={{
+                    fontSize: '.9rem',
+                    color: '#374151',
+                    background: '#f8fafc',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 10,
+                    padding: '8px 10px',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                    {last.from === 'agent' ? 'You' : 'Underwriting'} ·{' '}
+                    {new Date(last.at).toLocaleString()}
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{last.text}</div>
+                </div>
+              ) : (
+                <div style={{ color: '#6b7280' }}>No messages yet.</div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className={styles.submit}
+                  onClick={() => {
+                    setOpenChatRow(r.id);
+                    setShowEmoji(false);
+                  }}
+                >
+                  Open conversation
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Expanded chat */}
+          {openChatRow === r.id && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                border: '1px solid #e5e7eb',
+                borderRadius: 12,
+                padding: 10,
+                background: '#fff',
+              }}
+            >
+              <div
+                style={{
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                {(Array.isArray(r.pending_items) ? r.pending_items : []).map(
+                  (m, idx) => {
+                    const mine = m.from === 'agent';
+                    return (
+                      <div
+                        key={`${m.at}-${idx}`}
+                        style={{
+                          alignSelf: mine ? 'flex-end' : 'flex-start',
+                          maxWidth: '85%',
+                          background: mine ? '#e0f2fe' : '#f3f4f6',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: 12,
+                          padding: '8px 10px',
+                        }}
+                      >
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                          {mine ? 'You' : 'Underwriting'} ·{' '}
+                          {m.at ? new Date(m.at).toLocaleString() : ''}
+                        </div>
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+
+              {canMessage ? (
+                <>
+                  <div className={styles.composerRow}>
+                    <textarea
+                      ref={composerRef}
+                      placeholder="Type a message…"
+                      value={draft[r.id] || ''}
+                      onChange={(e) =>
+                        setDraft((s) => ({ ...s, [r.id]: e.target.value }))
+                      }
+                    />
+
+                    <div className={styles.composerActions}>
+                      <button
+                        type="button"
+                        ref={emojiBtnRef}
+                        className={styles.emojiBtn}
+                        onClick={() => setShowEmoji((v) => !v)}
+                        aria-label="Insert emoji"
+                        title="Insert emoji"
+                      >
+                        <span className={styles.emojiIcon}>😊</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.sendBtn}
+                        onClick={() => sendMessage(r)}
+                      >
+                        Send message
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.closeBtn}
+                        onClick={() => {
+                          setOpenChatRow(null);
+                          setShowEmoji(false);
+                        }}
+                      >
+                        Close
+                      </button>
+
+                      {showEmoji && openChatRow === r.id && (
+                        <div ref={emojiPanelRef} className={styles.emojiPanel}>
+                          {emojiList.map((e) => (
+                            <button
+                              key={e}
+                              type="button"
+                              className={styles.emojiPick}
+                              onClick={() => insertEmoji(e)}
+                            >
+                              {e}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: '#6b7280' }}>
+                  This policy is approved. Messaging is closed.
+                </div>
+              )}
+            </div>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
+  const AcceptedRow = (r) => {
+    const last = lastMessage(r);
+    return (
+      <tr key={r.id}>
+        <td>{new Date(r.created_at).toLocaleString()}</td>
+        <td>{r.office_code || '—'}</td>
+        <td>{r.transaction_type || '—'}</td>
+        <td>{r.policy_number || '—'}</td>
+        <td>{r.customer_name || '—'}</td>
+        <td>{r.status || '—'}</td>
+        <td>{prettyUnderwriter(r)}</td>
+        <td className={styles.notesCell}>{r.uw_notes || '—'}</td>
+        <td style={{ minWidth: 320 }}>
+          {/* Collapsed preview only (messaging closed for approved) */}
+          {last ? (
+            <div
+              style={{
+                fontSize: '.9rem',
+                color: '#374151',
+                background: '#f8fafc',
+                border: '1px solid #e5e7eb',
+                borderRadius: 10,
+                padding: '8px 10px',
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {last.from === 'agent' ? 'You' : 'Underwriting'} ·{' '}
+                {new Date(last.at).toLocaleString()}
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{last.text}</div>
+            </div>
+          ) : (
+            <div style={{ color: '#6b7280' }}>No messages.</div>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>Underwriting Submission</h1>
@@ -385,7 +636,7 @@ export default function UnderwritingSubmit() {
             </label>
           </div>
 
-          {/* NEW: Transaction Type */}
+          {/* Transaction Type */}
           <select
             value={form.transaction_type}
             onChange={(e) => setForm({ ...form, transaction_type: e.target.value })}
@@ -435,8 +686,10 @@ export default function UnderwritingSubmit() {
           />
         </div>
 
-        <textarea
-          placeholder="Enter notes to Underwriter (missing registration, pending E-sign, etc.)"
+        {/* Replaced textarea with a message input that posts to conversation */}
+        <input
+          type="text"
+          placeholder="Message to Underwriter (this will be saved in the conversation)"
           value={form.details}
           onChange={(e) => setForm({ ...form, details: e.target.value })}
         />
@@ -487,204 +740,69 @@ export default function UnderwritingSubmit() {
 
         {loading ? (
           <p>Loading…</p>
-        ) : items.length === 0 ? (
+        ) : items.pending.length === 0 && items.accepted.length === 0 ? (
           <p>No submissions in this week.</p>
         ) : (
-          <div className={styles.tableWrap}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Office</th>
-                  <th>Transaction Type</th>{/* ⬅️ NEW column */}
-                  <th>Policy #</th>
-                  <th>Customer</th>
-                  <th>Status</th>
-                  <th>Underwriter</th>
-                  <th>UW Notes</th>
-                  <th>Conversation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((r) => {
-                  const canMessage = (r.status || '').toLowerCase() !== 'approved';
-                  const last = lastMessage(r);
-                  return (
-                    <tr key={r.id}>
-                      <td>{new Date(r.created_at).toLocaleString()}</td>
-                      <td>{r.office_code || '—'}</td>
-                      <td>{r.transaction_type || '—'}</td>{/* ⬅️ NEW cell */}
-                      <td>{r.policy_number || '—'}</td>
-                      <td>{r.customer_name || '—'}</td>
-                      <td>{r.status || '—'}</td>
-                      <td>{prettyUnderwriter(r)}</td>
-                      <td className={styles.notesCell}>{r.uw_notes || '—'}</td>
-                      <td style={{ minWidth: 320 }}>
-                        {/* Collapsed preview */}
-                        {openChatRow !== r.id && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {last ? (
-                              <div
-                                style={{
-                                  fontSize: '.9rem',
-                                  color: '#374151',
-                                  background: '#f8fafc',
-                                  border: '1px solid #e5e7eb',
-                                  borderRadius: 10,
-                                  padding: '8px 10px',
-                                }}
-                              >
-                                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                                  {last.from === 'agent' ? 'You' : 'Underwriting'} ·{' '}
-                                  {new Date(last.at).toLocaleString()}
-                                </div>
-                                <div style={{ whiteSpace: 'pre-wrap' }}>{last.text}</div>
-                              </div>
-                            ) : (
-                              <div style={{ color: '#6b7280' }}>No messages yet.</div>
-                            )}
-
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <button
-                                type="button"
-                                className={styles.submit}
-                                onClick={() => {
-                                  setOpenChatRow(r.id);
-                                  setShowEmoji(false);
-                                }}
-                              >
-                                Open conversation
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Expanded chat */}
-                        {openChatRow === r.id && (
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 10,
-                              border: '1px solid #e5e7eb',
-                              borderRadius: 12,
-                              padding: 10,
-                              background: '#fff',
-                            }}
-                          >
-                            <div
-                              style={{
-                                maxHeight: 260,
-                                overflowY: 'auto',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 10,
-                              }}
-                            >
-                              {(Array.isArray(r.pending_items) ? r.pending_items : []).map(
-                                (m, idx) => {
-                                  const mine = m.from === 'agent';
-                                  return (
-                                    <div
-                                      key={`${m.at}-${idx}`}
-                                      style={{
-                                        alignSelf: mine ? 'flex-end' : 'flex-start',
-                                        maxWidth: '85%',
-                                        background: mine ? '#e0f2fe' : '#f3f4f6',
-                                        border: '1px solid #e5e7eb',
-                                        borderRadius: 12,
-                                        padding: '8px 10px',
-                                      }}
-                                    >
-                                      <div style={{ fontSize: 12, color: '#6b7280' }}>
-                                        {mine ? 'You' : 'Underwriting'} ·{' '}
-                                        {m.at ? new Date(m.at).toLocaleString() : ''}
-                                      </div>
-                                      <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>
-                                    </div>
-                                  );
-                                }
-                              )}
-                            </div>
-
-                            {canMessage ? (
-                              <>
-                                <div className={styles.composerRow}>
-                                  <textarea
-                                    ref={composerRef}
-                                    placeholder="Type a message…"
-                                    value={draft[r.id] || ''}
-                                    onChange={(e) =>
-                                      setDraft((s) => ({ ...s, [r.id]: e.target.value }))
-                                    }
-                                  />
-
-                                  <div className={styles.composerActions}>
-                                    <button
-                                      type="button"
-                                      ref={emojiBtnRef}
-                                      className={styles.emojiBtn}
-                                      onClick={() => setShowEmoji((v) => !v)}
-                                      aria-label="Insert emoji"
-                                      title="Insert emoji"
-                                    >
-                                      <span className={styles.emojiIcon}>😊</span>
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      className={styles.sendBtn}
-                                      onClick={() => sendMessage(r)}
-                                    >
-                                      Send message
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      className={styles.closeBtn}
-                                      onClick={() => {
-                                        setOpenChatRow(null);
-                                        setShowEmoji(false);
-                                      }}
-                                    >
-                                      Close
-                                    </button>
-
-                                    {showEmoji && openChatRow === r.id && (
-                                      <div ref={emojiPanelRef} className={styles.emojiPanel}>
-                                        {emojiList.map((e) => (
-                                          <button
-                                            key={e}
-                                            type="button"
-                                            className={styles.emojiPick}
-                                            onClick={() => insertEmoji(e)}
-                                          >
-                                            {e}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <div style={{ color: '#6b7280' }}>
-                                This policy is approved. Messaging is closed.
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </td>
+          <>
+            {/* Pending Policies (always open) */}
+            <h3 style={{ marginTop: 0 }}>Pending Policies</h3>
+            {items.pending.length === 0 ? (
+              <p>No pending policies.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Office</th>
+                      <th>Transaction Type</th>
+                      <th>Policy #</th>
+                      <th>Customer</th>
+                      <th>Status</th>
+                      <th>Underwriter</th>
+                      <th>UW Notes</th>
+                      <th>Conversation</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>{items.pending.map(PendingRow)}</tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Accepted Policies (collapsed by default) */}
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, marginTop: 16 }}>
+                Accepted Policies
+              </summary>
+              {items.accepted.length === 0 ? (
+                <p style={{ marginTop: 10 }}>No accepted policies.</p>
+              ) : (
+                <div className={styles.tableWrap} style={{ marginTop: 10 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Office</th>
+                        <th>Transaction Type</th>
+                        <th>Policy #</th>
+                        <th>Customer</th>
+                        <th>Status</th>
+                        <th>Underwriter</th>
+                        <th>UW Notes</th>
+                        <th>Conversation</th>
+                      </tr>
+                    </thead>
+                    <tbody>{items.accepted.map(AcceptedRow)}</tbody>
+                  </table>
+                </div>
+              )}
+            </details>
+          </>
         )}
       </div>
     </div>
   );
 }
+
 
 

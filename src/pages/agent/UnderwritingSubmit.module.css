@@ -14,6 +14,8 @@
   --primary-600: #0b5ed7;
   --success: #198754;
   --warning: #f59e0b;
+  --danger-bg: #fff5f5;
+  --danger-border: #fecaca;
 
   --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.08);
@@ -44,7 +46,7 @@
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
   box-shadow: var(--shadow-sm);
 }
 
@@ -99,19 +101,29 @@ textarea:focus {
 }
 
 /* =======================
-   Textarea (main form)
+   Message-to-Underwriter input
    ======================= */
-textarea {
-  min-height: 110px;
+input[type='text'][placeholder*='Underwriter'] {
+  width: 100%;
   margin-top: 0.8rem;
-  resize: vertical;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  background: #fff;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+input[type='text'][placeholder*='Underwriter']:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
 }
 
 /* =======================
    Buttons
    ======================= */
 .submit {
-  margin-top: 0.8rem;
+  margin-top: 0.9rem;
   background: var(--primary);
   color: #fff;
   border: none;
@@ -123,10 +135,14 @@ textarea {
   transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
 }
 
-.submit:hover { background: var(--primary-600); }
-.submit:active { transform: translateY(1px); }
+.submit:hover {
+  background: var(--primary-600);
+}
+.submit:active {
+  transform: translateY(1px);
+}
 
-/* arrows / “Today” in week selector also use this */
+/* Week navigation */
 .refreshBtn {
   background: var(--primary);
   color: #fff;
@@ -138,8 +154,12 @@ textarea {
   box-shadow: var(--shadow-sm);
   transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
 }
-.refreshBtn:hover { background: var(--primary-600); }
-.refreshBtn:active { transform: translateY(1px); }
+.refreshBtn:hover {
+  background: var(--primary-600);
+}
+.refreshBtn:active {
+  transform: translateY(1px);
+}
 
 /* =======================
    Messages / alerts
@@ -151,7 +171,7 @@ textarea {
 }
 
 /* =======================
-   Table
+   Tables
    ======================= */
 .tableWrap {
   overflow: auto;
@@ -159,6 +179,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
+  margin-top: 0.5rem;
 }
 
 table {
@@ -178,7 +199,8 @@ thead th {
   z-index: 1;
 }
 
-th, td {
+th,
+td {
   padding: 0.7rem 0.75rem;
   border-bottom: 1px solid #eef2f7;
   text-align: left;
@@ -190,10 +212,28 @@ tbody tr:hover {
   background: #fbfdff;
 }
 
+/* Highlight pending rows */
+tr.pendingRow {
+  background: var(--danger-bg);
+  border-left: 4px solid var(--danger-border);
+}
+
 /* Note/long text cells */
 .notesCell {
   max-width: 420px;
   white-space: pre-wrap;
+}
+
+/* Collapsible Accepted Section */
+details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 0.6rem;
+  user-select: none;
+}
+details[open] summary {
+  color: var(--primary-600);
 }
 
 /* =======================
@@ -227,13 +267,18 @@ tbody tr:hover {
   cursor: pointer;
   box-shadow: var(--shadow-sm);
 }
-.emojiBtn:hover { background: #f8fafc; }
+.emojiBtn:hover {
+  background: #f8fafc;
+}
 
-.emojiIcon { font-size: 18px; line-height: 1; }
+.emojiIcon {
+  font-size: 18px;
+  line-height: 1;
+}
 
 .emojiPanel {
   position: absolute;
-  bottom: 52px; /* sits above the button row */
+  bottom: 52px;
   right: 0;
   background: #fff;
   border: 1px solid var(--border);
@@ -264,7 +309,9 @@ tbody tr:hover {
   cursor: pointer;
   box-shadow: var(--shadow-sm);
 }
-.sendBtn:hover { background: var(--primary-600); }
+.sendBtn:hover {
+  background: var(--primary-600);
+}
 
 .closeBtn {
   background: #fff;
@@ -276,16 +323,22 @@ tbody tr:hover {
   cursor: pointer;
   box-shadow: var(--shadow-sm);
 }
-.closeBtn:hover { background: #f8fafc; }
+.closeBtn:hover {
+  background: #f8fafc;
+}
 
 /* =======================
    Responsive
    ======================= */
 @media (max-width: 1200px) {
-  .grid { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+  .grid {
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
+  .grid {
+    grid-template-columns: 1fr;
+  }
 }
 
