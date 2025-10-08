@@ -475,6 +475,7 @@ export default function UnderwritingDashboard() {
     }
     const start = ta.selectionStart ?? current.length;
     const end = ta.selectionEnd ?? current.length;
+
     const next = current.slice(0, start) + emoji + current.slice(end);
     setDraft((s) => ({ ...s, [rowId]: next }));
     requestAnimationFrame(() => {
@@ -681,13 +682,7 @@ export default function UnderwritingDashboard() {
   const onPrevDay = () => setDay(toDateKey(new Date(dayDate.getTime() - 86400000)));
   const onNextDay = () => setDay(toDateKey(new Date(dayDate.getTime() + 86400000)));
 
-  if (!isUW)
-    return (
-      <div className={styles.container}>
-        <p>Not authorized.</p>
-      </div>
-    );
-
+  // ✅ Moved segments BEFORE any conditional return (fixes hooks order)
   const segments = useMemo(() => {
     const a = statusCountsToday.Approved || 0;
     const p = statusCountsToday.Pending || 0;
@@ -699,6 +694,13 @@ export default function UnderwritingDashboard() {
       { label: 'Cannot Locate', value: c, pct: (c / total) * 100, color: '#ef4444' },
     ];
   }, [statusCountsToday]);
+
+  if (!isUW)
+    return (
+      <div className={styles.container}>
+        <p>Not authorized.</p>
+      </div>
+    );
 
   const chatProps = {
     openChatRow,
@@ -973,3 +975,4 @@ export default function UnderwritingDashboard() {
     </div>
   );
 }
+

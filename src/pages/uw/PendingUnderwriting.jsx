@@ -6,12 +6,16 @@ import styles from './UnderwritingDashboard.module.css'; // reuse dashboard styl
 
 const ACTION_OPTIONS = ['Approved', 'Pending', 'Cannot Locate Policy'];
 
-/* ---------- helpers ---------- */
+/* ---------- helpers (date) ---------- */
 const pad = (n) => String(n).padStart(2, '0');
-const toDateKey = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-const dateKeyToDate = (key) => new Date(`${key}T12:00:00Z`);
-const dayStartISO = (key) => `${key}T00:00:00.000Z`;
-const dayEndISO = (key) => `${key}T23:59:59.999Z`;
+const yyyymm = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}`;
+const thisMonthKey = () => yyyymm(new Date());
+const monthStartISO = (monthKey /* YYYY-MM */) => `${monthKey}-01T00:00:00.000Z`;
+const monthEndISO = (monthKey /* YYYY-MM */) => {
+  const [y, m] = monthKey.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate(); // day 0 of next month = last day
+  return `${monthKey}-${pad(lastDay)}T23:59:59.999Z`;
+};
 const diffAge = (iso) => {
   if (!iso) return { label: '—', danger: false };
   const now = Date.now();
@@ -26,22 +30,31 @@ const diffAge = (iso) => {
   return { label: `${days} days`, danger };
 };
 
+/* ---------- helpers (office grouping & labels) ---------- */
+const officeKeyOf = (row) =>
+  row.office_id || row.officeId || row.office_code || row.office || row.office_name || 'Unknown';
+
+const officeLabelOf = (row) =>
+  row.office_name || row.officeName || row.office || row.office_id || row.officeId || 'Unknown';
+
+/** Count “new” per office. Adjust logic here if needed. */
+const NEW_BADGE_STATUSES = new Set(['Pending', 'Cannot Locate Policy']);
+
+const isNewForBadge = (row) => {
+  // default: show as “new” if it’s still pending/CLP and unassigned
+  const stillPending = NEW_BADGE_STATUSES.has(row.status);
+  const unassigned = !row.claimed_by;
+  return stillPending && unassigned;
+};
+
 /* ---------- component ---------- */
 export default function PendingUnderwriting() {
   const { user, profile } = useAuth();
   const role = profile?.role || user?.user_metadata?.role || 'agent';
   const isUW = ['underwriter', 'uw_manager', 'supervisor', 'admin'].includes(role);
 
-  // default to yesterday (anything older than today's “Pending Correction”)
-  const todayKey = toDateKey(new Date());
-  const yesterdayKey = useMemo(() => {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() - 1);
-    return toDateKey(d);
-  }, []);
-
-  const [day, setDay] = useState(yesterdayKey);
-  const dayDate = useMemo(() => dateKeyToDate(day), [day]);
+  // Month selector (default to current month)
+  const [month, setMonth] = useState(thisMonthKey());
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -108,19 +121,21 @@ export default function PendingUnderwriting() {
     setLoading(true);
     setMsg('');
 
-    // “Pending Underwriting” = Pending or Cannot Locate Policy, for the selected day,
-    // but NOT today (your dashboard handles today).
+    // “Pending Underwriting” = Pending or Cannot Locate Policy for the selected month
+    const start = monthStartISO(month);
+    const end = monthEndISO(month);
+
     const { data, error } = await supabase
       .from('uw_submissions')
       .select('*')
       .in('status', ['Pending', 'Cannot Locate Policy'])
-      .gte('last_action_at', dayStartISO(day))
-      .lte('last_action_at', dayEndISO(day))
+      .gte('last_action_at', start)
+      .lte('last_action_at', end)
       .order('last_action_at', { ascending: true });
 
     if (error) setMsg(`Load error: ${error.message}`);
 
-    // optional sort: if the last message is from agent, bubble up (needs attention)
+    // optional sort: if the last message is from agent, bubble up
     const sorted = (data || []).slice().sort((a, b) => {
       const lastA = (Array.isArray(a.pending_items) ? a.pending_items : []).slice(-1)[0];
       const lastB = (Array.isArray(b.pending_items) ? b.pending_items : []).slice(-1)[0];
@@ -132,7 +147,7 @@ export default function PendingUnderwriting() {
 
     setRows(sorted);
     setLoading(false);
-  }, [user?.id, day]);
+  }, [user?.id, month]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -145,7 +160,7 @@ export default function PendingUnderwriting() {
         claimed_by: user.id,
         claimed_by_email: user.email,
         claimed_at: new Date().toISOString(),
-        status: 'Claimed', // you can keep “Pending” and just assign, but we’ve been standardizing on Claimed
+        status: 'Claimed',
         last_action_at: new Date().toISOString(),
         last_updated_by: user.id,
         last_updated_by_email: user.email,
@@ -218,17 +233,70 @@ export default function PendingUnderwriting() {
     load();
   };
 
+  /* ---------- office grouping + tabs ---------- */
+  const offices = useMemo(() => {
+    const map = new Map();
+    for (const r of rows) {
+      const key = String(officeKeyOf(r));
+      if (!map.has(key)) map.set(key, { key, label: officeLabelOf(r) });
+    }
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows]);
+
+  const groupedByOffice = useMemo(() => {
+    const g = new Map();
+    for (const r of rows) {
+      const key = String(officeKeyOf(r));
+      if (!g.has(key)) g.set(key, []);
+      g.get(key).push(r);
+    }
+    return g;
+  }, [rows]);
+
+  const newCounts = useMemo(() => {
+    const counts = {};
+    for (const { key } of offices) {
+      const list = groupedByOffice.get(key) || [];
+      counts[key] = list.filter(isNewForBadge).length;
+    }
+    return counts;
+  }, [offices, groupedByOffice]);
+
+  const [activeOffice, setActiveOffice] = useState(null);
+  useEffect(() => {
+    // pick a sensible default tab whenever rows change
+    if (!offices.length) { setActiveOffice(null); return; }
+    if (activeOffice && offices.some(o => o.key === activeOffice)) return;
+    // Prefer an office that has items. Otherwise, first office.
+    const withItems = offices.find(o => (groupedByOffice.get(o.key) || []).length > 0) || offices[0];
+    setActiveOffice(withItems.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, offices.length]);
+
+  const activeRows = useMemo(
+    () => (activeOffice ? (groupedByOffice.get(activeOffice) || []) : []),
+    [groupedByOffice, activeOffice]
+  );
+
   const orderNumber = (arr, id) => `#${arr.findIndex((r) => r.id === id) + 1}`;
-  const onPrevDay = () => {
-    const d = new Date(dayDate);
-    d.setUTCDate(d.getUTCDate() - 1);
-    setDay(toDateKey(d));
+
+  const onPrevMonth = () => {
+    const [y, m] = month.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    d.setUTCMonth(d.getUTCMonth() - 1);
+    setMonth(yyyymm(d));
   };
-  const onNextDay = () => {
-    const d = new Date(dayDate);
-    d.setUTCDate(d.getUTCDate() + 1);
-    setDay(toDateKey(d));
+  const onNextMonth = () => {
+    const [y, m] = month.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    const next = yyyymm(d);
+    const current = thisMonthKey();
+    // Don’t allow navigating beyond current month
+    if (next > current) return;
+    setMonth(next);
   };
+  const isNextDisabled = month >= thisMonthKey();
 
   if (!isUW) return <div className={styles.container}><p>Not authorized.</p></div>;
 
@@ -459,25 +527,85 @@ export default function PendingUnderwriting() {
       {msg && <div className={styles.message}>{msg}</div>}
 
       <div className={styles.card}>
-        <div className={styles.subHeader}>Select a Day (older than today)</div>
-        <div className={styles.dayNav} style={{ marginBottom: 10 }}>
-          <button className={styles.iconBtn} onClick={onPrevDay} title="Previous day">‹</button>
-          <div className={styles.muted} style={{ fontWeight: 800 }}>
-            {dayDate.toLocaleDateString()}
-          </div>
+        <div className={styles.subHeader}>Select a Month</div>
+
+        {/* Month nav + refresh */}
+        <div className={styles.dayNav} style={{ marginBottom: 10, gap: 8 }}>
+          <button className={styles.iconBtn} onClick={onPrevMonth} title="Previous month">‹</button>
+
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className={styles.inlineSelect}
+            style={{ width: 180 }}
+          />
+
           <button
             className={styles.iconBtn}
-            onClick={onNextDay}
-            disabled={day >= todayKey}
-            title="Next day"
+            onClick={onNextMonth}
+            disabled={isNextDisabled}
+            title="Next month"
           >
             ›
           </button>
+
           <button className={styles.refreshBtn} onClick={load} style={{ marginLeft: 'auto' }}>
             Refresh
           </button>
         </div>
 
+        {/* Office tabs (like Google Sheets) */}
+        <div className={styles.tabBar} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {offices.length === 0 ? (
+            <div className={styles.muted}>No offices for this month.</div>
+          ) : (
+            offices.map(({ key, label }) => {
+              const active = key === activeOffice;
+              const count = newCounts[key] || 0;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActiveOffice(key)}
+                  className={`${styles.pill} ${active ? styles.pillActive : ''}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 12px',
+                    borderRadius: 10,
+                    border: active ? '1px solid #2563eb' : '1px solid #e5e7eb',
+                    background: active ? '#eff6ff' : '#fff',
+                    fontWeight: active ? 700 : 500,
+                  }}
+                >
+                  <span>{label}</span>
+                  {count > 0 && (
+                    <span
+                      style={{
+                        minWidth: 20,
+                        padding: '0 6px',
+                        height: 20,
+                        borderRadius: 10,
+                        fontSize: 12,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: '#eef2ff',
+                        border: '1px solid #c7d2fe',
+                      }}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        {/* Table for active office */}
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
@@ -499,10 +627,12 @@ export default function PendingUnderwriting() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={12}>Loading…</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={12}>No items for this day.</td></tr>
+              ) : !activeOffice ? (
+                <tr><td colSpan={12}>No office selected.</td></tr>
+              ) : activeRows.length === 0 ? (
+                <tr><td colSpan={12}>No items for this month in this office.</td></tr>
               ) : (
-                rows.map((r) => <Row key={r.id} r={r} arr={rows} />)
+                activeRows.map((r) => <Row key={r.id} r={r} arr={activeRows} />)
               )}
             </tbody>
           </table>

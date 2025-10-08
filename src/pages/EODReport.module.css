@@ -330,3 +330,28 @@
     width: 100%;
     min-width: 0;
 }
+
+/* Alerts shown above the table in Step 2 */
+.alertBox {
+  border: 1px solid #e11d48; /* red-600 */
+  background: #fff1f2;       /* rose-50 */
+  color: #9f1239;            /* rose-800 */
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 10px 0 14px 0;
+  font-size: 0.95rem;
+}
+.alertBox ul { margin: 0; padding-left: 18px; }
+
+/* Highlight invalid/summary rows in Step 2 - RED scheme */
+.rowError td {
+  background-color: #ffe5e5 !important; /* light red */
+  border-top: 1px solid #f3b7b7;
+  border-bottom: 1px solid #f3b7b7;
+  color: #8b0000; /* dark red text for contrast */
+}
+
+.rowError:hover td {
+  background-color: #ffd6d6 !important; /* slightly stronger on hover */
+}
+
