@@ -233,20 +233,51 @@ const EODReport = () => {
   };
 
   const calculateSummary = useCallback((trans, expenses, referralList) => {
+    // STEP 1: Find and exclude any receipts that are a complete wash (e.g., a same-day void).
+    // This handles cases like Julio Delgado's receipt #2594 correctly.
+    const totalsByReceipt = trans.reduce((acc, t) => {
+      const receipt = t.Receipt;
+      const total = parseFloat(t.Total) || 0;
+      if (!acc[receipt]) {
+        acc[receipt] = 0;
+      }
+      acc[receipt] += total;
+      return acc;
+    }, {});
+
+    const receiptsToExclude = new Set();
+    for (const receipt in totalsByReceipt) {
+      if (Math.abs(totalsByReceipt[receipt]) < 0.01) {
+        receiptsToExclude.add(receipt);
+      }
+    }
+
+    const filteredTrans = trans.filter(t => !receiptsToExclude.has(t.Receipt));
+
+    // Initialize the summary object
     const summary = {
       nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
       credit_premium: 0, credit_fee: 0, nb_rw_fee: 0, en_fee: 0,
       reissue_fee: 0, renewal_fee: 0, pys_fee: 0, tax_prep_fee: 0,
       registration_fee: 0, convenience_fee: 0, dmv_premium: 0,
     };
-    for (const t of trans) {
+
+    // STEP 2: Calculate the summary from the filtered list of transactions.
+    for (const t of filteredTrans) {
       const total = parseFloat(t.Total) || 0;
       const premium = parseFloat(t.Premium) || 0;
       const fee = parseFloat(t.Fee) || 0;
       const type = t.Type || '';
       const company = t.Company || '';
       const method = t.Method || '';
-      if (type.includes('NEW') || type.includes('RWR')) summary.nb_rw_count += Math.sign(total);
+
+      // *** THIS IS THE KEY CHANGE FOR THE COUNT ***
+      // Only add to the count if the transaction is a NEW/RWR and has a positive total.
+      if ((type.includes('NEW') || type.includes('RWR')) && total > 0) {
+        summary.nb_rw_count += 1;
+      }
+      
+      // All other financial calculations still include negative values to keep the money totals correct.
       if (company.includes('Registration Fee')) summary.dmv_count += Math.sign(total);
       if (method.includes('Cash')) {
         summary.cash_premium += premium;
@@ -265,8 +296,10 @@ const EODReport = () => {
       if (company.includes('Dmv - Registration S')) summary.dmv_premium += premium;
       if (company.includes('Tax Prep Fee') && !method.includes('Wire')) summary.tax_prep_fee += fee;
     }
+
+    // ... (the rest of the function remains the same)
     const totalPremium = summary.cash_premium + summary.credit_premium;
-    const totalFee = summary.cash_fee + summary.credit_fee; // fixed
+    const totalFee = summary.cash_fee + summary.credit_fee;
     const totalCreditPayment = summary.credit_premium + summary.credit_fee;
     const nbRwCorpFee = summary.nb_rw_count * 20;
     const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
@@ -278,7 +311,6 @@ const EODReport = () => {
 
     summary.dmv_deposit = summary.dmv_premium;
 
-    // use the function arg `expenses`, not state
     summary.revenue_deposit =
       totalFee - (summary.convenience_fee + nbRwCorpFee + feeRoyalty + (parseFloat(expenses) || 0) + totalReferralsPaid);
 
