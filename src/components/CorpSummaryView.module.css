@@ -1,0 +1,122 @@
+/* --- Corporate Summary (modernized) --- */
+
+.corpSummaryContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 0.5rem;
+}
+
+/* Card */
+.summaryCard {
+  background: linear-gradient(180deg, #2f3646 0%, #242b39 100%);
+  color: #e7eef7;
+  padding: 1.25rem 1.25rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25); /* #94a3b8 */
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* Headers */
+.cardHeader,
+.storeHeader {
+  text-align: center;
+}
+
+.cardHeader {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.25rem;
+}
+
+.storeHeader {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #c2cede;
+  margin-bottom: 1.25rem;
+}
+
+/* Grid
+   - First/5th/7th columns grow a bit if needed
+   - Count/Separator/Value columns are fixed to keep spacing crisp
+*/
+.summaryGrid {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1fr)  /* 1: label A */
+    64px                /* 2: count A (fixed width) */
+    minmax(120px, 1fr)  /* 3: value A */
+    40px                /* 4: spacer/line */
+    minmax(170px, 1.1fr)/* 5: label B */
+    110px               /* 6: value B (fixed width) */
+    minmax(200px, 1.2fr)/* 7: label C */
+    110px;              /* 8: value C (fixed width) */
+  column-gap: 1rem;
+  row-gap: 0.35rem;
+  align-items: center;
+  padding-bottom: 0.5rem;
+}
+
+/* Cells */
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 28px;
+  padding: 6px 0;                 /* a touch more breathing room */
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.35);
+  font-size: 0.92rem;
+}
+
+/* Remove border from the last row of cells to clean up footer */
+.summaryGrid > .cell:nth-last-child(-n + 8) {
+  border-bottom: none;
+}
+
+/* Label / count / values */
+.cell .label {
+  color: #a9b7c8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;        /* prevents long labels (e.g. TOTAL TRANSACTIONS) from pushing other columns */
+  padding-right: 0.25rem;
+}
+
+.cell .count {
+  font-weight: 700;
+  text-align: right;
+  min-width: 2.5ch;               /* FIX: keeps the count column aligned and prevents crowding */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Right-aligned numeric values with tabular numerals */
+.cell.value {
+  justify-content: flex-end;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell.boldValue {
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+/* Optional helpers you can apply in markup if wanted */
+.valueNeg { color: #f87171; }     /* negatives */
+.valuePos { color: #34d399; }     /* positives */
+.muted    { color: #93a4b7; }
+
+/* A thin divider you can insert as a full-width grid item if you group sections */
+.dividerRow {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.35), transparent);
+  margin: 2px 0 4px;
+  border: 0;
+}
+
+
+
