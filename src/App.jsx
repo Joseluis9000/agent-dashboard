@@ -38,6 +38,9 @@ import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
 import UnderwritingLog from './pages/uw/UnderwritingLog';
 import PendingUnderwriting from './pages/uw/PendingUnderwriting'; // ✅ NEW
 
+// NEW: Admin EODs (component you added under src/components)
+import OfficeEODs from './components/OfficeEODs';
+
 function App() {
   const { user, profile, loading } = useAuth();
 
@@ -112,6 +115,11 @@ function App() {
             <Route path="manage-users" element={<AdminManageUsers />} />
             <Route path="violations" element={<ManageViolations />} />
             <Route path="enter-violation" element={<EnterViolation />} />
+
+            {/* NEW: Admin-specific Office EODs */}
+            <Route path="office-eods" element={<OfficeEODs />} />
+            {/* Optional deep link to open a particular report in a modal within OfficeEODs */}
+            <Route path="office-eods/:reportId" element={<OfficeEODs />} />
           </Route>
         </Route>
 
@@ -123,6 +131,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

@@ -44,6 +44,16 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
           Office Numbers
         </NavLink>
 
+        {/* NEW: Admin Office EODs */}
+        <NavLink
+          to="/admin/office-eods"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Office EODs
+        </NavLink>
+
         <NavLink
           to="/admin/manage-users"
           className={({ isActive }) =>
@@ -55,14 +65,13 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 
         {/* ✅ Updated Link */}
         <NavLink
-          to="/admin/violations" // Points to the new dashboard page
+          to="/admin/violations"
           className={({ isActive }) =>
             `${styles.navLink} ${isActive ? styles.activeLink : ''}`
           }
         >
           Manage Violations
         </NavLink>
-        
       </nav>
 
       <div className={styles.logoutSection}>
@@ -75,3 +84,4 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 };
 
 export default AdminSidebar;
+

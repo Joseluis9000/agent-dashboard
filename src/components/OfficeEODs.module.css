@@ -1,0 +1,189 @@
+/* src/components/OfficeEODs.module.css */
+.mainContent {
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.pageHeader {
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 1rem;
+}
+
+/* --- KPI STYLES --- */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.kpiCard {
+  background-color: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.kpiLabel {
+  font-size: 0.9rem;
+  color: #4a5568;
+  font-weight: 500;
+}
+
+.kpiValue {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.card {
+  background-color: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+/* --- FILTER BAR STYLES --- */
+.filterBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.dateRangePickers {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.dateFilter label {
+  margin-right: 0.5rem;
+  font-weight: 500;
+}
+
+.dateFilter input {
+  padding: 0.5rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+}
+
+.daySwitcher {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.daySwitcher button {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+.daySwitcher button:hover {
+    background-color: #f7fafc;
+}
+
+.daySwitcher span {
+    font-weight: 500;
+    color: #4a5568;
+}
+
+/* --- TABLE STYLES --- */
+.tableContainer {
+  overflow-x: auto;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.dataTable th {
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #718096;
+}
+
+.groupRow {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-weight: 600;
+}
+
+.groupRow:hover {
+  background-color: #f7fafc;
+}
+
+.groupRow td span {
+    display: inline-block;
+    transition: transform 0.2s ease;
+}
+
+.groupRow td span.expanded {
+    transform: rotate(90deg);
+}
+
+.detailRow td {
+    padding: 0;
+    background-color: #f7fafc;
+}
+
+.subTable {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.subTable th, .subTable td {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.subTable tr:last-child td {
+    border-bottom: none;
+}
+
+.subTable tbody tr {
+    cursor: pointer;
+}
+
+.subTable tbody tr:hover {
+    background-color: #edf2f7;
+}
+
+.statusPill {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.statusVerified {
+  background-color: #c6f6d5;
+  color: #2f855a;
+}
+
+.errorText {
+  color: #e53e3e;
+}
