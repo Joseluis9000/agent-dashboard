@@ -1,51 +1,27 @@
-// src/pages/Dashboard.jsx
+// src/pages/DashboardPage.jsx
+
 import React from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import styles from './DashboardPlaceholder.module.css';
+import SalesDashboard from '../components/AgentDashboard/SalesDashboard';
 
-function Dashboard() {
-  const { user, profile } = useAuth();
-  const agentFirstName =
-    user?.user_metadata?.full_name?.split(' ')[0] ||
-    profile?.full_name?.split(' ')[0] ||
-    'Agent';
+export default function DashboardPage() {
+  const { user, supabaseClient } = useAuth();
 
-  const role = profile?.role || user?.user_metadata?.role || 'agent';
-  const isUW = ['underwriter', 'uw_manager', 'supervisor', 'admin'].includes(role);
-
-  return (
-    <main className={styles.mainContent}>
-      <div className={styles.placeholderCard}>
-        <div className={styles.icon}>🚧</div>
-        <h1>Welcome, {agentFirstName}!</h1>
-        <h2>Dashboard Under Construction</h2>
-        <p>
-          This page is being upgraded to our new, faster Supabase data system.
-          In the meantime, use the shortcuts below to access key tools.
-        </p>
-
-        {/* NEW: Quick CTA buttons */}
-        <div className={styles.ctaRow}>
-          <Link to="/uw/submit" className={styles.ctaButton}>
-            Submit to Underwriting
-          </Link>
-          <Link to="/agent/violations" className={styles.ctaButtonSecondary}>
-            My Violations
-          </Link>
-          {isUW && (
-            <Link to="/uw/dashboard" className={styles.ctaButtonAccent}>
-              UW Queue
-            </Link>
-          )}
-        </div>
-
-        <p className={styles.helperText}>
-          You can also find these links in the left sidebar.
-        </p>
+  // Shows a "Loading..." message while your app confirms the user is logged in.
+  if (!user || !supabaseClient) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <p className="text-lg">Loading Dashboard...</p>
       </div>
-    </main>
+    );
+  }
+
+  // Once the user is confirmed, this renders the SalesDashboard and passes
+  // the vital props: the authenticated client and the user's email.
+  return (
+    <SalesDashboard
+      supabaseClient={supabaseClient}
+      currentUserEmail={user.email}
+    />
   );
 }
-
-export default Dashboard;

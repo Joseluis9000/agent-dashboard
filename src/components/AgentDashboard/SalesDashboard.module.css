@@ -1,0 +1,266 @@
+/* SalesDashboard.module.css */
+
+/* 1. DESIGN SYSTEM: CSS Variables 
+   ✅ Added new, dedicated variables for badge colors.
+*/
+:root {
+  --background-color: #f9fafb;
+  --card-background-color: #ffffff;
+  --border-color: #e5e7eb;
+  --primary-text-color: #111827;
+  --secondary-text-color: #6b7280;
+  --accent-color: #dc2626; /* Vibrant Red */
+  --accent-color-hover: #b91c1c; /* Darker Red */
+  --accent-text-color: #ffffff;
+  --highlight-background: #fefce8;
+  --badge-background-color: #fcd34d; /* Vibrant Amber/Yellow */
+  --badge-text-color: #78350f;     /* Dark Amber/Brown for text */
+  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --border-radius: 0.75rem;
+  --spacing: 1.5rem;
+}
+
+/* 2. LAYOUT */
+.dashboardContainer {
+  padding: var(--spacing);
+  background-color: var(--background-color);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.headerTitle {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-text-color);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.gridTwoCol {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing);
+}
+
+@media (min-width: 1024px) {
+  .gridTwoCol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 3. CARD STYLES */
+.card {
+  background-color: var(--card-background-color);
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+.cardHeader {
+  padding: 1.25rem 1.25rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cardTitle {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--primary-text-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.cardDescription {
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+
+.cardContent {
+  padding: 1.25rem;
+  flex-grow: 1;
+}
+
+.fiveColGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+}
+
+.gridItem {
+  background-color: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 1rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  transition: transform 0.2s;
+}
+.gridItem:hover {
+  transform: translateY(-2px);
+}
+
+.gridItemTop {
+  background-color: var(--highlight-background);
+  border-color: #fde68a;
+}
+
+.itemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.itemName {
+  font-weight: 600;
+  color: var(--primary-text-color);
+}
+
+.itemSubtext {
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+
+.itemStats {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+.itemStats span {
+  font-weight: 600;
+  color: var(--primary-text-color);
+}
+
+/* 4. REFINED UI ELEMENTS */
+/* ✅ Updated the badge to use the new yellow colors */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: var(--badge-background-color);
+  color: var(--badge-text-color);
+}
+
+.select {
+  border-radius: 0.5rem;
+  border: none;
+  padding: 0.6rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background-color: var(--accent-color);
+  color: var(--accent-text-color);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.select:hover {
+  background-color: var(--accent-color-hover);
+}
+
+.icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.table {
+  width: 100%;
+  font-size: 0.875rem;
+}
+.table th {
+  text-align: left;
+  color: var(--secondary-text-color);
+  padding-bottom: 0.5rem;
+  font-weight: 500;
+}
+.table td {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.list {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+.list li {
+  margin-top: 0.5rem;
+}
+
+@keyframes progress-bar-stripes {
+  from { background-position: 1rem 0; }
+  to { background-position: 0 0; }
+}
+
+.progress {
+  width: 100%;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background-color: var(--border-color);
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+
+.progressBar {
+  height: 100%;
+  background-color: var(--accent-color);
+  background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.15) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.15) 75%, transparent 75%, transparent);
+  background-size: 1rem 1rem;
+  animation: progress-bar-stripes 1s linear infinite;
+  transition: width 0.5s ease-in-out;
+}
+
+.statDisplay {
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+
+.statDisplay span {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--primary-text-color);
+  margin-left: 0.25rem;
+}
+
+.improvedAgentName {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--primary-text-color);
+  margin-bottom: 0.25rem;
+}
+
+.improvedAgentStats {
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}
+
+.improvedAgentStats span {
+  font-weight: 600;
+  color: var(--primary-text-color);
+}
+
+/* Paste this at the bottom of SalesDashboard.module.css */
+
+/* New classes for color-coding performance numbers */
+.positive {
+  color: #16a34a; /* Green */
+  font-weight: 600;
+}
+
+.negative {
+  color: #dc2626; /* Red */
+  font-weight: 600;
+}
