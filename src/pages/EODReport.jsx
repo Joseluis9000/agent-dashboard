@@ -173,6 +173,8 @@ const EODReport = () => {
     const { bad, realOffices } = analyzeTransactions(transactions);
 
     const alerts = [];
+    const errorRowIndices = new Set(bad); // Initialize with structurally bad rows
+
     if (bad.length > 0) {
       alerts.push(`You pasted ${bad.length} line(s) that look like totals/labels. Remove these rows before continuing.`);
     }
@@ -184,8 +186,60 @@ const EODReport = () => {
       );
     }
 
+    // Pre-calculate net fees per receipt to handle voids correctly
+    const receiptFeeTotals = {};
+    transactions.forEach(t => {
+      const receipt = t.Receipt;
+      if (!receipt) return;
+      if (!receiptFeeTotals[receipt]) {
+        receiptFeeTotals[receipt] = { paymentFee: 0, convenienceFee: 0 };
+      }
+      const fee = parseFloat(t.Fee) || 0;
+      const company = t.Company || '';
+
+      if (company.includes('Payment Fee')) {
+        receiptFeeTotals[receipt].paymentFee += fee;
+      }
+      if (company.includes('Convenience Fee')) {
+        receiptFeeTotals[receipt].convenienceFee += fee;
+      }
+    });
+
+    // New validation alerts for payment rules
+    transactions.forEach((t, index) => {
+      const fee = parseFloat(t.Fee) || 0;
+      const company = t.Company || '';
+      const method = t.Method || '';
+      const receipt = t.Receipt;
+
+      // 1. Alert for Installment fee > $10, only if not fully voided
+      if (company.includes('Payment Fee') && fee > 10) {
+        if (receipt && Math.abs(receiptFeeTotals[receipt]?.paymentFee) > 0.01) {
+          alerts.push(`Receipt #${receipt}: Installment fee of $${fee.toFixed(2)} is over the $10 limit.`);
+          errorRowIndices.add(index);
+        }
+      }
+
+      // Checks specific to Convenience Fees
+      if (company.includes('Convenience Fee')) {
+        const isVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
+
+        // 2. Alert for CC fee > $7, only if not fully voided
+        if (fee > 7 && !isVoided) {
+          alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
+          errorRowIndices.add(index);
+        }
+
+        // 3. Alert for CC fee with Cash payment (this is a process error, so alert regardless of void)
+        if (method.includes('Cash')) {
+          alerts.push(`Receipt #${receipt}: Convenience fee was incorrectly charged with a Cash payment.`);
+          errorRowIndices.add(index);
+        }
+      }
+    });
+
     setVerifyAlerts(alerts);
-    setInvalidRowIdx(new Set(bad));
+    setInvalidRowIdx(errorRowIndices);
   }, [transactions, analyzeTransactions]);
 
   // Check existing report per date & office
@@ -222,12 +276,22 @@ const EODReport = () => {
 
   const parsePastedText = (text) => {
     const lines = text.trim().split('\n');
+    const numericalFields = new Set(['Premium', 'Fee', 'Total']);
+
     return lines.map(line => {
       const columns = line.split('\t');
       const transaction = {};
+      
       HEADERS.forEach((header, index) => {
-        transaction[header] = columns[index] || '';
+        const value = columns[index] || '';
+        // If the header is one of the numerical fields, remove commas.
+        if (numericalFields.has(header)) {
+          transaction[header] = value.replace(/,/g, '');
+        } else {
+          transaction[header] = value;
+        }
       });
+      
       return transaction;
     });
   };
