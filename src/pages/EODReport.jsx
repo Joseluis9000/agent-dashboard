@@ -192,16 +192,25 @@ const EODReport = () => {
       const receipt = t.Receipt;
       if (!receipt) return;
       if (!receiptFeeTotals[receipt]) {
-        receiptFeeTotals[receipt] = { paymentFee: 0, convenienceFee: 0 };
+        receiptFeeTotals[receipt] = {
+          paymentFee: 0,
+          convenienceFee: 0,
+          // NEW: Specifically track convenience fees charged to cash
+          cashConvenienceFee: 0,
+        };
       }
       const fee = parseFloat(t.Fee) || 0;
       const company = t.Company || '';
+      const method = t.Method || '';
 
       if (company.includes('Payment Fee')) {
         receiptFeeTotals[receipt].paymentFee += fee;
       }
       if (company.includes('Convenience Fee')) {
         receiptFeeTotals[receipt].convenienceFee += fee;
+        if (method.includes('Cash')) {
+          receiptFeeTotals[receipt].cashConvenienceFee += fee;
+        }
       }
     });
 
@@ -222,16 +231,17 @@ const EODReport = () => {
 
       // Checks specific to Convenience Fees
       if (company.includes('Convenience Fee')) {
-        const isVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
+        const isMonetaryVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
+        const isCashErrorVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.cashConvenienceFee) < 0.01;
 
         // 2. Alert for CC fee > $7, only if not fully voided
-        if (fee > 7 && !isVoided) {
+        if (fee > 7 && !isMonetaryVoided) {
           alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
           errorRowIndices.add(index);
         }
 
-        // 3. Alert for CC fee with Cash payment (this is a process error, so alert regardless of void)
-        if (method.includes('Cash')) {
+        // 3. Alert for CC fee with Cash payment, only if not fully voided
+        if (method.includes('Cash') && !isCashErrorVoided) {
           alerts.push(`Receipt #${receipt}: Convenience fee was incorrectly charged with a Cash payment.`);
           errorRowIndices.add(index);
         }
