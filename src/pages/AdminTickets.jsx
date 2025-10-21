@@ -36,15 +36,17 @@ const StatusBadge = ({ text, color }) => {
 };
 
 const TicketsTable = ({ title, tickets, columns }) => (
-  <div className="bg-white shadow-lg rounded-lg overflow-hidden">
-    <div className="p-5 border-b border-gray-200">
-      <h2 className="text-xl font-semibold text-gray-700">{title}</h2>
-    </div>
-    <div className="overflow-x-auto">
+  <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+    {title && (
+      <div className="p-5 border-b border-gray-200">
+        <h2 className="text-xl font-semibold text-gray-700">{title}</h2>
+      </div>
+    )}
+    <div className="overflow-x-auto">
       <table className="w-full text-sm text-left text-gray-600">
         <thead className="text-xs text-gray-700 uppercase bg-gray-100">
           <tr>
-            {columns.map((col) => <th key={col.header} scope="col" className="px-6 py-3">{col.header}</th>)}
+            {columns.map((col) => <th key={col.header} scope="col" className="px-6 py-3 whitespace-nowrap">{col.header}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -63,14 +65,22 @@ const TicketsTable = ({ title, tickets, columns }) => (
           )}
         </tbody>
       </table>
-    </div>
-  </div>
+   </div>
+  </div>
 );
+
+// ADD THIS FUNCTION HERE
+const formatEmailAsName = (email) => {
+  if (!email) return 'N/A';
+  const namePart = email.split('@')[0];
+  // Capitalize first letter
+  return namePart.charAt(0).toUpperCase() + namePart.slice(1);
+};
 
 // --- Main Admin Tickets Component ---
 
 const AdminTickets = () => {
-  // All your existing state and logic remains unchanged
+  // All your existing state and logic remains unchanged
   const { user } = useAuth();
   const ticketCategories = {
         "AR & Scanning Violations": ["AR Dispute or Question", "Scanning Violation Dispute", "AR/Violation Follow-Up Needed", "Report a System or Posting Error", "Other"],
@@ -98,6 +108,7 @@ const AdminTickets = () => {
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [isCompletedVisible, setIsCompletedVisible] = useState(false);
 
   const handleOpenModal = (ticket) => { setSelectedTicket(ticket); setIsModalOpen(true); };
   const handleCloseModal = () => { setIsModalOpen(false); setSelectedTicket(null); };
@@ -156,29 +167,63 @@ const AdminTickets = () => {
   const completedTickets = tickets.filter(t => t.status === 'Completed' || t.status === 'Cancelled');
 
   // --- Column Definitions for Reusable Table ---
-  const activeTicketColumns = [
-    { header: 'Ticket ID', cell: (ticket) => <span className="font-medium text-gray-900">{ticket.id}</span> },
-    { header: 'Req. By', cell: (ticket) => ticket.agent_email },
-    { header: 'Office', cell: (ticket) => ticket.office },
-    { header: 'Description', cell: (ticket) => <span className="max-w-xs truncate block">{ticket.description}</span> },
-    { header: 'Urgency', cell: (ticket) => <StatusBadge text={ticket.urgency} color={ticket.urgency === 'Critical' ? 'red' : ticket.urgency === 'High' ? 'yellow' : 'blue'} /> },
-    { header: 'Status', cell: (ticket) => <StatusBadge text={ticket.status} color={ticket.status === 'Completed' ? 'green' : 'cyan'} /> },
-    { header: 'Assigned To', cell: (ticket) => ticket.assigned_to ? ticket.assigned_to : (
-      <button onClick={() => handleClaimTicket(ticket.id)} className="font-medium text-white bg-green-600 hover:bg-green-700 py-2 px-3 rounded-lg text-xs transition-all duration-200">Claim</button>
-    )},
-    { header: 'Action', cell: (ticket) => <ActionMenu><button onClick={() => handleOpenModal(ticket)} className="text-blue-600 hover:underline">View / Edit</button></ActionMenu> },
-  ];
+  const activeTicketColumns = [
+    { header: 'Ticket ID', cell: (ticket) => <span className="font-medium text-gray-900 whitespace-nowrap">{ticket.id}</span> },
+    { header: 'Req. By', cell: (ticket) => <span className="whitespace-nowrap">{formatEmailAsName(ticket.agent_email)}</span> },
+    { header: 'Submitted', cell: (ticket) => <span className="whitespace-nowrap">{new Date(ticket.created_at).toLocaleString()}</span> },
+    { header: 'Office', cell: (ticket) => <span className="whitespace-nowrap">{ticket.office}</span> },
+    { 
+      header: 'Department', 
+      cell: (ticket) => {
+        const parts = ticket.category ? ticket.category.split(': ') : ['N/A'];
+        return <span className="whitespace-normal break-words">{parts[0]}</span>;
+      }
+    },
+    { 
+      header: 'Ticket Type Request', 
+      cell: (ticket) => {
+        const parts = ticket.category ? ticket.category.split(': ') : ['N/A', 'N/A'];
+        return <span className="whitespace-normal break-words">{parts[1] || 'N/A'}</span>;
+      }
+    },
+    { header: 'Description', cell: (ticket) => <span className="min-w-[300px] whitespace-normal break-words block">{ticket.description}</span> }, // This one is allowed to wrap
+    { header: 'Urgency', cell: (ticket) => <span className="whitespace-nowrap"><StatusBadge text={ticket.urgency} color={ticket.urgency === 'Critical' ? 'red' : ticket.urgency === 'High' ? 'yellow' : 'blue'} /></span> },
+    { header: 'Status', cell: (ticket) => <span className="whitespace-nowrap"><StatusBadge text={ticket.status} color={ticket.status === 'Completed' ? 'green' : 'cyan'} /></span> },
+    { header: 'Assigned To', cell: (ticket) => (
+      <div className="whitespace-nowrap">
+        {ticket.assigned_to ? ticket.assigned_to : (
+          <button onClick={() => handleClaimTicket(ticket.id)} className="font-medium text-white bg-green-600 hover:bg-green-700 py-2 px-3 rounded-lg text-xs transition-all duration-200">Claim</button>
+        )}
+      </div>
+    )},
+    { header: 'Action', cell: (ticket) => <div className="whitespace-nowrap"><ActionMenu><button onClick={() => handleOpenModal(ticket)} className="text-blue-600 hover:underline">View / Edit</button></ActionMenu></div> },
+  ];
   
   const assignedTicketColumns = activeTicketColumns.filter(c => c.header !== 'Assigned To'); // Remove 'Assigned To' as it's redundant here
 
   const completedTicketColumns = [
-    { header: 'Ticket ID', cell: (ticket) => <span className="font-medium text-gray-900">{ticket.id}</span> },
-    { header: 'Req. By', cell: (ticket) => ticket.agent_email },
-    { header: 'Description', cell: (ticket) => <span className="max-w-xs truncate block">{ticket.description}</span> },
-    { header: 'Date Completed', cell: (ticket) => ticket.completed_at ? new Date(ticket.completed_at).toLocaleDateString() : 'N/A' },
-    { header: 'Completed By', cell: (ticket) => ticket.completed_by },
-    { header: 'Action', cell: (ticket) => <ActionMenu><button onClick={() => handleOpenModal(ticket)} className="text-blue-600 hover:underline">View Details</button></ActionMenu> },
-  ];
+    { header: 'Ticket ID', cell: (ticket) => <span className="font-medium text-gray-900 whitespace-nowrap">{ticket.id}</span> },
+    { header: 'Req. By', cell: (ticket) => <span className="whitespace-nowrap">{formatEmailAsName(ticket.agent_email)}</span> },
+    { 
+      header: 'Department', 
+      cell: (ticket) => {
+        const parts = ticket.category ? ticket.category.split(': ') : ['N/A'];
+        return <span className="whitespace-nowrap">{parts[0]}</span>;
+      }
+    },
+    { 
+      header: 'Ticket Type Request', 
+      cell: (ticket) => {
+        const parts = ticket.category ? ticket.category.split(': ') : ['N/A', 'N/A'];
+        return <span className="whitespace-nowrap">{parts[1] || 'N/A'}</span>;
+      }
+    },
+    { header: 'Description', cell: (ticket) => <span className="min-w-[300px] whitespace-normal break-words block">{ticket.description}</span> }, // This one is allowed to wrap
+    { header: 'Submitted At', cell: (ticket) => <span className="whitespace-nowrap">{new Date(ticket.created_at).toLocaleString()}</span> },
+    { header: 'Completed At', cell: (ticket) => <span className="whitespace-nowrap">{ticket.completed_at ? new Date(ticket.completed_at).toLocaleString() : 'N/A'}</span> },
+    { header: 'Completed By', cell: (ticket) => <span className="whitespace-nowrap">{ticket.completed_by}</span> },
+    { header: 'Action', cell: (ticket) => <div className="whitespace-nowrap"><ActionMenu><button onClick={() => handleOpenModal(ticket)} className="text-blue-600 hover:underline">View Details</button></ActionMenu></div> },
+  ];
 
 
   if (loading) return <div className="flex justify-center items-center h-screen"><h2 className="text-2xl font-semibold">Loading...</h2></div>;
@@ -258,7 +303,31 @@ const AdminTickets = () => {
 
       <TicketsTable title="All Active Tickets" tickets={allActiveTickets} columns={activeTicketColumns} />
       <TicketsTable title="Assigned To Me" tickets={assignedToMeTickets} columns={assignedTicketColumns} />
-      <TicketsTable title="Completed & Cancelled" tickets={completedTickets} columns={completedTicketColumns} />
+      {/* --- Collapsible Completed Tickets Section --- */}
+      <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+        {/* Clickable Header */}
+        <div 
+          className="p-5 border-b border-gray-200 flex justify-between items-center cursor-pointer"
+          onClick={() => setIsCompletedVisible(!isCompletedVisible)}
+        >
+          <h2 className="text-xl font-semibold text-gray-700">Completed & Cancelled</h2>
+          {/* Simple chevron icon for toggle */}
+          <svg 
+            className={`w-6 h-6 text-gray-500 transition-transform ${isCompletedVisible ? 'rotate-180' : ''}`} 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24" 
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+          </svg>
+        </div>
+      
+        {/* Conditionally render the table part, passing NO title */}
+        {isCompletedVisible && (
+          <TicketsTable title="" tickets={completedTickets} columns={completedTicketColumns} />
+        )}
+      </div>
       
       <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={`Edit Ticket #${selectedTicket?.id}`}>
           {selectedTicket && (
