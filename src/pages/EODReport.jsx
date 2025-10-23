@@ -329,14 +329,16 @@ const EODReport = () => {
     const filteredTrans = trans.filter(t => !receiptsToExclude.has(t.Receipt));
 
     // Initialize the summary object
-    const summary = {
-      nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
-      credit_premium: 0, credit_fee: 0, nb_rw_fee: 0, en_fee: 0,
-      reissue_fee: 0, renewal_fee: 0, pys_fee: 0, tax_prep_fee: 0,
-      registration_fee: 0, convenience_fee: 0, dmv_premium: 0,
-    };
+    const summary = {
+      nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
+      credit_premium: 0, credit_fee: 0, nb_rw_fee: 0, en_fee: 0,
+      reissue_fee: 0, renewal_fee: 0, pys_fee: 0, tax_prep_fee: 0,
+      registration_fee: 0, convenience_fee: 0, dmv_premium: 0,
+    };
 
-    // STEP 2: Calculate the summary from the filtered list of transactions.
+    let netNbRwForMath = 0; // <--- YOU ADD THIS NEW LINE HERE
+
+    // STEP 2: Calculate the summary from the filtered list of transactions.
     for (const t of filteredTrans) {
       const total = parseFloat(t.Total) || 0;
       const premium = parseFloat(t.Premium) || 0;
@@ -345,39 +347,52 @@ const EODReport = () => {
       const company = t.Company || '';
       const method = t.Method || '';
 
-      // *** THIS IS THE KEY CHANGE FOR THE COUNT ***
-      // Only add to the count if the transaction is a NEW/RWR and has a positive total.
-      if ((type.includes('NEW') || type.includes('RWR')) && total > 0) {
-        summary.nb_rw_count += 1;
-      }
-      
-      // All other financial calculations still include negative values to keep the money totals correct.
-      if (company.includes('Registration Fee')) summary.dmv_count += Math.sign(total);
-      if (method.includes('Cash')) {
-        summary.cash_premium += premium;
-        summary.cash_fee += fee;
-      } else if (method.includes('Credit Card')) {
-        summary.credit_premium += premium;
-        summary.credit_fee += fee;
-      }
-      if (company.includes('Broker Fee')) summary.nb_rw_fee += fee;
-      if (company.includes('Endorsement Fee')) summary.en_fee += fee;
-      if (company.includes('Reinstatement Fee')) summary.reissue_fee += fee;
-      if (company.includes('Renewal Fee')) summary.renewal_fee += fee;
-      if (company.includes('Payment Fee')) summary.pys_fee += fee;
-      if (company.includes('Registration Fee')) summary.registration_fee += fee;
-      if (company.includes('Convenience Fee (c')) summary.convenience_fee += fee;
-      if (company.includes('Dmv - Registration S')) summary.dmv_premium += premium;
-      if (company.includes('Tax Prep Fee') && !method.includes('Wire')) summary.tax_prep_fee += fee;
-    }
+      // --- START OF COUNT LOGIC ---
 
-    // ... (the rest of the function remains the same)
-    const totalPremium = summary.cash_premium + summary.credit_premium;
-    const totalFee = summary.cash_fee + summary.credit_fee;
-    const totalCreditPayment = summary.credit_premium + summary.credit_fee;
-    const nbRwCorpFee = summary.nb_rw_count * 20;
-    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
-    const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
+      // 1. This is for DISPLAY. Only count positive policies.
+      if ((type.includes('NEW') || type.includes('RWR')) && total > 0) {
+        summary.nb_rw_count += 1;
+      }
+
+      // 2. This is for MATH. Count both positive and negative.
+      if (type.includes('NEW') || type.includes('RWR')) {
+        if (total > 0) {
+          netNbRwForMath += 1;
+        } else if (total < 0) {
+          netNbRwForMath -= 1; // This catches the -1 corp void
+        }
+      }
+
+      // --- END OF COUNT LOGIC ---
+      
+      // All other financial calculations still include negative values to keep the money totals correct.
+      if (company.includes('Registration Fee')) summary.dmv_count += Math.sign(total);
+      if (method.includes('Cash')) {
+        summary.cash_premium += premium;
+        summary.cash_fee += fee;
+      } else if (method.includes('Credit Card')) {
+        summary.credit_premium += premium;
+        summary.credit_fee += fee;
+      }
+      if (company.includes('Broker Fee')) summary.nb_rw_fee += fee;
+      if (company.includes('Endorsement Fee')) summary.en_fee += fee;
+      if (company.includes('Reinstatement Fee')) summary.reissue_fee += fee;
+      if (company.includes('Renewal Fee')) summary.renewal_fee += fee;
+      if (company.includes('Payment Fee')) summary.pys_fee += fee;
+      if (company.includes('Registration Fee')) summary.registration_fee += fee;
+      if (company.includes('Convenience Fee (cc)')) summary.convenience_fee += fee; // Typo fix is here
+      if (company.includes('Dmv - Registration S')) summary.dmv_premium += premium;
+      if (company.includes('Tax Prep Fee') && !method.includes('Wire')) summary.tax_prep_fee += fee;
+    }
+
+    // ... (the rest of the function remains the same)
+    const totalPremium = summary.cash_premium + summary.credit_premium;
+    const totalFee = summary.cash_fee + summary.credit_fee;
+    const totalCreditPayment = summary.credit_premium + summary.credit_fee;
+    const nbRwCorpFee = netNbRwForMath * 20; // <--- This line is now fixed
+    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
+    const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
+   
 
     summary.trust_deposit =
       (totalPremium + summary.convenience_fee + nbRwCorpFee + feeRoyalty) -
