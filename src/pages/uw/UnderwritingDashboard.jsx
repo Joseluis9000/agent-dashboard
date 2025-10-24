@@ -136,22 +136,24 @@ const ChatCell = ({
       {openChatRow === row.id && (
         <div
           style={{
-            display: 'flex',
-            flexDirection: 'column',
+            display: 'flex', // Make sure this is 'flex'
+            flexDirection: 'column', // Make sure this is 'column'
             gap: 10,
-            border: '1px solid #e5e7eb',
-            borderRadius: 12,
-            padding: 10,
-            background: '#fff',
+            flexGrow: 1, // *** ADD THIS: Allow this container to grow ***
+            minHeight: 0, // *** ADD THIS: Needed for overflow with flex ***
+            // Removed border/padding/background if they exist
           }}
         >
-          <div
-            style={{
-              maxHeight: 260,
+          <div
+            style={{
+              flexGrow: 1, // *** ADD THIS: Allow message list to grow ***
+              maxHeight: 'none', // *** CHANGE THIS: Remove fixed max-height ***
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
+              padding: '0 4px 4px 0', // Optional: Add padding for scrollbar visibility
+              minHeight: '150px', // Optional: Ensure it has some initial minimum height
             }}
           >
             {allMessages.map((m, idx) => {
@@ -304,6 +306,7 @@ const RowBase = ({
   sendAction,
   orderNumber,
   restrictPendingSection, // true for Pending Correction table
+  setManageInfo, // <-- ADD THIS
   ...chatProps
 }) => {
   const age = diffAge(r.created_at);
@@ -325,7 +328,7 @@ const RowBase = ({
     !local.status ||
     (restrictPendingSection && isPendingStatus && local.status !== 'Approved');
 
-  const showNotes = !(restrictPendingSection && isPendingStatus);
+  const showNotes = false;
 
   const assigneeDisplay =
     r.claimed_by_first && r.claimed_by_last
@@ -335,10 +338,21 @@ const RowBase = ({
       : null;
 
   return (
-    <tr key={r.id} style={newReply ? { boxShadow: 'inset 2px 0 0 #22c55e' } : undefined}>
-      <td>{orderNumber(arr, r.id)}</td>
-      <td>{(r.agent_email || '').split('@')[0] || '—'}</td>
-      <td>{r.agent_email || '—'}</td>
+    <tr key={r.id} className={newReply ? styles.newAgentReplyHighlight : ''}>
+      <td> {/* Order Number and Badge Cell */}
+        {orderNumber(arr, r.id)}
+        {newReply && <span className={styles.newMsgBadge}>New Msg</span>}
+      </td>
+
+      {/* Agent Name Cell */}
+      <td>
+        {(r.agent_first_name || r.agent_last_name) // Use || here to show even if one part is missing
+          ? `${r.agent_first_name || ''} ${r.agent_last_name || ''}`.trim() // Combine safely
+          : (r.agent_email || '').split('@')[0] || '-'} {/* Fallback to email prefix */}
+      </td>
+
+      {/* Rest of the cells */}
+      <td>{r.office || '—'}</td>
       <td>{r.transaction_type || '—'}</td>
       <td>{r.policy_number || '—'}</td>
       <td>{r.premium != null ? `$${Number(r.premium).toFixed(2)}` : '—'}</td>
@@ -355,57 +369,132 @@ const RowBase = ({
       <td className={age.danger ? styles.ageDanger : ''}>{age.label}</td>
       <td>{r.last_action_at ? new Date(r.last_action_at).toLocaleString() : '—'}</td>
 
-      {showActions && (
-        <td style={{ minWidth: 300 }}>
-          {unassigned ? (
-            <button className={styles.claimBtn} onClick={() => claim(r)}>
-              Claim
-            </button>
-          ) : mine ? (
-            <>
-              <select
-                className={styles.select}
-                value={local.status}
-                onChange={(e) => setActionState(r.id, { status: e.target.value })}
-              >
-                <option value="">Select action…</option>
-                {ACTION_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-
-              {showNotes && (
-                <textarea
-                  className={styles.notes}
-                  placeholder="Notes to agent…"
-                  value={local.note}
-                  onChange={(e) => setActionState(r.id, { note: e.target.value })}
-                />
-              )}
-
-              <button
-                className={styles.sendBtn}
-                disabled={disableSend}
-                style={disableSend ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
-                onClick={() => !disableSend && sendAction(r)}
-              >
-                Send
-              </button>
-            </>
-          ) : canTakeOver ? (
-            <button className={styles.claimBtn} onClick={() => takeOver(r)}>
-              Take Over
-            </button>
-          ) : (
-            <div className={styles.readonlyBadge}>Assigned</div>
-          )}
-        </td>
-      )}
-
-      {showChat && <ChatCell row={r} canMessage={true} {...chatProps} />}
+      {/* --- NEW MANAGE BUTTON --- */}
+      <td>
+        {unassigned ? (
+          <button className={styles.claimBtn} onClick={() => claim(r)}>
+            Claim
+          </button>
+        ) : canTakeOver ? (
+          <button className={styles.claimBtn} onClick={() => takeOver(r)}>
+            Take Over
+          </button>
+        ) : mine ? (
+          <button
+            className={styles.sendBtn} // Re-using a style, you can change it
+            onClick={() =>
+              setManageInfo({ row: r, restrict: restrictPendingSection })
+            }
+          >
+            Manage
+          </button>
+        ) : (
+          <div className={styles.readonlyBadge}>Assigned</div>
+        )}
+      </td>
     </tr>
+  );
+};
+
+/* ---------- NEW MODAL COMPONENT ---------- */
+const ManageTicketModal = ({
+  info, // { row, restrict }
+  onClose,
+  user,
+  actions,
+  setActionState,
+  sendAction,
+  ...chatProps // Pass all the chat-related props
+}) => {
+  const row = info.row;
+  const restrictPendingSection = info.restrict;
+  const local = actions[row.id] || { status: '', note: '' };
+
+  const isPendingStatus =
+    row.status === 'Pending' || row.status === 'Cannot Locate Policy';
+
+  // Logic from RowBase: Send button is disabled if...
+  const disableSend =
+    !local.status ||
+    (restrictPendingSection && isPendingStatus && local.status !== 'Approved');
+
+  // Logic from RowBase: Notes are hidden if...
+  const showNotes = !(restrictPendingSection && isPendingStatus);
+
+  return (
+    <>
+      <div className={styles.modalBackdrop} onClick={onClose} />
+      <div className={styles.modalContent}>
+        <div className={styles.modalHeader}>
+          <h2>
+            Manage: {row.policy_number || 'Policy'} (
+            {row.customer_name || 'No Customer'})
+          </h2>
+          <button onClick={onClose} className={styles.modalCloseBtn}>
+            &times;
+          </button>
+        </div>
+
+        <div className={styles.modalBody}>
+          {/* --- Actions Column --- */}
+          <div className={styles.modalSection}>
+            <h3 className={styles.modalSubTitle}>Actions</h3>
+            <select
+              className={styles.select}
+              value={local.status}
+              onChange={(e) => setActionState(row.id, { status: e.target.value })}
+            >
+              <option value="">Select action…</option>
+              {ACTION_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+
+            {showNotes && (
+              <textarea
+                className={styles.notes}
+                placeholder="Notes to agent (optional, will be added to conversation)"
+                value={local.note}
+                onChange={(e) => setActionState(row.id, { note: e.target.value })}
+                style={{ minHeight: '100px', width: '100%' }} // Make it bigger
+              />
+            )}
+
+            <button
+              className={styles.sendBtn}
+              disabled={disableSend}
+              style={
+                disableSend
+                  ? { opacity: 0.6, cursor: 'not-allowed', width: '100%' }
+                  : { width: '100%' }
+              }
+              onClick={() => {
+                sendAction(row);
+                onClose(); // Close modal on send
+              }}
+            >
+              Send Action
+            </button>
+          </div>
+
+          {/* --- Conversation Column --- */}
+          <div className={styles.modalSection} style={{ flexGrow: 2 }}>
+            <h3 className={styles.modalSubTitle}>Conversation</h3>
+            {/* We re-use the ChatCell component here! */}
+            <ChatCell
+              row={row}
+              canMessage={true}
+              {...chatProps}
+              // Force chat to be open
+              openChatRow={row.id}
+              setOpenChatRow={() => {}} // Override to keep it open
+            />
+          </div>
+        </div>
+      </div>
+    </>
   );
 };
 
@@ -434,6 +523,7 @@ export default function UnderwritingDashboard() {
     setActions((s) => ({ ...s, [id]: { ...(s[id] || { status: '', note: '' }), ...patch } }));
 
   const [openChatRow, setOpenChatRow] = useState(null);
+  const [manageInfo, setManageInfo] = useState(null); // { row: r, restrict: bool }
   const [draft, setDraft] = useState({});
   const composerRef = useRef(null);
   const emojiBtnRef = useRef(null);
@@ -464,6 +554,113 @@ export default function UnderwritingDashboard() {
       document.removeEventListener('keydown', onEsc);
     };
   }, [showEmoji]);
+
+  // --- 👇 PASTE THE REALTIME useEffect HOOK CODE HERE 👇 ---
+  useEffect(() => {
+    // ⬇️ ADD LOG 1 HERE
+    console.log('[Realtime] Subscription effect running. User:', user);
+
+    if (!user?.id) {
+      // ⬇️ ADD LOG 2 HERE
+      console.log('[Realtime] No user ID found, exiting subscription setup.');
+      return;
+    }
+
+    // ⬇️ ADD LOG 3 HERE
+    console.log('[Realtime] User ID found, attempting to subscribe...');
+
+    const handleChanges = (payload) => {
+      console.log('Change received!', payload); // Keep this one too
+      // ... rest of handleChanges logic from previous examples ...
+        const newItem = payload.new;
+        const oldItemId = payload.old?.id;
+        const eventType = payload.eventType; // 'INSERT', 'UPDATE', 'DELETE'
+
+        // Use functional updates to safely modify state based on previous state
+        const updateState = (setter) => {
+           setter((currentItems) => {
+              let updatedItems = [...currentItems];
+
+              if (eventType === 'INSERT') {
+                 // Add the new item if it doesn't already exist (safety check)
+                 if (!updatedItems.some(item => item.id === newItem.id)) {
+                   updatedItems.push(newItem);
+                 }
+              } else if (eventType === 'UPDATE') {
+                 // Find and replace the updated item
+                 const index = updatedItems.findIndex(item => item.id === newItem.id);
+                 if (index !== -1) {
+                   updatedItems[index] = newItem;
+                 } else {
+                   // If not found, maybe add it? Depends on your logic.
+                   updatedItems.push(newItem); // Add if not found (e.g., initial load missed it)
+                 }
+              } else if (eventType === 'DELETE') {
+                 // Remove the deleted item
+                 updatedItems = updatedItems.filter(item => item.id !== oldItemId);
+              }
+
+              // Re-sort the lists based on your existing logic if needed
+              if (setter === setPendingToday) {
+                 updatedItems.sort((a, b) => {
+                    const lastA = (Array.isArray(a.pending_items) ? a.pending_items : []).slice(-1)[0];
+                    const lastB = (Array.isArray(b.pending_items) ? b.pending_items : []).slice(-1)[0];
+                    const scoreA = lastA?.from === 'agent' ? new Date(lastA.at).getTime() : 0;
+                    const scoreB = lastB?.from === 'agent' ? new Date(lastB.at).getTime() : 0;
+                    if (scoreA !== scoreB) return scoreB - scoreA;
+                    return (
+                      new Date(b.last_action_at || b.created_at).getTime() -
+                      new Date(a.last_action_at || a.created_at).getTime()
+                    );
+                  });
+              }
+               if (setter === setAllForWork) {
+                   // Sort by creation date ascending for the main queue
+                   updatedItems.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+               }
+
+              return updatedItems;
+           });
+        };
+
+        // Apply the update logic to both relevant state variables
+        updateState(setAllForWork);
+        updateState(setPendingToday);
+    };
+
+    const channel = supabase
+      .channel('uw_submissions_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen for ALL ('INSERT', 'UPDATE', 'DELETE')
+          schema: 'public',
+          table: 'uw_submissions',
+          // Optional filter: Only listen for rows relevant to this component's view
+          // filter: `status=in.(Submitted,Claimed,Pending,Cannot Locate Policy)`
+        },
+        handleChanges // Call our function when a change occurs
+      )
+      .subscribe((status, err) => {
+        // ⬇️ ADD LOG 4 HERE
+        console.log('[Realtime] Subscription status:', status);
+
+        if (status === 'SUBSCRIBED') {
+          console.log('Subscribed to uw_submissions changes!');
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+           console.error('Subscription error:', err);
+           setMsg(`Realtime connection error: ${err?.message || 'Unknown error'}. Data might be stale.`);
+        }
+      });
+
+    return () => {
+      console.log('Unsubscribing from uw_submissions changes'); // Keep this one too
+      supabase.removeChannel(channel);
+    };
+
+  }, [user, supabase, day]); // Dependencies are important!
+  // --- END OF REALTIME useEffect ---
 
   const insertEmoji = (emoji, rowId) => {
     const ta = composerRef.current;
@@ -497,15 +694,15 @@ export default function UnderwritingDashboard() {
       .in('status', ['Submitted', 'Claimed'])
       .order('created_at', { ascending: true });
 
-    // Pending Correction (Today): show my claimed OR any claimed >= 1 day ago
-    const oneDayAgoISO = new Date(Date.now() - ONE_DAY_MS).toISOString();
+    // Pending Correction (Today): show ONLY my claimed
+    // const oneDayAgoISO = new Date(Date.now() - ONE_DAY_MS).toISOString(); // No longer needed here
     const pendingQ = supabase
       .from('uw_submissions')
       .select('*')
       .in('status', ['Pending', 'Cannot Locate Policy'])
       .gte('last_action_at', dayStartISO(day))
       .lte('last_action_at', dayEndISO(day))
-      .or(`claimed_by.eq.${user.id},and(claimed_at.lte.${oneDayAgoISO})`)
+      .eq('claimed_by', user.id) // <-- MODIFIED LINE
       .order('last_action_at', { ascending: true });
 
     const todayKey = toDateKey(new Date());
@@ -563,8 +760,20 @@ export default function UnderwritingDashboard() {
 
   const claim = async (row) => {
     if (!user?.id || !user?.email) return;
-    const first_name = profile?.first_name || profile?.firstName || '';
-    const last_name = profile?.last_name || profile?.lastName || '';
+    // --- NEW: Get full UW name ---
+    const fullName = profile?.full_name ||
+                     user?.user_metadata?.full_name ||
+                     user?.user_metadata?.name || '';
+
+    let first_name = profile?.first_name || user?.user_metadata?.first_name || '';
+    let last_name = profile?.last_name || user?.user_metadata?.last_name || '';
+
+    if (!first_name && fullName) {
+      const parts = fullName.split(' ');
+      first_name = parts[0] || '';
+      last_name = parts.slice(1).join(' ') || '';
+    }
+    // --- End new block ---
     const { error } = await supabase
       .from('uw_submissions')
       .update({
@@ -587,8 +796,20 @@ export default function UnderwritingDashboard() {
 
   const takeOver = async (row) => {
     if (!user?.id || !user?.email) return;
-    const first_name = profile?.first_name || profile?.firstName || '';
-    const last_name = profile?.last_name || profile?.lastName || '';
+    // --- NEW: Get full UW name ---
+    const fullName = profile?.full_name ||
+                     user?.user_metadata?.full_name ||
+                     user?.user_metadata?.name || '';
+
+    let first_name = profile?.first_name || user?.user_metadata?.first_name || '';
+    let last_name = profile?.last_name || user?.user_metadata?.last_name || '';
+
+    if (!first_name && fullName) {
+      const parts = fullName.split(' ');
+      first_name = parts[0] || '';
+      last_name = parts.slice(1).join(' ') || '';
+    }
+    // --- End new block ---
     const { error } = await supabase
       .from('uw_submissions')
       .update({
@@ -627,14 +848,63 @@ export default function UnderwritingDashboard() {
   const sendChat = async (row) => {
     const text = (draft[row.id] || '').trim();
     if (!text) return;
+
+    // --- Optimistic UI Update ---
+    const newMessage = {
+      from: 'uw', // Assuming UW is sending
+      text: text,
+      at: new Date().toISOString(),
+      by: user?.email || null,
+    };
+    const updatedThread = [
+      ...(Array.isArray(row.pending_items) ? row.pending_items : []),
+      newMessage,
+    ];
+
+    // Create the updated row object *locally*
+    const updatedRow = {
+        ...row,
+        pending_items: updatedThread,
+        last_action_at: newMessage.at // Also update last action time visually
+    };
+
+    // Update the main state lists immediately
+    const updateLocalState = (items) => items.map(item =>
+      item.id === row.id ? updatedRow : item // Use the updatedRow object
+    );
+    setAllForWork(prev => updateLocalState(prev));
+    setPendingToday(prev => updateLocalState(prev));
+
+    // *** NEW: Explicitly update manageInfo state if this modal is open ***
+    if (manageInfo && manageInfo.row.id === row.id) {
+        setManageInfo(prev => ({ ...prev, row: updatedRow }));
+    }
+    // *** End NEW ***
+
+    // Clear draft immediately
+    setDraft((s) => ({ ...s, [row.id]: '' }));
+    setShowEmoji(false); // Close emoji panel immediately too
+
     try {
-      await appendMessage(row.id, row.pending_items, text);
-      setDraft((s) => ({ ...s, [row.id]: '' }));
-      setOpenChatRow(null);
-      setShowEmoji(false);
-      load();
+      // Now, save to the database
+      const { error } = await supabase
+        .from('uw_submissions')
+        .update({
+          pending_items: updatedThread, // Use the already constructed thread
+          last_action_at: newMessage.at,
+          last_updated_by: user?.id || null,
+          last_updated_by_email: user?.email || null,
+        })
+        .eq('id', row.id);
+
+      if (error) throw error; // If error, UI might be slightly out of sync until next load
+
+      // load(); // Still optional, might cause a flicker if uncommented
+
     } catch (e) {
-      alert(e.message);
+      alert(`Failed to send message: ${e.message}`);
+      // Consider rolling back the optimistic update or just reload
+      load(); // Reload to fix potential inconsistency
     }
   };
 
@@ -715,11 +985,21 @@ export default function UnderwritingDashboard() {
     setShowEmoji,
     emojiList,
     insertEmoji,
-  };
+  };// --- ADD THIS NAME LOGIC ---
+  const uwFullName = profile?.full_name || user?.user_metadata?.full_name || user?.user_metadata?.name || '';
+  let uwFirstName = profile?.first_name || user?.user_metadata?.first_name || '';
+  if (!uwFirstName && uwFullName) {
+      uwFirstName = uwFullName.split(' ')[0] || '';
+  }
+  // Use First Name if available, otherwise fallback to email prefix
+  const welcomeName = uwFirstName || user?.email?.split('@')[0] || 'Underwriter';
+  // --- END NAME LOGIC ---
 
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>Underwriting Dashboard</h1>
+{/* --- ADD THIS WELCOME MESSAGE --- */}
+      <h2 className={styles.welcomeMessage}>Welcome, {welcomeName}!</h2>
       {msg && <div className={styles.message}>{msg}</div>}
       <div className={styles.kpis} style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
         <div className={styles.kpiCard}>
@@ -798,8 +1078,8 @@ export default function UnderwritingDashboard() {
             <thead>
               <tr>
                 <th>Order</th>
-                <th>Agent</th>
-                <th>Emails</th>
+                <th>Agent Name</th>
+                <th>Office</th>
                 <th>Transaction Type</th>
                 <th>Policy #</th>
                 <th>Premium</th>
@@ -809,38 +1089,36 @@ export default function UnderwritingDashboard() {
                 <th>Assignee</th>
                 <th>Queue Age</th>
                 <th>Last Updated</th>
-                <th>Actions</th>
-                <th>Conversation</th>
+                <th>Manage</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14}>Loading…</td>
+                  <td colSpan={13}>Loading…</td>
                 </tr>
               ) : incomingUnclaimed.length === 0 ? (
                 <tr>
-                  <td colSpan={14}>No unclaimed items.</td>
+                  <td colSpan={13}>No unclaimed items.</td>
                 </tr>
               ) : (
                 incomingUnclaimed.map((r) => (
-                  <RowBase
-                    key={r.id}
-                    r={r}
-                    arr={incomingUnclaimed}
-                    showActions={true}
-                    showChat={true}
-                    user={user}
-                    actions={actions}
-                    setActionState={setActionState}
-                    claim={claim}
-                    takeOver={takeOver}
-                    sendAction={sendAction}
-                    orderNumber={orderNumber}
-                    restrictPendingSection={false}
-                    {...chatProps}
-                  />
-                ))
+    <RowBase
+      key={r.id}
+      r={r}
+      arr={incomingUnclaimed}
+      user={user}
+      actions={actions}
+      setActionState={setActionState}
+      claim={claim}
+      takeOver={takeOver}
+      sendAction={sendAction}
+      orderNumber={orderNumber}
+      restrictPendingSection={false}
+      setManageInfo={setManageInfo} // <-- ADDED
+      {...chatProps}
+    />
+ ))
               )}
             </tbody>
           </table>
@@ -855,8 +1133,8 @@ export default function UnderwritingDashboard() {
             <thead>
               <tr>
                 <th>Order</th>
-                <th>Agent</th>
-                <th>Emails</th>
+                <th>Agent Name</th>
+                <th>Office</th>
                 <th>Transaction Type</th>
                 <th>Policy #</th>
                 <th>Premium</th>
@@ -866,38 +1144,36 @@ export default function UnderwritingDashboard() {
                 <th>Assignee</th>
                 <th>Queue Age</th>
                 <th>Last Updated</th>
-                <th>Actions</th>
-                <th>Conversation</th>
+                <th>Manage</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14}>Loading…</td>
+                  <td colSpan={13}>Loading…</td>
                 </tr>
               ) : myClaimed.length === 0 ? (
                 <tr>
-                  <td colSpan={14}>Nothing claimed yet.</td>
+                  <td colSpan={13}>Nothing claimed yet.</td>
                 </tr>
               ) : (
                 myClaimed.map((r) => (
-                  <RowBase
-                    key={r.id}
-                    r={r}
-                    arr={myClaimed}
-                    showActions={true}
-                    showChat={true}
-                    user={user}
-                    actions={actions}
-                    setActionState={setActionState}
-                    claim={claim}
-                    takeOver={takeOver}
-                    sendAction={sendAction}
-                    orderNumber={orderNumber}
-                    restrictPendingSection={false}
-                    {...chatProps}
-                  />
-                ))
+    <RowBase
+      key={r.id}
+      r={r}
+      arr={myClaimed}
+      user={user}
+      actions={actions}
+      setActionState={setActionState}
+      claim={claim}
+      takeOver={takeOver}
+      sendAction={sendAction}
+      orderNumber={orderNumber}
+      restrictPendingSection={false}
+      setManageInfo={setManageInfo} // <-- ADDED
+      {...chatProps}
+    />
+ ))
               )}
             </tbody>
           </table>
@@ -924,8 +1200,8 @@ export default function UnderwritingDashboard() {
             <thead>
               <tr>
                 <th>Order</th>
-                <th>Agent</th>
-                <th>Emails</th>
+                <th>Agent Name</th>
+                <th>Office</th>
                 <th>Transaction Type</th>
                 <th>Policy #</th>
                 <th>Premium</th>
@@ -935,44 +1211,55 @@ export default function UnderwritingDashboard() {
                 <th>Assignee</th>
                 <th>Queue Age</th>
                 <th>Last Updated</th>
-                <th>Actions</th>
-                <th>Conversation</th>
+                <th>Manage</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14}>Loading…</td>
+                  <td colSpan={13}>Loading…</td>
                 </tr>
               ) : pendingToday.length === 0 ? (
                 <tr>
-                  <td colSpan={14}>No pending items for this day.</td>
+                  <td colSpan={13}>No pending items for this day.</td>
                 </tr>
               ) : (
                 pendingToday.map((r) => (
-                  <RowBase
-                    key={r.id}
-                    r={r}
-                    arr={pendingToday}
-                    showActions={true}
-                    showChat={true}
-                    user={user}
-                    actions={actions}
-                    setActionState={setActionState}
-                    claim={claim}
-                    takeOver={takeOver}
-                    sendAction={sendAction}
-                    orderNumber={orderNumber}
-                    restrictPendingSection={true} // Notes hidden; Send only when Approved
-                    {...chatProps}
-                  />
-                ))
+    <RowBase
+      key={r.id}
+      r={r}
+      arr={pendingToday}
+      user={user}
+      actions={actions}
+      setActionState={setActionState}
+      claim={claim}
+      takeOver={takeOver}
+      sendAction={sendAction}
+      orderNumber={orderNumber}
+      restrictPendingSection={true}
+      setManageInfo={setManageInfo} // <-- ADD THIS LINE
+      {...chatProps} // Pass chat props
+    />
+ ))
               )}
             </tbody>
           </table>
-        </div>
       </div>
-    </div>
-  );
-}
+    </div> 
+
+    {/* --- RENDER THE MODAL --- */}
+    {manageInfo && (
+      <ManageTicketModal
+        info={manageInfo}
+        onClose={() => setManageInfo(null)}
+        user={user}
+        actions={actions}
+        setActionState={setActionState}
+        sendAction={sendAction}
+        {...chatProps}
+      />
+    )}
+  </div> // <-- MOVED IT HERE - Now it correctly closes the main container
+); // End of return statement
+} // End of component
 

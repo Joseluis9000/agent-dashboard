@@ -1,6 +1,6 @@
 /* ================
-   Base / tokens
-   ================ */
+    Base / tokens
+    ================ */
 :root {
   --ui-bg: #f7f9fb;
   --card-bg: #ffffff;
@@ -29,8 +29,8 @@
 }
 
 /* ================
-   Page container
-   ================ */
+    Page container
+    ================ */
 .container {
   padding: 1.5rem 2rem;
   background: var(--ui-bg);
@@ -46,8 +46,8 @@
 }
 
 /* ================
-   KPI row (3 up)
-   ================ */
+    KPI row (3 up)
+    ================ */
 .kpis,
 .kpiRow {
   display: grid;
@@ -95,8 +95,8 @@
 }
 
 /* ================
-   Cards / subsections
-   ================ */
+    Cards / subsections
+    ================ */
 .card {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -110,12 +110,12 @@
 .subHeader {
   font-weight: 800;
   color: #0f172a;
-  margin: .25rem 0 .75rem;
+  margin: 0.25rem 0 0.75rem;
 }
 
 /* ================
-   Pending day controls
-   ================ */
+    Pending day controls
+    ================ */
 .pendingBar,
 .dayNav {
   display: flex;
@@ -124,7 +124,10 @@
   margin-bottom: 8px;
 }
 
-.dayLabel { font-weight: 700; color: #0f172a; }
+.dayLabel {
+  font-weight: 700;
+  color: #0f172a;
+}
 
 .dayBtn,
 .iconBtn {
@@ -137,7 +140,7 @@
 }
 .dayBtn:disabled,
 .iconBtn:disabled {
-  opacity: .45;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
@@ -150,16 +153,20 @@
   padding: 0.6rem 0.9rem;
   font-weight: 700;
   cursor: pointer;
-  transition: transform .05s ease, box-shadow .15s ease, background .12s ease-in-out;
+  transition: transform 0.05s ease, box-shadow 0.15s ease, background 0.12s ease-in-out;
 }
-.refreshBtn:hover { background: var(--primary-600); }
-.refreshBtn:active { transform: translateY(1px); }
+.refreshBtn:hover {
+  background: var(--primary-600);
+}
+.refreshBtn:active {
+  transform: translateY(1px);
+}
 
 /* ================
-   Table
-   ================ */
+    Table
+    ================ */
 .tableWrap {
-  overflow: auto;
+  overflow: auto; /* Changed from overflow-x for consistency */
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -183,18 +190,22 @@ thead th,
   font-weight: 700;
   color: #334155;
   z-index: 1;
-  box-shadow: 0 1px 0 rgba(0,0,0,.02);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
 }
 
-th, td {
+th,
+td {
   padding: 0.7rem 0.75rem;
   border-bottom: 1px solid #eef2f7;
   text-align: left;
   vertical-align: top;
   font-size: 0.95rem;
+  white-space: nowrap; /* Added here for consistency */
 }
 
-tbody tr:hover { background: #fbfdff; }
+tbody tr:hover {
+  background: #fbfdff;
+}
 
 /* Order chip */
 .orderCell {
@@ -233,7 +244,9 @@ tbody tr:hover { background: #fbfdff; }
   color: var(--muted);
   background: #f8fafc;
 }
-.assigneePill.unassigned::before { background: var(--neutral); }
+.assigneePill.unassigned::before {
+  background: var(--neutral);
+}
 
 /* Status badge helpers (optional) */
 .statusBadge {
@@ -243,23 +256,48 @@ tbody tr:hover { background: #fbfdff; }
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: .02em;
+  letter-spacing: 0.02em;
   border-radius: 999px;
   padding: 4px 10px;
   border: 1px solid;
 }
-.statusBadge.pending   { color: #92400e; background: var(--bg-amber);  border-color: #f1c27d; }
-.statusBadge.approved  { color: #166534; background: var(--bg-green);  border-color: #93d2b4; }
-.statusBadge.rejected  { color: #9f1239; background: var(--bg-red);    border-color: #f0a3ad; }
-.statusBadge.locate    { color: #075985; background: var(--bg-info);   border-color: #9ad8f4; }
-.statusBadge.claimed   { color: #0f172a; background: #eef2f7;          border-color: var(--border-strong); }
+.statusBadge.pending {
+  color: #92400e;
+  background: var(--bg-amber);
+  border-color: #f1c27d;
+}
+.statusBadge.approved {
+  color: #166534;
+  background: var(--bg-green);
+  border-color: #93d2b4;
+}
+.statusBadge.rejected {
+  color: #9f1239;
+  background: var(--bg-red);
+  border-color: #f0a3ad;
+}
+.statusBadge.locate {
+  color: #075985;
+  background: var(--bg-info);
+  border-color: #9ad8f4;
+}
+.statusBadge.claimed {
+  color: #0f172a;
+  background: #eef2f7;
+  border-color: var(--border-strong);
+}
 
 /* Queue age highlight */
 .ageDanger,
-.queueAgeWarn { color: #b91c1c; font-weight: 700; }
+.queueAgeWarn {
+  color: #b91c1c;
+  font-weight: 700;
+}
 
 /* Actions column */
-.actionsCell { white-space: nowrap; }
+.actionsCell {
+  white-space: nowrap;
+}
 
 .select,
 .inlineSelect {
@@ -272,10 +310,10 @@ tbody tr:hover { background: #fbfdff; }
 }
 
 /* ================
-   Inputs / Notes
-   ================ */
+    Inputs / Notes
+    ================ */
 .notes,
-.notesCell { 
+.notesCell {
   width: 100%;
   max-width: 460px;
   white-space: pre-wrap;
@@ -298,8 +336,8 @@ textarea:focus,
 }
 
 /* ================
-   Buttons
-   ================ */
+    Buttons
+    ================ */
 .claimBtn {
   background: var(--success);
   color: #fff;
@@ -323,11 +361,14 @@ textarea:focus,
   background: #c7d2fe;
   color: #ffffff;
   cursor: not-allowed;
-  opacity: .9;
+  opacity: 0.9;
 }
 
 /* Tiny helper text / muted */
-.muted { color: var(--muted); font-size: .86rem; }
+.muted {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
 
 /* System message card */
 .message {
@@ -340,14 +381,135 @@ textarea:focus,
 }
 
 /* ================
-   Responsive
-   ================ */
+    Responsive
+    ================ */
 @media (max-width: 1200px) {
-  .kpis, .kpiRow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis,
+  .kpiRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
-  .kpis, .kpiRow { grid-template-columns: 1fr; }
+  .kpis,
+  .kpiRow {
+    grid-template-columns: 1fr;
+  }
 }
 
+/* ================
+    Modal Styles
+    ================ */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+}
+
+.modalContent {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  z-index: 101;
+  width: 90%;
+  max-width: 1000px; /* MODIFIED: Increased */
+  max-height: 90vh; /* MODIFIED: Increased */
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  display: flex; /* Added */
+  flex-direction: column; /* Added */
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  flex-shrink: 0; /* Prevent header/footer from shrinking */
+}
+
+.modalHeader h2 {
+  margin: 0;
+}
+
+.modalCloseBtn {
+  background: transparent;
+  border: none;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+.modalBody {
+  display: flex;
+  flex-direction: row; /* Keep columns side-by-side */
+  gap: 24px;
+  flex-grow: 1; /* Allow body to take available space */
+  overflow: hidden; /* Prevent body itself from scrolling, sections will scroll */
+  /* REMOVED max-height: 75vh; */
+}
+
+.modalSection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1; /* Each section takes up space by default */
+  overflow-y: auto; /* Allow section to scroll if content is too tall */
+  padding: 8px; /* Added small padding */
+  min-height: 0; /* Crucial for flex+overflow */
+}
+
+.modalSection[style*='flexGrow: 2'] {
+  flex: 2; /* Allow conversation section to be wider */
+}
+
+.modalSubTitle {
+  margin: 0 0 8px 0; /* Added bottom margin */
+  font-size: 1.1rem;
+  flex-shrink: 0; /* Prevent title shrinking */
+}
+
+.welcomeMessage {
+  font-size: 1.25rem; /* Slightly smaller than main title */
+  font-weight: 600;
+  color: var(--muted); /* Use the muted text color */
+  margin: -0.75rem 0 1.5rem 0; /* Adjust spacing around it */
+  text-align: left; /* Or center if you prefer */
+}
+
+/* Highlight for rows with a new agent reply */
+.newAgentReplyHighlight {
+  background-color: #fef9c3; /* Light yellow background */
+}
+
+/* Optional: Make it slightly darker on hover */
+.newAgentReplyHighlight:hover {
+  background-color: #fef08a;
+}
+
+/* Badge for new agent messages */
+.newMsgBadge {
+  display: inline-block;
+  margin-left: 8px; /* Space between order number and badge */
+  padding: 2px 6px;
+  font-size: 0.7rem; /* Make it small */
+  font-weight: 700;
+  color: #ffffff; /* White text */
+  background-color: var(--danger); /* Red background (or choose another color like --primary) */
+  border-radius: 4px;
+  line-height: 1.2;
+  vertical-align: middle; /* Align nicely with the text */
+}
+
+/* Optional: Slightly adjust spacing if needed */
+.newAgentReplyHighlight td:first-child {
+  /* You might adjust padding or alignment here if the badge looks off */
+}
 

@@ -73,7 +73,7 @@ const weekLabel = (start) => {
 
 /* ---------- Component ---------- */
 export default function UnderwritingSubmit() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   /* Form state */
   const [form, setForm] = useState({
@@ -246,18 +246,41 @@ export default function UnderwritingSubmit() {
 
     const now = new Date().toISOString();
 
+    // --- NEW: Get full agent name and office label ---
+    const officeLabel = OFFICES.find(o => o.value === form.office_code)?.label || form.office_code;
+
+    // Try to find the name from all possible locations
+    const fullName = profile?.full_name ||  // 1. profile.full_name
+                     user?.user_metadata?.full_name || // 2. metadata.full_name
+                     user?.user_metadata?.name || '';  // 3. metadata.name (from auth)
+
+    let agentFirstName = profile?.first_name || user?.user_metadata?.first_name || '';
+    let agentLastName = profile?.last_name || user?.user_metadata?.last_name || '';
+
+    // If first/last are blank, try splitting the full_name
+    if (!agentFirstName && fullName) {
+      const parts = fullName.split(' ');
+      agentFirstName = parts[0] || '';
+      agentLastName = parts.slice(1).join(' ') || '';
+    }
+// --- End new block ---
+
     // Build submission payload; details field is *not* stored — we push it as first message.
     const payload = {
       agent_id: user.id,
       agent_email: user.email,
+      agent_first_name: agentFirstName, // <-- ADDED
+      agent_last_name: agentLastName,  // <-- ADDED
 
       effective_date: form.effective_date || null,
       office_code: form.office_code.trim(),
+      office: officeLabel, // <-- ADDED (This is the human-readable name)
       transaction_type: form.transaction_type || null,
       policy_number: form.policy_number.trim(),
       customer_name: form.customer_name?.trim() || null,
       phone_number: form.phone_number?.trim() || null,
       premium: Number.isFinite(premiumNum) ? premiumNum : null,
+      total_bf: Number.isFinite(totalBfNum) ? totalBfNum : null, // <-- ADDED
 
       attachments: {
         total_bf: Number.isFinite(totalBfNum) ? totalBfNum : null,
