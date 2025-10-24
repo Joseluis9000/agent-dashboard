@@ -176,8 +176,23 @@ const EODReport = () => {
     const errorRowIndices = new Set(bad); // Initialize with structurally bad rows
 
     if (bad.length > 0) {
-      alerts.push(`You pasted ${bad.length} line(s) that look like totals/labels. Remove these rows before continuing.`);
+      const rowNumbers = bad.map(i => i + 1); // Get 1-based row numbers
+      let badRowMessage = '';
+
+      if (bad.length === 1) {
+        badRowMessage = `Row ${rowNumbers[0]} looks`;
+      } else if (bad.length > 1 && bad.length <= 5) {
+        // List rows if there are 5 or fewer
+        const lastRow = rowNumbers.pop();
+        badRowMessage = `Rows ${rowNumbers.join(', ')} and ${lastRow} look`;
+      } else {
+        // Give a summary if there are many
+        badRowMessage = `${bad.length} lines (starting with row ${rowNumbers[0]}) look`;
+      }
+      
+      alerts.push(`Data Error: ${badRowMessage} like summary totals, not transactions. Please remove the highlighted row(s) before continuing.`);
     }
+    
     if (realOffices.length > 1) {
       alerts.push(
         `Multiple offices detected: ${realOffices.join(
@@ -186,16 +201,20 @@ const EODReport = () => {
       );
     }
 
-    // Pre-calculate net fees per receipt to handle voids correctly
+    // --- START OF MODIFIED PRE-CALCULATION BLOCK ---
+    // Pre-calculate net fees AND unique reference numbers per receipt
     const receiptFeeTotals = {};
+    const receiptRefTotals = {}; // <-- NEW: To track unique refs
+
     transactions.forEach(t => {
       const receipt = t.Receipt;
       if (!receipt) return;
+
+      // --- Fee Totals (existing) ---
       if (!receiptFeeTotals[receipt]) {
         receiptFeeTotals[receipt] = {
           paymentFee: 0,
           convenienceFee: 0,
-          // NEW: Specifically track convenience fees charged to cash
           cashConvenienceFee: 0,
         };
       }
@@ -212,7 +231,20 @@ const EODReport = () => {
           receiptFeeTotals[receipt].cashConvenienceFee += fee;
         }
       }
+      
+      // --- NEW: Reference # Totals ---
+      // We only care about unique refs from Credit Card transactions
+      const reference = (t['Reference #'] || '').trim();
+      const isCC = (t.Method || '').includes('Credit Card');
+
+      if (!receiptRefTotals[receipt]) {
+        receiptRefTotals[receipt] = new Set(); // Use a Set to store unique refs
+      }
+      if (reference && isCC) { // Only add non-empty refs from CC payments
+        receiptRefTotals[receipt].add(reference);
+      }
     });
+    // --- END OF MODIFIED PRE-CALCULATION BLOCK ---
 
     // New validation alerts for payment rules
     transactions.forEach((t, index) => {
@@ -234,11 +266,26 @@ const EODReport = () => {
         const isMonetaryVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
         const isCashErrorVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.cashConvenienceFee) < 0.01;
 
-        // 2. Alert for CC fee > $7, only if not fully voided
+        // --- START OF MODIFIED ALERT LOGIC ---
+        // 2. Alert for CC fee > $7, with new exemption for $14
         if (fee > 7 && !isMonetaryVoided) {
-          alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
-          errorRowIndices.add(index);
+          let isExempt = false;
+          
+          // Check for the $14 exemption
+          if (fee === 14) {
+            const uniqueRefs = receiptRefTotals[receipt] ? receiptRefTotals[receipt].size : 0;
+            if (uniqueRefs > 1) {
+              isExempt = true; // $14 is allowed if there are 2+ unique card refs
+            }
+          }
+
+          // Only push the alert if the transaction is not exempt
+          if (!isExempt) {
+            alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
+            errorRowIndices.add(index);
+          }
         }
+        // --- END OF MODIFIED ALERT LOGIC ---
 
         // 3. Alert for CC fee with Cash payment, only if not fully voided
         if (method.includes('Cash') && !isCashErrorVoided) {
