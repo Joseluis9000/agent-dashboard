@@ -576,57 +576,87 @@ export default function UnderwritingDashboard() {
         const oldItemId = payload.old?.id;
         const eventType = payload.eventType; // 'INSERT', 'UPDATE', 'DELETE'
 
-        // Use functional updates to safely modify state based on previous state
-        const updateState = (setter) => {
-           setter((currentItems) => {
-              let updatedItems = [...currentItems];
+        // --- START REPLACEMENT ---
+      // This function handles updating state for a specific setter (setAllForWork or setPendingToday)
+      const updateStateForSpecificSetter = (setter) => {
+         setter((currentItems) => {
+            let updatedItems = [...currentItems]; // Copy current items
 
-              if (eventType === 'INSERT') {
-                 // Add the new item if it doesn't already exist (safety check)
-                 if (!updatedItems.some(item => item.id === newItem.id)) {
-                   updatedItems.push(newItem);
-                 }
-              } else if (eventType === 'UPDATE') {
-                 // Find and replace the updated item
-                 const index = updatedItems.findIndex(item => item.id === newItem.id);
-                 if (index !== -1) {
-                   updatedItems[index] = newItem;
-                 } else {
-                   // If not found, maybe add it? Depends on your logic.
-                   updatedItems.push(newItem); // Add if not found (e.g., initial load missed it)
-                 }
-              } else if (eventType === 'DELETE') {
-                 // Remove the deleted item
-                 updatedItems = updatedItems.filter(item => item.id !== oldItemId);
-              }
-
-              // Re-sort the lists based on your existing logic if needed
-              if (setter === setPendingToday) {
-                 updatedItems.sort((a, b) => {
-                    const lastA = (Array.isArray(a.pending_items) ? a.pending_items : []).slice(-1)[0];
-                    const lastB = (Array.isArray(b.pending_items) ? b.pending_items : []).slice(-1)[0];
-                    const scoreA = lastA?.from === 'agent' ? new Date(lastA.at).getTime() : 0;
-                    const scoreB = lastB?.from === 'agent' ? new Date(lastB.at).getTime() : 0;
-                    if (scoreA !== scoreB) return scoreB - scoreA;
-                    return (
-                      new Date(b.last_action_at || b.created_at).getTime() -
-                      new Date(a.last_action_at || a.created_at).getTime()
-                    );
-                  });
-              }
-               if (setter === setAllForWork) {
-                   // Sort by creation date ascending for the main queue
-                   updatedItems.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+            if (eventType === 'INSERT') {
+               // Logic for adding a new item
+               if (setter === setPendingToday) {
+                  // ONLY add to pendingToday IF claimed by current user and meets status criteria
+                  if (newItem.claimed_by === user.id && ['Pending', 'Cannot Locate Policy'].includes(newItem.status) && !updatedItems.some(item => item.id === newItem.id)) {
+                     updatedItems.push(newItem);
+                  }
+               } else if (setter === setAllForWork) {
+                  // Add to allForWork if it's not already there (safety check)
+                  if (!updatedItems.some(item => item.id === newItem.id)) {
+                     updatedItems.push(newItem);
+                  }
                }
+            } else if (eventType === 'UPDATE') {
+               // Logic for updating an existing item
+               const index = updatedItems.findIndex(item => item.id === newItem.id);
 
-              return updatedItems;
-           });
-        };
+               if (setter === setPendingToday) {
+                  // Check if the UPDATED item belongs in pendingToday
+                  if (newItem.claimed_by === user.id && ['Pending', 'Cannot Locate Policy'].includes(newItem.status)) {
+                      // Item belongs here, update or add it
+                      if (index !== -1) {
+                          updatedItems[index] = newItem; // Update existing
+                      } else {
+                          updatedItems.push(newItem); // Add if it now belongs here (edge case)
+                      }
+                  } else {
+                      // Item NO LONGER belongs in pendingToday (e.g., status changed, reassigned)
+                      if (index !== -1) {
+                          updatedItems.splice(index, 1); // Remove it
+                      }
+                  }
+               } else if (setter === setAllForWork) {
+                  // Update or add the item in allForWork
+                  if (index !== -1) {
+                     updatedItems[index] = newItem; // Update existing
+                  } else {
+                     updatedItems.push(newItem); // Add if it wasn't found (edge case)
+                  }
+               }
+            } else if (eventType === 'DELETE') {
+               // Logic for removing an item (same for both lists)
+               const deleteId = oldItemId || newItem?.id; // Get ID from old or new payload
+               if(deleteId) {
+                  updatedItems = updatedItems.filter(item => item.id !== deleteId);
+               }
+            }
 
-        // Apply the update logic to both relevant state variables
-        updateState(setAllForWork);
-        updateState(setPendingToday);
-    };
+            // Re-sort the list based on which setter it is
+            if (setter === setPendingToday) {
+               updatedItems.sort((a, b) => {
+                  const lastA = (Array.isArray(a.pending_items) ? a.pending_items : []).slice(-1)[0];
+                  const lastB = (Array.isArray(b.pending_items) ? b.pending_items : []).slice(-1)[0];
+                  const scoreA = lastA?.from === 'agent' ? new Date(lastA.at).getTime() : 0;
+                  const scoreB = lastB?.from === 'agent' ? new Date(lastB.at).getTime() : 0;
+                  if (scoreA !== scoreB) return scoreB - scoreA;
+                  return (
+                    new Date(b.last_action_at || b.created_at).getTime() -
+                    new Date(a.last_action_at || a.created_at).getTime()
+                  );
+                });
+            } else if (setter === setAllForWork) {
+                // Sort by creation date ascending for the main queue
+                updatedItems.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+            }
+
+            return updatedItems; // Return the modified array
+         });
+      };
+      // --- END REPLACEMENT ---
+
+      // Call the modified update logic
+      updateStateForSpecificSetter(setAllForWork); // Update allForWork based on event
+      updateStateForSpecificSetter(setPendingToday); // Update and filter pendingToday
+    }; // <--- This marks the end of handleChanges
 
     const channel = supabase
       .channel('uw_submissions_changes')

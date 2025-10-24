@@ -4,7 +4,13 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ✅ Add this rule below the @tailwind lines */
+/* Add this rule below the @tailwind lines */
+html {
+  -webkit-text-size-adjust: 100%; /* For older Safari/iOS */
+  text-size-adjust: 100%;         /* Standard property */
+}
+
+/* Your existing table rule */
 table {
   width: auto; /* Resets the default Tailwind table width */
 }
