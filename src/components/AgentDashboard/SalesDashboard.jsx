@@ -109,6 +109,7 @@ const localStyles = {
     background: "#dc2626",
     color: "#fff",
     cursor: "pointer",
+    width: 'auto', // <<< --- ADD THIS LINE --- <<<
   },
   card: {
     border: "1px solid #e5e7eb",
