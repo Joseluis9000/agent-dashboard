@@ -46,8 +46,12 @@ const EN_CHECKLIST_ITEMS = [
 ];
 // --- END CHECKLISTS ---
 
-// Statuses that show up in this log
-const PROCESSED_STATUSES = ['Approved', 'Declined', 'Cleared', 'Cannot Locate Policy'];
+/**
+ * LOG STATUSES
+ * Keep legacy "Approved" rows exactly as before, but also show "Accepted", "Pending", and "Cannot Locate Policy".
+ * Include historical "Cleared"/"Declined" if present.
+ */
+const LOG_STATUSES = ['Approved', 'Accepted', 'Pending', 'Cannot Locate Policy', 'Cleared', 'Declined'];
 
 /* --- Helpers --- */
 const pad = (n) => String(n).padStart(2, '0');
@@ -59,8 +63,9 @@ const monthEndISO = (monthKey) => {
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return `${monthKey}-${pad(lastDay)}T23:59:59.999Z`;
 };
+const fmt = (d) => (d ? new Date(d).toLocaleString() : '—');
 
-/* ---------------- Read-only Chat Cell ---------------- */
+/* ---------------- Read-only Chat Cell (screen) ---------------- */
 const ChatCell = ({ row, canMessage, openChatRow }) => {
   const allMessages = useMemo(() => {
     const thread = Array.isArray(row.pending_items) ? row.pending_items : [];
@@ -73,15 +78,42 @@ const ChatCell = ({ row, canMessage, openChatRow }) => {
   return (
     <>
       {openChatRow === row.id && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flexGrow: 1, minHeight: 0, height: '100%' }}>
-          <div style={{ flexGrow: 1, maxHeight: 'none', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '0 4px 10px 0', minHeight: '150px' }}>
-            {allMessages.length === 0 && <div style={{ color: '#6b7280', textAlign: 'center', marginTop: '1rem' }}>No messages yet.</div>}
+        <div
+          className="conversation-tab-print"
+          style={{ display: 'flex', flexDirection: 'column', gap: 10, flexGrow: 1, minHeight: 0, height: '100%' }}
+        >
+          <div
+            style={{
+              flexGrow: 1,
+              maxHeight: 'none',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              padding: '0 4px 10px 0',
+              minHeight: '150px',
+            }}
+          >
+            {allMessages.length === 0 && (
+              <div style={{ color: '#6b7280', textAlign: 'center', marginTop: '1rem' }}>No messages yet.</div>
+            )}
             {allMessages.map((m, idx) => {
               const mine = m.from === 'uw';
               return (
-                <div key={`${m.at}-${idx}-${mine}`} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', background: mine ? '#e0f2fe' : '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 12, padding: '8px 10px' }}>
+                <div
+                  key={`${m.at}-${idx}-${mine}`}
+                  style={{
+                    alignSelf: mine ? 'flex-end' : 'flex-start',
+                    maxWidth: '85%',
+                    background: mine ? '#e0f2fe' : '#f3f4f6',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 12,
+                    padding: '8px 10px',
+                  }}
+                >
                   <div style={{ fontSize: 12, color: '#6b7280' }}>
-                    {mine ? 'You' : 'Agent'} · {m.at ? new Date(m.at).toLocaleString() : ''}
+                    {mine ? 'Underwriter' : 'Agent'}
+                    {m.by ? ` · ${m.by}` : ''} · {m.at ? new Date(m.at).toLocaleString() : ''}
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>
                 </div>
@@ -89,7 +121,16 @@ const ChatCell = ({ row, canMessage, openChatRow }) => {
             })}
           </div>
           {!canMessage && (
-            <div style={{ color: '#6b7280', flexShrink: 0, marginTop: 'auto', textAlign: 'center', padding: '1rem', borderTop: '1px solid var(--border)' }}>
+            <div
+              style={{
+                color: '#6b7280',
+                flexShrink: 0,
+                marginTop: 'auto',
+                textAlign: 'center',
+                padding: '1rem',
+                borderTop: '1px solid var(--border)',
+              }}
+            >
               Messaging is disabled in the log.
             </div>
           )}
@@ -120,61 +161,14 @@ const ChecklistTab = ({ row, readOnly }) => {
     return true;
   });
 
-  const history = Array.isArray(checklistData.history) ? checklistData.history : [];
-
-  const handlePrint = () => {
-    const printWindow = window.open('', '_blank', 'height=800,width=800');
-    printWindow.document.write('<html><head><title>Print Checklist</title>');
-    printWindow.document.write(`
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; }
-        h1, h2 { border-bottom: 1px solid #ccc; padding-bottom: 8px; }
-        h1 { font-size: 1.5rem; } h2 { font-size: 1.2rem; }
-        .grid { display: grid; grid-template-columns: auto 1fr 1fr 1fr 1fr; gap: 0.5rem; align-items: center; border-bottom: 1px solid #ccc; }
-        .grid-header { font-weight: 600; font-size: 0.8rem; color: #555; padding-bottom: 8px; }
-        .grid-item { font-size: 0.9rem; padding: 0.25rem 0; }
-        .grid-notes { font-style: italic; color: #333; }
-        .history { margin-top: 2rem; border-top: 2px solid #000; padding-top: 1rem; }
-        .history-item { border-bottom: 1px dashed #ccc; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
-        .history-item div { margin: 0; }
-        .history-by { font-weight: 600; }
-        .history-date { font-size: 0.8rem; color: #555; }
-        .history-note { font-style: italic; }
-      </style>
-    `);
-    printWindow.document.write('</head><body>');
-    printWindow.document.write(`<h1>Checklist: ${row.policy_number || row.customer_name}</h1>`);
-    printWindow.document.write(`<h2>${selectedList} Checklist</h2>`);
-    printWindow.document.write('<div class="grid">');
-    printWindow.document.write('<span class="grid-header">Status</span><span class="grid-header">Item</span><span class="grid-header">Notes</span><span class="grid-header">Reviewed By</span><span class="grid-header">Date</span>');
-    itemsToRender.forEach((item) => {
-      const itemData = checklistData[item.key] || { status: 'N/A', notes: '', reviewed_by: '', checked_at: null };
-      printWindow.document.write(`<span class="grid-item">${itemData.status || 'N/A'}</span>`);
-      printWindow.document.write(`<span class="grid-item">${item.label}</span>`);
-      printWindow.document.write(`<span class="grid-item grid-notes">${itemData.notes || '—'}</span>`);
-      printWindow.document.write(`<span class="grid-item">${itemData.reviewed_by || '—'}</span>`);
-      printWindow.document.write(`<span class="grid-item">${itemData.checked_at ? new Date(itemData.checked_at).toLocaleString() : '—'}</span>`);
-    });
-    printWindow.document.write('</div>');
-    if (history.length > 0) {
-      printWindow.document.write('<div class="history"><h2>Change History</h2>');
-      [...history].reverse().forEach((entry) => {
-        printWindow.document.write('<div class="history-item">');
-        printWindow.document.write(`<div class="history-by">${entry.by || 'Unknown'} set "${entry.label}" to "${entry.status}"</div>`);
-        printWindow.document.write(`<div class="history-date">${new Date(entry.at).toLocaleString()}</div>`);
-        if (entry.notes) printWindow.document.write(`<div class="history-note">Note: "${entry.notes}"</div>`);
-        printWindow.document.write('</div>');
-      });
-      printWindow.document.write('</div>');
-    }
-    printWindow.document.write('</body></html>');
-    printWindow.document.close();
-    printWindow.print();
-  };
+  const handlePrint = () => window.print();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', flexGrow: 1, padding: '0.25rem' }}>
-      <div style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }} className="checklist-dropdowns-print">
+      <div
+        style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}
+        className="checklist-dropdowns-print"
+      >
         <select value={selectedList} onChange={(e) => setSelectedList(e.target.value)} disabled={readOnly} className={dash.select} style={{ minWidth: '150px' }}>
           <option value="NB">NB Checklist</option>
           <option value="EN">EN Checklist</option>
@@ -190,7 +184,7 @@ const ChecklistTab = ({ row, readOnly }) => {
           <option value="full coverage">Full Coverage</option>
           <option value="liability">Liability</option>
         </select>
-        <button type="button" className={dash.printBtn} onClick={handlePrint}>Print Checklist</button>
+        <button type="button" className={dash.printBtn} onClick={handlePrint}>Print</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr 1fr', alignItems: 'center', gap: '0.75rem 0.5rem' }} className="checklist-grid-print">
@@ -227,14 +221,14 @@ const ChecklistTab = ({ row, readOnly }) => {
 
       <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }} className="history-button-print">
         <button type="button" className={dash.secondaryBtn} onClick={() => setShowHistory((prev) => !prev)}>
-          {showHistory ? 'Hide' : 'Show'} Change History ({history.length})
+          {showHistory ? 'Hide' : 'Show'} Change History {(Array.isArray(checklistData.history) ? checklistData.history.length : 0)}
         </button>
         {showHistory && (
           <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: '#f8fafc', borderRadius: '8px' }} className="history-log-print">
-            {history.length === 0 ? (
+            {(Array.isArray(checklistData.history) ? checklistData.history : []).length === 0 ? (
               <span style={{ color: 'var(--muted)' }}>No history found.</span>
             ) : (
-              [...history].reverse().map((entry, index) => (
+              [...(checklistData.history || [])].reverse().map((entry, index) => (
                 <div key={index} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{entry.by || 'Unknown User'} set "{entry.label}" to "{entry.status}"</div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>{new Date(entry.at).toLocaleString()}</div>
@@ -249,60 +243,202 @@ const ChecklistTab = ({ row, readOnly }) => {
   );
 };
 
-/* ---------------- Modal (Read-only) ---------------- */
-const ManageTicketModal = ({ info, onClose, user, profile, ...chatProps }) => {
+/* ---------------- Modal (Read-only; prints full legal report) ---------------- */
+const ManageTicketModal = ({ info, onClose, user, profile }) => {
   const { row } = info;
   const [activeTab, setActiveTab] = useState('Checklist');
 
+  const conversation = useMemo(() => {
+    const thread = Array.isArray(row.pending_items) ? row.pending_items : [];
+    const start = row.agent_notes
+      ? [{ from: 'agent', text: row.agent_notes, at: row.created_at, by: row.agent_email, isInitialNote: true }]
+      : [];
+    return [...start, ...thread];
+  }, [row.pending_items, row.agent_notes, row.created_at, row.agent_email]);
+
+  const isNB = (row.transaction_type || '').toUpperCase().includes('NB');
+  const baseItems = isNB ? NB_CHECKLIST_ITEMS : EN_CHECKLIST_ITEMS;
+
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   return (
     <>
+      {/* PRINT CSS FIX: use visibility trick + dedicated id */}
       <style jsx global>{`
         @media print {
-          body > *:not(.modal-print-container) { display: none; }
-          .modal-print-container { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
-          .modal-backdrop-print { display: none; }
-          .modal-content-print { box-shadow: none !important; border: none !important; width: 100% !important; max-width: 100% !important; height: auto !important; max-height: none !important; overflow: visible !important; }
-          .modal-body-print { overflow: visible !important; height: auto !important; max-height: none !important; }
-          .modal-header-print, .modal-tabs-print, .conversation-tab-print { display: none !important; }
-          .checklist-tab-print { display: block !important; }
-          .checklist-grid-print { display: grid !important; grid-template-columns: auto 1fr 1fr 1fr 1fr !important; }
-          .checklist-item-print { display: contents; }
-          .checklist-item-print > * { padding-top: 8px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
-          .checklist-dropdowns-print { display: none; }
-          .history-button-print { display: none; }
-          .history-log-print { display: block !important; max-height: none !important; overflow: visible !important; }
+          body * { visibility: hidden !important; }
+          #uw-print-root, #uw-print-root * { visibility: visible !important; }
+          #uw-print-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            padding: 16px !important;
+            display: block !important;
+          }
         }
+        #uw-print-root { display: none; }
+        .uw-print-h1 { font-size: 20px; margin: 0 0 8px; }
+        .uw-print-meta { font-size: 12px; color: #374151; margin-bottom: 12px; }
+        .uw-print-section { margin-top: 16px; }
+        .uw-print-h2 { font-size: 14px; margin: 0 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+        .uw-print-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+        .uw-print-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        .uw-print-grid { display: grid; grid-template-columns: auto 1fr 1fr 1fr 1fr; gap: 6px 8px; align-items: center; }
+        .uw-print-grid .th { font-weight: 600; font-size: 11px; color: #6b7280; }
+        .uw-print-grid .td { font-size: 12px; }
+        .uw-print-table { width: 100%; border-collapse: collapse; }
+        .uw-print-table th, .uw-print-table td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 12px; vertical-align: top; }
+        .uw-print-note { white-space: pre-wrap; }
       `}</style>
 
-      <div className={`${dash.modalBackdrop} modal-backdrop-print`} onClick={onClose} />
-      <div className={`${dash.modalContent} modal-content-print modal-print-container`}>
-        <div className={`${dash.modalHeader} modal-header-print`}>
+      {/* Screen modal */}
+      <div className={dash.modalBackdrop} onClick={onClose} />
+      <div className={dash.modalContent}>
+        <div className={dash.modalHeader}>
           <h2>Log: {row.policy_number || 'Policy'} ({row.customer_name || 'No Customer'})</h2>
-          <button onClick={onClose} className={dash.modalCloseBtn}>&times;</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className={dash.secondaryBtn} onClick={() => window.print()}>Print</button>
+            <button onClick={onClose} className={dash.modalCloseBtn}>&times;</button>
+          </div>
         </div>
 
-        <div className={`${dash.modalTabs} modal-tabs-print`}>
+        <div className={dash.modalTabs}>
           <button className={`${dash.tabButton} ${activeTab === 'Checklist' ? dash.tabActive : ''}`} onClick={() => setActiveTab('Checklist')}>Checklist</button>
           <button className={`${dash.tabButton} ${activeTab === 'Conversation' ? dash.tabActive : ''}`} onClick={() => setActiveTab('Conversation')}>Conversation</button>
         </div>
 
-        <div className={`${dash.modalBody} modal-body-print`}>
-          <div className={`checklist-tab-print ${activeTab !== 'Checklist' ? dash.hidden : ''}`}>
+        <div className={dash.modalBody}>
+          <div className={`${activeTab !== 'Checklist' ? dash.hidden : ''}`}>
             <ChecklistTab key={row.id} row={row} onSave={() => {}} readOnly={true} user={user} profile={profile} />
           </div>
 
-          <div className={`conversation-tab-print ${activeTab !== 'Conversation' ? dash.hidden : ''}`}>
+          <div className={`${activeTab !== 'Conversation' ? dash.hidden : ''}`}>
             <div className={dash.modalSection} style={{ flexGrow: 2, display: 'flex', flexDirection: 'column' }}>
               <h3 className={dash.modalSubTitle}>Conversation</h3>
-              <ChatCell row={row} canMessage={false} {...chatProps} openChatRow={row.id} />
+              <ChatCell row={row} canMessage={false} openChatRow={row.id} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* PRINT-ONLY REPORT */}
+      <div id="uw-print-root" aria-hidden="true">
+        <div>
+          <h1 className="uw-print-h1">Underwriting Case Report</h1>
+          <div className="uw-print-meta">Generated: {fmt(new Date().toISOString())}</div>
+
+          {/* Header */}
+          <div className="uw-print-box">
+            <table className="uw-print-table">
+              <tbody>
+                <tr>
+                  <th>Policy #</th><td className="uw-print-mono">{row.policy_number || '—'}</td>
+                  <th>Status</th><td>{row.status || '—'}</td>
+                </tr>
+                <tr>
+                  <th>Customer</th><td>{row.customer_name || '—'}</td>
+                  <th>Transaction</th><td>{row.transaction_type || '—'}</td>
+                </tr>
+                <tr>
+                  <th>Office</th><td>{row.office_code || '—'}</td>
+                  <th>Phone</th><td>{row.phone_number || '—'}</td>
+                </tr>
+                <tr>
+                  <th>Underwriter</th>
+                  <td>
+                    {(row.claimed_by_first || row.claimed_by_last)
+                      ? `${row.claimed_by_first || ''} ${row.claimed_by_last || ''}`.trim()
+                      : (row.cleared_by_email || row.last_updated_by_email || row.claimed_by_email || '—')}
+                  </td>
+                  <th>Agent</th>
+                  <td>
+                    {(row.agent_first_name || row.agent_last_name)
+                      ? `${row.agent_first_name || ''} ${row.agent_last_name || ''}`.trim()
+                      : (row.agent_email || '—')}
+                  </td>
+                </tr>
+                <tr>
+                  <th>Created</th><td>{fmt(row.created_at)}</td>
+                  <th>Last Action</th><td>{fmt(row.last_action_at)}</td>
+                </tr>
+                <tr>
+                  <th>Claimed</th><td>{fmt(row.claimed_at)}</td>
+                  <th>Cleared</th><td>{fmt(row.cleared_at)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* UW Notes */}
+          <div className="uw-print-section">
+            <h2 className="uw-print-h2">UW Notes</h2>
+            <div className="uw-print-box uw-print-note">
+              {(row.uw_notes && row.uw_notes.trim()) ? row.uw_notes : '—'}
+            </div>
+          </div>
+
+          {/* Conversation History */}
+          <div className="uw-print-section">
+            <h2 className="uw-print-h2">Conversation History</h2>
+            <div className="uw-print-box">
+              {conversation.length === 0 ? (
+                <div>No messages.</div>
+              ) : (
+                <table className="uw-print-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '18%' }}>Time</th>
+                      <th style={{ width: '22%' }}>Sender</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conversation.map((m, i) => (
+                      <tr key={`${m.at || i}-${i}`}>
+                        <td>{fmt(m.at)}</td>
+                        <td>
+                          {(m.from === 'uw' ? 'Underwriter' : 'Agent')}
+                          {m.by ? ` (${m.by})` : ''}
+                          {m.isInitialNote ? ' [Initial Note]' : ''}
+                        </td>
+                        <td className="uw-print-note">{m.text || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* Checklist Snapshot */}
+          <div className="uw-print-section">
+            <h2 className="uw-print-h2">Checklist Snapshot ({isNB ? 'NB' : 'EN'})</h2>
+            <div className="uw-print-box">
+              <div className="uw-print-grid">
+                <div className="th">Status</div>
+                <div className="th">Checklist Item</div>
+                <div className="th">Resolution Notes</div>
+                <div className="th">Reviewed By</div>
+                <div className="th">Date Checked</div>
+
+                {baseItems.map((item) => {
+                  const d = (row.checklist_data || {})[item.key] || {};
+                  return (
+                    <React.Fragment key={item.key}>
+                      <div className="td">{d.status || 'N/A'}</div>
+                      <div className="td">{item.label}</div>
+                      <div className="td uw-print-note">{d.notes || '—'}</div>
+                      <div className="td">{d.reviewed_by || '—'}</div>
+                      <div className="td">{fmt(d.checked_at)}</div>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -326,7 +462,7 @@ export default function UnderwritingLog() {
 
   // Region/Office State
   const [regionOfficeMap, setRegionOfficeMap] = useState({});
-  const [regions, setRegions] = useState([]);
+  const [regions, setRegions] = useState([]); // <-- fixed
   const [selectedRegion, setSelectedRegion] = useState('ALL');
   const [selectedOffice, setSelectedOffice] = useState('ALL');
 
@@ -347,9 +483,7 @@ export default function UnderwritingLog() {
         .select('office_code, office_name, region')
         .order('region')
         .order('office_name');
-      if (error) {
-        console.error('Error fetching office regions:', error);
-      } else {
+      if (!error && data) {
         const map = {};
         const regionSet = new Set();
         data.forEach((item) => {
@@ -368,14 +502,13 @@ export default function UnderwritingLog() {
   const loadKpis = useCallback(() => {
     setKpiLoading(true);
 
-    // timeframe bounds (local)
     const now = new Date();
     let startOfTimeframe;
     const endOfTimeframe = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     if (kpiTimeframe === 'day') {
       startOfTimeframe = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     } else if (kpiTimeframe === 'week') {
-      const dayOfWeek = now.getDay(); // 0=Sun
+      const dayOfWeek = now.getDay();
       startOfTimeframe = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek, 0, 0, 0, 0);
     } else {
       startOfTimeframe = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -383,11 +516,10 @@ export default function UnderwritingLog() {
     const startMs = startOfTimeframe.getTime();
     const endMs = endOfTimeframe.getTime();
 
-    // email -> stats (with display name)
     const stats = {};
     const bump = (email, field, name) => {
       const e = email || 'Unknown';
-      if (!stats[e]) stats[e] = { name: undefined, Approved: 0, Pending: 0, 'Cannot Locate Policy': 0, Total: 0 };
+      if (!stats[e]) stats[e] = { name: undefined, Approved: 0, Accepted: 0, Pending: 0, 'Cannot Locate Policy': 0, Total: 0 };
       if (name && !stats[e].name) stats[e].name = name;
       stats[e][field] += 1;
       stats[e].Total += 1;
@@ -395,23 +527,23 @@ export default function UnderwritingLog() {
 
     const normStatus = (s) => {
       const t = (s || '').toLowerCase();
-      if (t.includes('approve')) return 'Approved';
+      if (t.includes('approved')) return 'Approved';
+      if (t.includes('accepted')) return 'Accepted';
+      if (t === 'pending' || t.includes('pending')) return 'Pending';
       if (t.includes('cannot locate')) return 'Cannot Locate Policy';
-      return 'Other';
+      return null;
     };
 
     const chooseUWEmailFromRow = (r) =>
-      r.last_action_by_email || r.last_updated_by_email || r.cleared_by_email || r.claimed_by_email || 'Unknown';
+      r.last_updated_by_email || r.cleared_by_email || r.claimed_by_email || 'Unknown';
 
     for (const r of rows) {
-      // Approved / Cannot Locate based on row status & last_action_at
       if (r.last_action_at) {
         const ts = new Date(r.last_action_at).getTime();
         if (ts >= startMs && ts <= endMs) {
           const bucket = normStatus(r.status);
-          if (bucket === 'Approved' || bucket === 'Cannot Locate Policy') {
+          if (bucket) {
             const uwEmail = chooseUWEmailFromRow(r);
-            // If the current assignee email matches, we have a nice human name; else fall back to email.
             const uwName =
               (uwEmail && uwEmail === r.claimed_by_email && (r.claimed_by_first || r.claimed_by_last)
                 ? `${r.claimed_by_first || ''} ${r.claimed_by_last || ''}`.trim()
@@ -420,25 +552,13 @@ export default function UnderwritingLog() {
           }
         }
       }
-
-      // Pending from pending_items (by UW), attribute to entry.by, with optional entry.by_name if you add it
-      const thread = Array.isArray(r.pending_items) ? r.pending_items : [];
-      for (const entry of thread) {
-        if (!entry || entry.from !== 'uw' || !entry.at) continue;
-        const t = new Date(entry.at).getTime();
-        if (t < startMs || t > endMs) continue;
-        bump(entry.by || 'Unknown', 'Pending', entry.by_name || undefined);
-      }
     }
 
     setKpiStats(stats);
     setKpiLoading(false);
   }, [rows, kpiTimeframe]);
 
-  useEffect(() => {
-    loadKpis();
-  }, [loadKpis]);
-  /* ------------------ end KPI ------------------ */
+  useEffect(() => { loadKpis(); }, [loadKpis]);
 
   // Main data loader
   const load = useCallback(async () => {
@@ -454,7 +574,7 @@ export default function UnderwritingLog() {
       .select('*')
       .gte('created_at', start)
       .lt('created_at', end)
-      .in('status', PROCESSED_STATUSES);
+      .in('status', LOG_STATUSES);
 
     if (selectedOffice && selectedOffice !== 'ALL') {
       query = query.eq('office_code', selectedOffice);
@@ -479,9 +599,7 @@ export default function UnderwritingLog() {
     setLoading(false);
   }, [canSee, month, selectedRegion, selectedOffice, regionOfficeMap]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const onPrevMonth = () => {
     const [y, m] = month.split('-').map(Number);
@@ -531,32 +649,16 @@ export default function UnderwritingLog() {
     });
   }, [rows, assignee, search]);
 
-  const chatProps = useMemo(
-    () => ({
-      draft: {},
-      setDraft: () => {},
-      sendChat: () => {},
-      composerRef: null,
-      emojiBtnRef: null,
-      emojiPanelRef: null,
-      showEmoji: false,
-      setShowEmoji: () => {},
-      emojiList: [],
-      insertEmoji: () => {},
-      openChatRow,
-      setOpenChatRow,
-    }),
-    [openChatRow]
-  );
-
   if (!canSee) return <div className={dash.container}><p>Not authorized.</p></div>;
 
   const badgeClass = (status) => {
     const s = (status || '').toLowerCase();
     if (s.includes('approved')) return `${log.badge} ${log.badgeApproved}`;
-    if (s.includes('cleared')) return `${log.badge} ${log.badgeApproved}`;
+    if (s.includes('accepted')) return `${log.badge} ${log.badgeApproved}`;
+    if (s === 'pending' || s.includes('pending')) return `${log.badge} ${log.badgeNeutral}`;
     if (s.includes('cannot locate')) return `${log.badge} ${log.badgeLocate}`;
     if (s.includes('declined') || s.includes('rejected')) return `${log.badge} ${log.badgeDeclined}`;
+    if (s.includes('cleared')) return `${log.badge} ${log.badgeApproved}`;
     return `${log.badge} ${log.badgeNeutral}`;
   };
 
@@ -582,6 +684,7 @@ export default function UnderwritingLog() {
                 <tr>
                   <th>Underwriter</th>
                   <th>Approved</th>
+                  <th>Accepted</th>
                   <th>Pending</th>
                   <th>Cannot Locate</th>
                   <th>Total</th>
@@ -589,7 +692,7 @@ export default function UnderwritingLog() {
               </thead>
               <tbody>
                 {Object.keys(kpiStats).length === 0 ? (
-                  <tr><td colSpan={5}>No activity found for this period.</td></tr>
+                  <tr><td colSpan={6}>No activity found for this period.</td></tr>
                 ) : (
                   Object.entries(kpiStats)
                     .sort(([, a], [, b]) => b.Total - a.Total)
@@ -599,6 +702,7 @@ export default function UnderwritingLog() {
                         <tr key={email}>
                           <td>{displayName}</td>
                           <td>{s.Approved}</td>
+                          <td>{s.Accepted}</td>
                           <td>{s.Pending}</td>
                           <td>{s['Cannot Locate Policy']}</td>
                           <td>{s.Total}</td>
@@ -672,7 +776,7 @@ export default function UnderwritingLog() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={10}>No processed items for this period.</td></tr>
+                  <tr><td colSpan={10}>No items for this period.</td></tr>
                 ) : (
                   filtered.map((r) => (
                     <tr key={r.id} onClick={() => { setManageInfo({ row: r }); setOpenChatRow(r.id); }} style={{ cursor: 'pointer' }}>
@@ -718,11 +822,6 @@ export default function UnderwritingLog() {
           onClose={() => { setManageInfo(null); setOpenChatRow(null); }}
           user={user}
           profile={profile}
-          draft={{}}
-          setDraft={() => {}}
-          sendChat={() => {}}
-          openChatRow={openChatRow}
-          setOpenChatRow={setOpenChatRow}
         />
       )}
     </div>
