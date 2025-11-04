@@ -1,8 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts'; // Assumes you have a shared CORS file
 
-// Define the threshold (1 hour in milliseconds)
-const STALE_THRESHOLD_MS = 60 * 60 * 1000;
+// Define the threshold (5 hours in milliseconds)
+const STALE_THRESHOLD_MS = 5 * 60 * 60 * 1000;
 
 Deno.serve(async (req) => {
   // Handle CORS preflight request
@@ -21,16 +21,16 @@ Deno.serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    const oneHourAgo = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
-    console.log(`Querying for policies claimed before: ${oneHourAgo}`);
+    const staleTimestamp = new Date(Date.now() - STALE_THRESHOLD_MS).toISOString();
+    console.log(`Querying for policies claimed by a user and last actioned before: ${staleTimestamp}`);
 
     // Find stale 'Pending' or 'Cannot Locate' policies older than 5 hours
     const { data: stalePolicies, error: queryError } = await supabaseAdmin
       .from('uw_submissions')
       .select('id') // Only need the ID
-      .in('status', ['Pending', 'Cannot Locate Policy']) // <-- FIX 1
-      .is('claimed_by', 'not.null')                   // <-- ADDED: Must be claimed
-      .lt('last_action_at', oneHourAgo);                // <-- FIX 2: Check last_action_at
+      .in('status', ['Pending', 'Cannot Locate Policy']) // <-- FIX 1: Look for Pending/CLP
+      .is('claimed_by', 'not.null')                   // <-- ADDED: Must be claimed by someone
+      .lt('last_action_at', staleTimestamp);           // <-- FIX 2: Check last_action_at
 
     if (queryError) throw queryError;
 
