@@ -25,7 +25,7 @@ const Sidebar = ({ onLogout }) => {
       // ✅ Reinstated: always visible
       { path: '/uw/submit', label: 'Underwriting Submit' },
       { path: '/disqualified-policies', label: 'Disqualified Policies' },
-      { path: '/ticketing-system', label: 'Submit a Ticket' },
+      { path: '/ticketing-system', label: 'Appointment Calendar' },
       { path: '/eod-report', label: 'EOD Report' },
       { path: '/office-eods', label: 'Office & Agent EODs' },
     ];
