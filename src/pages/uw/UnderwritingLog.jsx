@@ -258,6 +258,8 @@ const ManageTicketModal = ({ info, onClose, user, profile }) => {
 
   const isNB = (row.transaction_type || '').toUpperCase().includes('NB');
   const baseItems = isNB ? NB_CHECKLIST_ITEMS : EN_CHECKLIST_ITEMS;
+  const checklistData = row.checklist_data || {};
+  const changeHistory = Array.isArray(checklistData.history) ? checklistData.history : [];
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -427,7 +429,7 @@ const ManageTicketModal = ({ info, onClose, user, profile }) => {
                 <div className="th">Date Checked</div>
 
                 {baseItems.map((item) => {
-                  const d = (row.checklist_data || {})[item.key] || {};
+                  const d = (checklistData || {})[item.key] || {};
                   return (
                     <React.Fragment key={item.key}>
                       <div className="td">{d.status || 'N/A'}</div>
@@ -441,6 +443,40 @@ const ManageTicketModal = ({ info, onClose, user, profile }) => {
               </div>
             </div>
           </div>
+
+          {/* NEW: Checklist Change History (print) */}
+          <div className="uw-print-section">
+            <h2 className="uw-print-h2">Checklist Change History</h2>
+            <div className="uw-print-box">
+              {changeHistory.length === 0 ? (
+                <div>No change history.</div>
+              ) : (
+                <table className="uw-print-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '18%' }}>Time</th>
+                      <th style={{ width: '18%' }}>By</th>
+                      <th style={{ width: '28%' }}>Item</th>
+                      <th style={{ width: '18%' }}>Status</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...changeHistory].reverse().map((entry, idx) => (
+                      <tr key={`${entry.at || idx}-${idx}`}>
+                        <td>{fmt(entry.at)}</td>
+                        <td>{entry.by || 'Unknown'}</td>
+                        <td>{entry.label || '—'}</td>
+                        <td>{entry.status || '—'}</td>
+                        <td className="uw-print-note">{entry.notes || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
         </div>
       </div>
     </>
@@ -468,7 +504,6 @@ export default function UnderwritingLog() {
 
   // Modal State
   const [manageInfo, setManageInfo] = useState(null);
-  const [openChatRow, setOpenChatRow] = useState(null);
 
   // KPI State
   const [kpiTimeframe, setKpiTimeframe] = useState('day');
@@ -779,7 +814,7 @@ export default function UnderwritingLog() {
                   <tr><td colSpan={10}>No items for this period.</td></tr>
                 ) : (
                   filtered.map((r) => (
-                    <tr key={r.id} onClick={() => { setManageInfo({ row: r }); setOpenChatRow(r.id); }} style={{ cursor: 'pointer' }}>
+                    <tr key={r.id} onClick={() => { setManageInfo({ row: r }); }} style={{ cursor: 'pointer' }}>
                       <td className={log.colStatus}><span className={badgeClass(r.status)}>{r.status || '—'}</span></td>
                       <td className={log.colDate}>{r.last_action_at ? new Date(r.last_action_at).toLocaleString() : '—'}</td>
                       <td className={log.colOffice}>{r.office_code || '—'}</td>
@@ -801,7 +836,6 @@ export default function UnderwritingLog() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setManageInfo({ row: r });
-                            setOpenChatRow(r.id);
                           }}
                         >
                           View
@@ -817,11 +851,11 @@ export default function UnderwritingLog() {
       </div>
 
       {manageInfo && (
-        <ManageTicketModal
-          info={manageInfo}
-          onClose={() => { setManageInfo(null); setOpenChatRow(null); }}
-          user={user}
-          profile={profile}
+         <ManageTicketModal
+info={manageInfo}
+onClose={() => { setManageInfo(null); }}
+user={user}
+profile={profile}
         />
       )}
     </div>
