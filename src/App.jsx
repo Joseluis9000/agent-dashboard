@@ -67,7 +67,7 @@ function AppRoutes() {
       {/* PUBLIC */}
       <Route path="/login" element={!user ? <Login /> : <Navigate to={getHomeRoute()} replace />} />
       <Route path="/forgot-password" element={!user ? <ForgotPassword /> : <Navigate to={getHomeRoute()} replace />} />
-      <Route path="/reset-password" element={!user ? <ResetPassword /> : <Navigate to={getHomeRoute()} replace />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
 
       {/* PROTECTED: Agent area */}
