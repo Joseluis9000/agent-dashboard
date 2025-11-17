@@ -151,3 +151,12 @@
 .receiptList a:hover {
   text-decoration: underline;
 }
+
+.tabContent {
+  margin-top: 1rem;
+}
+
+.notesText {
+  white-space: pre-wrap; /* preserve line breaks from the EOD form */
+  line-height: 1.4;
+}
