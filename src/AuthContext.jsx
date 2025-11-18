@@ -42,7 +42,7 @@ const LS_SESSION_START = 'auth_session_start';
 const LS_FORCE_LOGOUT = 'auth_force_logout';
 const LS_SOFT_LOCK = 'auth_soft_lock'; // 👈 NEW
 
-const IDLE_TIMEOUT_MS = 25 * 60 * 1000;        // 25 minutes of no activity → soft lock
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes idle → soft lock
 const ABSOLUTE_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours max session
 
 export const AuthProvider = ({ children }) => {

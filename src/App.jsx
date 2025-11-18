@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 // ⛔️ REMOVED 'BrowserRouter as Router' FROM THIS IMPORT
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
+import { APP_VERSION } from './version'; // 🔁 version for auto-update
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute';
@@ -43,12 +44,13 @@ import PendingUnderwriting from './pages/uw/PendingUnderwriting';
 import OfficeEODs from './components/OfficeEODs';
 
 /** 🔐 Lock / idle settings – keep in sync with AuthContext */
-const IDLE_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes idle → soft lock
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes idle → soft lock
 const LS_LAST_ACTIVITY = 'auth_last_activity';
 const LS_SOFT_LOCK = 'auth_soft_lock';
 
 // ⏳ How long the lock screen waits before auto-logout
 const LOCKSCREEN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes on lock screen before auto-logout
+
 /**
  * Simple lock screen that shows when:
  * - There *is* a user/session
@@ -95,9 +97,7 @@ function LockScreen({ onContinue }) {
     e.preventDefault();
     setError('');
 
-    const email =
-      user?.email ||
-      user?.user_metadata?.email;
+    const email = user?.email || user?.user_metadata?.email;
 
     if (!email) {
       setError('Cannot determine user email. Please switch user and log in again.');
@@ -123,7 +123,9 @@ function LockScreen({ onContinue }) {
       try {
         localStorage.setItem(LS_LAST_ACTIVITY, String(now));
         localStorage.removeItem(LS_SOFT_LOCK);
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       setPassword('');
       onContinue(); // just sets showLock(false) in AppRoutes
@@ -213,12 +215,41 @@ function LockScreen({ onContinue }) {
   );
 }
 
-
-
 // This component contains all your original routing logic.
 function AppRoutes() {
   const { user, profile, loading } = useAuth();
   const [showLock, setShowLock] = useState(false);
+
+  // 🔁 Version check: reload tab if a new deploy is available
+  const checkVersion = async () => {
+    try {
+      const res = await fetch('/version.json', { cache: 'no-store' });
+      if (!res.ok) return;
+
+      const contentType = res.headers.get('content-type') || '';
+
+      if (!contentType.includes('application/json')) {
+        return; // skip if dev server served HTML
+      }
+
+      const data = await res.json();
+
+      if (data?.version && data.version !== APP_VERSION) {
+        window.location.reload();
+      }
+    } catch (e) {
+      // quiet in dev
+    }
+  };
+
+  // 🆕 Auto-update version check (runs immediately + every 5 min)
+  useEffect(() => {
+    checkVersion(); // run immediately
+
+    const interval = setInterval(checkVersion, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
 
   // 🔐 Decide if we should show the lock screen when a session exists
   //    Poll localStorage every second while a user is logged in.
