@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import styles from '../components/SupervisorDashboard/SupervisorDashboard.module.css';
 import TicketDetails from '../components/AdminDashboard/TicketDetails';
+import { notifyTicketEvent } from '../utils/ticketNotifications'; // ✅ NEW
 
 const SupervisorTickets = () => {
     // --- Offices dropdown data ---
@@ -183,7 +184,8 @@ const SupervisorTickets = () => {
         const finalDescription = `${csrName} - ${detailsSection}`;
         const finalCategory = `${department}: ${category}`;
 
-        const { error } = await supabase
+        // ✅ request the inserted row back so we can use it for email payload
+        const { data, error } = await supabase
             .from('tickets')
             .insert([{
                 agent_email: supervisorEmail,
@@ -192,13 +194,16 @@ const SupervisorTickets = () => {
                 category: finalCategory,
                 description: finalDescription,
 
-                // ✅ NEW: save supply details into their own columns
+                // save supply details into their own columns
                 supply_item: isOfficeSupplyRequest ? supplyItem : null,
                 supply_stock_on_hand: isOfficeSupplyRequest ? supplyCurrentStock : null,
                 supply_extra_notes: isOfficeSupplyRequest ? supplyNotes : null,
-            }]);
+            }])
+            .select()
+            .single();
 
         setIsSubmitting(false);
+
         if (error) {
             setFormMessage('Error: ' + error.message);
         } else {
@@ -206,10 +211,21 @@ const SupervisorTickets = () => {
             resetForm();
             fetchMyTickets();
             setView('list');
+
+            // ✅ Fire email notifications (submitter + admin handled by backend)
+            if (data) {
+                notifyTicketEvent('created', {
+                    ticketId: data.id,
+                    office: data.office,
+                    urgency: data.urgency,
+                    category: data.category,
+                    description: data.description,
+                    createdAt: data.created_at,
+                    submitterEmail: data.agent_email,
+                });
+            }
         }
     };
-
-   
 
     const activeTickets = myTickets.filter(ticket => ticket.status !== 'Completed' && ticket.status !== 'Cancelled');
     const completedTickets = myTickets.filter(ticket => ticket.status === 'Completed' || ticket.status === 'Cancelled');
@@ -457,7 +473,7 @@ const SupervisorTickets = () => {
                         <th>Date Submitted</th>
                         <th>Status</th>
                         <th>Assigned To</th>
-                        <th>Details</th> {/* NEW */}
+                        <th>Details</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -479,7 +495,7 @@ const SupervisorTickets = () => {
                                 <td>{ticket.assigned_to || 'Unassigned'}</td>
                                 <td
                                     onClick={e => {
-                                        e.stopPropagation(); // don't trigger row click twice
+                                        e.stopPropagation();
                                         handleRowClick(ticket);
                                     }}
                                 >
@@ -522,7 +538,7 @@ const SupervisorTickets = () => {
                         <th>Date Submitted</th>
                         <th>Date Completed</th>
                         <th>Completed By</th>
-                        <th>Details</th> {/* NEW */}
+                        <th>Details</th>
                     </tr>
                 </thead>
                 <tbody>

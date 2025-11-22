@@ -1,6 +1,7 @@
 // src/components/Tickets/TicketDetails.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
+import { notifyTicketEvent } from '../../utils/ticketNotifications'; // ✅ NEW
 
 const ENTRY_SEPARATOR = '\n\n-----\n\n';
 
@@ -143,6 +144,9 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
       assigned_to: assignedTo || null,
     };
 
+    // track if this save will newly complete the ticket
+    const willCompleteNow = status === 'Completed' && ticket.status !== 'Completed';
+
     // PRIORITY REASON
     if (showPriorityReason && priorityReason.trim()) {
       updates.priority_reason = priorityReason.trim();
@@ -212,7 +216,7 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
     }
 
     // completed meta
-    if (status === 'Completed' && ticket.status !== 'Completed') {
+    if (willCompleteNow) {
       updates.completed_at = new Date().toISOString();
       updates.completed_by = userEmail;
     }
@@ -227,6 +231,21 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
     if (error) {
       alert('Error updating ticket: ' + error.message);
     } else {
+      // ✅ If this save just completed the ticket, send completion email
+      if (willCompleteNow) {
+        notifyTicketEvent('completed', {
+          ticketId: ticket.id,
+          office: ticket.office,
+          urgency: ticket.urgency,
+          category: ticket.category,
+          description: ticket.description,
+          createdAt: ticket.created_at,
+          completedAt: updates.completed_at,
+          submitterEmail: ticket.agent_email,
+          completedBy: updates.completed_by,
+        });
+      }
+
       onUpdate();
       onClose();
     }
@@ -342,7 +361,7 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
               </div>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Submitted:{' '}
+              Submitted{' '}
               {ticket.created_at
                 ? new Date(ticket.created_at).toLocaleString()
                 : 'N/A'}
@@ -395,7 +414,7 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
               </p>
               {ticket.completed_at && (
                 <p className="text-xs text-gray-500">
-                  Completed:{' '}
+                  Completed{' '}
                   {new Date(ticket.completed_at).toLocaleString()}
                   {ticket.completed_by && (
                     <>
