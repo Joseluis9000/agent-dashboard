@@ -1,6 +1,31 @@
+# Dependencies
 node_modules/
 build/
 dist/
+
+# OS junk
 .DS_Store
+
+# Environment files (secrets)
 .env
 .env.local
+.env.server       # <-- ADD THIS
+.env.production
+.env.development
+
+# Local server logs
+email-server.log  # <-- ADD THIS
+
+# Local-only helper scripts
+start-ticket-email-server.bat   # <-- ADD THIS
+
+# Editor folders
+.vscode/
+.idea/
+
+# Output from Next.js / Vercel (if any)
+.vercel/
+.next/
+
+# Supabase local
+.supabase/
