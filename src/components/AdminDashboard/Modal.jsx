@@ -13,7 +13,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
     >
       {/* Content Box: white, rounded, shadow, max-width */}
       <div 
-        className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-auto overflow-hidden"
+        className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()} 
       >
         {/* Header: padding, border-bottom, flex layout */}

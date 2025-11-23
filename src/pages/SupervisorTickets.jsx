@@ -12,15 +12,15 @@ const SupervisorTickets = () => {
         { code: 'CA010 NOBLE',      label: 'CA010 NOBLE - 1661 E NOBLE AVE VISALIA CA 93292' },
         { code: 'CA011 VISALIA',    label: 'CA011 VISALIA - 3000 NORTH DINUBA BLVD #E VISALIA CA 93291' },
         { code: 'CA012 PORTERVILLE',label: 'CA012 PORTERVILLE - 621 W OLIVE AVE PORTERVILLE CA 93257' },
-        { code: 'CA016 NILES',    label: 'CA016 - NILES - 6007-3 NILES ST BAKERSFIELD CA 93306' },
+        { code: 'CA016 NILES',      label: 'CA016 - NILES - 6007-3 NILES ST BAKERSFIELD CA 93306' },
         { code: 'CA022 TULARE',     label: 'CA022 TULARE - 1231 N CHERRY ST TULARE CA 93274' },
         { code: 'CA025 RIVERBANK',  label: 'CA025 RIVERBANK - 2778 PATTERSON RD RIVERBANK CA 95367' },
         { code: 'CA030 MERCED',     label: 'CA030 MERCED - 1102 W 16TH ST MERCED CA 95340' },
         { code: 'CA045 ATWATER',    label: 'CA045 ATWATER - 508 E BELLEVUE ROAD ATWATER CA 95301' },
         { code: 'CA046 TURLOCK',    label: 'CA046 TURLOCK - 1097 W MAIN ST TURLOCK CA 95382' },
-        { code: 'CA047 MING',     label: 'CA047 - MING - 4437 MING AVE BAKERSFIELD CA 93309' },
-        { code: 'CA048 NORRIS',   label: 'CA048 - NORRIS - 826 NORRIS RD BAKERSFIELD CA 93308' },
-        { code: 'CA049 WHITE LN.',label: 'CA049 - WHITE LN. - 2090 WHITE LN BAKERSFIELD CA 93304' },
+        { code: 'CA047 MING',       label: 'CA047 - MING - 4437 MING AVE BAKERSFIELD CA 93309' },
+        { code: 'CA048 NORRIS',     label: 'CA048 - NORRIS - 826 NORRIS RD BAKERSFIELD CA 93308' },
+        { code: 'CA049 WHITE LN.',  label: 'CA049 - WHITE LN. - 2090 WHITE LN BAKERSFIELD CA 93304' },
         { code: 'CA065 CROWS',      label: 'CA065 CROWS - 1940 CROWS LANDING ROAD #12 MODESTO CA 95358' },
         { code: 'CA074 CERES',      label: 'CA074 CERES - 1460 MITCHELL ROAD B MODESTO CA 95351' },
         { code: 'CA075 MODESTO',    label: 'CA075 MODESTO - 1421 E COFFEE ROAD MODESTO CA 95355' },
@@ -38,7 +38,7 @@ const SupervisorTickets = () => {
         { code: 'CA149 REDWOOD CITY', label: 'CA149 REDWOOD CITY - 3050 MIDDLEFIELD RD REDWOOD CITY CA 94063' },
         { code: 'CA150 MENLO PARK', label: 'CA150 MENLO PARK - 828 NEWBRIDGE ST MENLO PARK CA 94025' },
         { code: 'CA166 EL CAJON',   label: 'CA166 EL CAJON - 5439 EL CAJON BLVD SAN DIEGO CA 92115' },
-        { code: 'CA172 BRUNDAGE', label: 'CA172 - BRUNDAGE - 102 BRUNDAGE LN BAKERSFIELD CA 93304' },
+        { code: 'CA172 BRUNDAGE',   label: 'CA172 - BRUNDAGE - 102 BRUNDAGE LN BAKERSFIELD CA 93304' },
         { code: 'CA183 HENDERSON',  label: 'CA183 HENDERSON - 1140 W. HENDERSON AVE PORTERVILLE CA 93257' },
         { code: 'CA216 NAPA',       label: 'CA216 NAPA - 2560 JEFFERSON ST NAPA CA 94558' },
         { code: 'CA229 CORCORAN',   label: 'CA229 CORCORAN - 1001-C WHITLEY AVE CORCORAN CA 93212' },
@@ -112,7 +112,7 @@ const SupervisorTickets = () => {
     const [category, setCategory] = useState(ticketCategories[Object.keys(ticketCategories)[0]][0]);
     const [urgency, setUrgency] = useState('Medium');
     const [description, setDescription] = useState('');
-    const [formMessage, setFormMessage] = useState('');
+       const [formMessage, setFormMessage] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Smart “Office Supply Request” state – single item + current stock
@@ -212,26 +212,36 @@ const SupervisorTickets = () => {
             fetchMyTickets();
             setView('list');
 
-            // ✅ Fire email notifications (submitter + admin handled by backend)
+            // ✅ fire email notifications
             if (data) {
-                notifyTicketEvent('created', {
-                    ticketId: data.id,
-                    office: data.office,
-                    urgency: data.urgency,
-                    category: data.category,
-                    description: data.description,
-                    createdAt: data.created_at,
-                    submitterEmail: data.agent_email,
-                });
+                try {
+                    await notifyTicketEvent('created', {
+                        ticketId: data.id,
+                        office: data.office,
+                        urgency: data.urgency,
+                        category: data.category,
+                        description: data.description,
+                        createdAt: data.created_at,
+                        submitterEmail: data.agent_email,
+                        submitterName: csrName || 'Supervisor',
+                    });
+                    console.log('Ticket notification sent');
+                } catch (err) {
+                    console.error('Failed to send ticket notification', err);
+                }
             }
         }
     };
 
-    const activeTickets = myTickets.filter(ticket => ticket.status !== 'Completed' && ticket.status !== 'Cancelled');
-    const completedTickets = myTickets.filter(ticket => ticket.status === 'Completed' || ticket.status === 'Cancelled');
+    const activeTickets = myTickets.filter(
+        (ticket) => ticket.status !== 'Completed' && ticket.status !== 'Cancelled'
+    );
+    const completedTickets = myTickets.filter(
+        (ticket) => ticket.status === 'Completed' || ticket.status === 'Cancelled'
+    );
 
-    const notStarted = activeTickets.filter(t => !t.assigned_to).length;
-    const inProgress = activeTickets.filter(t => t.assigned_to).length;
+    const notStarted = activeTickets.filter((t) => !t.assigned_to).length;
+    const inProgress = activeTickets.filter((t) => t.assigned_to).length;
     const completedCount = completedTickets.length;
     const totalTickets = myTickets.length;
 
@@ -431,15 +441,15 @@ const SupervisorTickets = () => {
         <div>
             {/* Summary Cards */}
             <div className={styles.summaryCards}>
-                <div className={styles.summaryCard} style={{borderLeftColor: '#e74c3c'}}>
+                <div className={styles.summaryCard} style={{ borderLeftColor: '#e74c3c' }}>
                     <h4>Not Started</h4>
                     <p>{notStarted}</p>
                 </div>
-                <div className={styles.summaryCard} style={{borderLeftColor: '#f39c12'}}>
+                <div className={styles.summaryCard} style={{ borderLeftColor: '#f39c12' }}>
                     <h4>In Progress</h4>
                     <p>{inProgress}</p>
                 </div>
-                <div className={styles.summaryCard} style={{borderLeftColor: '#2ecc71'}}>
+                <div className={styles.summaryCard} style={{ borderLeftColor: '#2ecc71' }}>
                     <h4>Completed</h4>
                     <p>{completedCount}</p>
                 </div>
@@ -462,7 +472,7 @@ const SupervisorTickets = () => {
             </p>
 
             {/* Active Tickets Table */}
-            <h2 style={{marginTop: '2rem', borderBottom: '1px solid #2c3e50', paddingBottom: '0.5rem'}}>
+            <h2 style={{ marginTop: '2rem', borderBottom: '1px solid #2c3e50', paddingBottom: '0.5rem' }}>
                 Your Active Tickets
             </h2>
             <table className={styles.ticketsTable}>
@@ -518,7 +528,7 @@ const SupervisorTickets = () => {
                         ))
                     ) : (
                         <tr>
-                            <td colSpan="6" style={{textAlign: 'center', padding: '20px'}}>
+                            <td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>
                                 You have no active tickets.
                             </td>
                         </tr>
@@ -527,7 +537,7 @@ const SupervisorTickets = () => {
             </table>
 
             {/* Completed Tickets Table */}
-            <h2 style={{marginTop: '2rem', borderBottom: '1px solid #2c3e50', paddingBottom: '0.5rem'}}>
+            <h2 style={{ marginTop: '2rem', borderBottom: '1px solid #2c3e50', paddingBottom: '0.5rem' }}>
                 Your Completed Tickets
             </h2>
             <table className={styles.ticketsTable}>
@@ -567,6 +577,7 @@ const SupervisorTickets = () => {
                                             fontSize: '0.8rem',
                                             borderRadius: '999px',
                                             border: '1px solid #3498db',
+
                                             background: '#fff',
                                             color: '#3498db',
                                             cursor: 'pointer',
@@ -579,7 +590,7 @@ const SupervisorTickets = () => {
                         ))
                     ) : (
                         <tr>
-                            <td colSpan="6" style={{textAlign: 'center', padding: '20px'}}>
+                            <td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>
                                 No tickets have been completed yet.
                             </td>
                         </tr>
@@ -612,7 +623,14 @@ const SupervisorTickets = () => {
                             boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
                         }}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                marginBottom: '0.75rem',
+                            }}
+                        >
                             <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                                 Ticket #{selectedTicket.id}
                             </h2>

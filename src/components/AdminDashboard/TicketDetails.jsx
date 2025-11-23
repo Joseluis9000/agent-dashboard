@@ -232,19 +232,50 @@ const TicketDetails = ({ ticket, onClose, onUpdate, mode = 'admin' }) => {
       alert('Error updating ticket: ' + error.message);
     } else {
       // ✅ If this save just completed the ticket, send completion email
-      if (willCompleteNow) {
-        notifyTicketEvent('completed', {
-          ticketId: ticket.id,
-          office: ticket.office,
-          urgency: ticket.urgency,
-          category: ticket.category,
-          description: ticket.description,
-          createdAt: ticket.created_at,
-          completedAt: updates.completed_at,
-          submitterEmail: ticket.agent_email,
-          completedBy: updates.completed_by,
-        });
-      }
+if (willCompleteNow) {
+  // use the *newest* admin notes (including the one we just added)
+  const finalAdminNotes =
+    typeof updates.admin_notes !== 'undefined'
+      ? updates.admin_notes
+      : (ticket.admin_notes || null);
+
+  notifyTicketEvent('completed', {
+    // core ticket details
+    ticketId: ticket.id,
+    office: ticket.office,
+    urgency: ticket.urgency,
+    category: ticket.category,
+    description: ticket.description,
+    createdAt: ticket.created_at,
+    completedAt: updates.completed_at,
+    submitterEmail: ticket.agent_email,
+    completedBy: updates.completed_by,
+
+    // supply ticket context
+    isSupplyTicket,
+    supplyItem: ticket.supply_item || null,
+    supplyStockOnHand: ticket.supply_stock_on_hand || null,
+    supplyExtraNotes: ticket.supply_extra_notes || null,
+
+    // order details (what you want the submitter to see)
+    orderStatus,
+    qtyApproved: qtyApproved || null,
+    qtyOrdered: qtyOrdered || null,
+    vendor: vendor || null,
+    trackingNumber: trackingNumber || null,
+    expectedDelivery: expectedDelivery || null,
+    delivered,
+    deliveredDate: deliveredDate || null,
+    deliveredBy: deliveredBy || null,
+
+    // notes *you want in email*
+    adminNotes: finalAdminNotes,
+
+    // ❌ explicitly DO NOT send action log
+    // actionLog: undefined
+  });
+}
+
 
       onUpdate();
       onClose();
