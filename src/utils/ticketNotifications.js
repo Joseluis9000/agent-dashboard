@@ -3,13 +3,14 @@
 /**
  * Generic helper to notify backend that a ticket event happened.
  * Backend is responsible for actually sending the emails.
- *
- * @param {"created" | "completed"} eventType
- * @param {Object} payload - info about the ticket & submitter
  */
+
+// 🎯 Use the full URL for the backend server
+const EMAIL_SERVER_URL = 'http://localhost:4000/api/ticket-event'; // <-- FIXED URL
+
 export const notifyTicketEvent = async (eventType, payload) => {
   try {
-    await fetch('/api/ticket-email', {
+    const response = await fetch(EMAIL_SERVER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -17,7 +18,15 @@ export const notifyTicketEvent = async (eventType, payload) => {
         ...payload,      // ticket + submitter info
       }),
     });
+    
+    // Optional: Log success/failure status from the server
+    if (!response.ok) {
+        console.error(`Email server responded with status: ${response.status}`);
+    } else {
+        console.log('Successfully requested email notification from server.');
+    }
   } catch (error) {
-    console.error('Failed to send ticket email notification', error);
+    // This catches network errors (e.g., server isn't running)
+    console.error('Failed to send ticket email notification. Check if Node.js server is running on port 4000.', error);
   }
 };
