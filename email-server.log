@@ -6,3 +6,218 @@ Email notification server running at http://localhost:4000
 Email notification server running at http://localhost:4000
 ^C[dotenv@17.2.3] injecting env (2) from .env -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
 Email notification server running at http://localhost:4000
+[dotenv@17.2.3] injecting env (7) from .env.server -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+Email notification server listening on http://localhost:4000
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 142,
+  "office": "CA074 CERES",
+  "urgency": "Medium",
+  "category": "Operations Management: Office Supply Request",
+  "description": "jose luis - Current supply stock:\n- Item: Printer Paper\n- Current stock: 1 box \n\nOther details:\ntesting\n\nAdditional Notes:\ntesting",
+  "createdAt": "2025-11-23T01:49:43.955382+00:00",
+  "completedAt": "2025-11-23T06:12:27.846Z",
+  "submitterEmail": "diego.funes@fiestainsurance.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": true,
+  "supplyItem": "Printer Paper",
+  "supplyStockOnHand": "1 box ",
+  "supplyExtraNotes": "testing ",
+  "orderStatus": "Approved",
+  "qtyApproved": "9 BOXES ",
+  "qtyOrdered": "9 BOXES ",
+  "vendor": "AMAZON ",
+  "trackingNumber": "JCNJ3BJK34L4KH",
+  "expectedDelivery": "2025-11-25",
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: diego.funes@fiestainsurance.com
+[server] Subject: ✅ Completed: Ticket #142 - CA074 CERES
+[server] Email sent successfully. MessageId: <43a3ea52-563c-4910-2107-b215d27f4496@gaytanandpineda.agency>
+^C[dotenv@17.2.3] injecting env (7) from .env.server -- tip: 🔑 add access controls to secrets: https://dotenvx.com/ops
+Email notification server listening on http://localhost:4000
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "created",
+  "ticketId": 155,
+  "office": "CA074 CERES",
+  "urgency": "Low",
+  "category": "Operations Management: Office Supply Request",
+  "description": "jose luis  - Current supply stock:\n- Item: Printer Paper\n- Current stock: 1 box ",
+  "createdAt": "2025-11-24T17:37:29.293373+00:00",
+  "submitterEmail": "jlrinsure@gmail.com",
+  "submitterName": "jose luis "
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: admin@gaytanandpineda.agency, jgaytan@fiestainsurance.com, rpineda@fiestainsurance.com, ggallardo@fiestainsurance.com, jreyna@fiestainsurance.com, joseph.joslin@fiestainsurance.com
+[server] Subject: 🚨 New Ticket #155 - CA074 CERES - Low
+[server] Email sent successfully. MessageId: <b1c392ce-8c0d-3093-fefb-44023e5ede0a@gaytanandpineda.agency>
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 155,
+  "office": "CA074 CERES",
+  "urgency": "Low",
+  "category": "Operations Management: Office Supply Request",
+  "description": "jose luis  - Current supply stock:\n- Item: Printer Paper\n- Current stock: 1 box ",
+  "createdAt": "2025-11-24T17:37:29.293373+00:00",
+  "completedAt": "2025-11-24T18:59:35.302Z",
+  "submitterEmail": "jlrinsure@gmail.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": true,
+  "supplyItem": "Printer Paper",
+  "supplyStockOnHand": "1 box ",
+  "supplyExtraNotes": null,
+  "orderStatus": "Pending Approval",
+  "qtyApproved": null,
+  "qtyOrdered": null,
+  "vendor": null,
+  "trackingNumber": null,
+  "expectedDelivery": null,
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: jlrinsure@gmail.com
+[server] Subject: ✅ Completed: Ticket #155 - CA074 CERES
+[server] Email sent successfully. MessageId: <8a44eed7-7eeb-424a-6608-a981003accc8@gaytanandpineda.agency>
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 140,
+  "office": "CA074 CERES",
+  "urgency": "Medium",
+  "category": "Operations Management: Office Supply Request",
+  "description": "jose luis  - Current supply stock:\n- Item: Printer Paper\n- Current stock: 1 box \n\nOther details:\nneed 9 boxes test!!!!!\n\nAdditional Notes:\ntest!!!!!",
+  "createdAt": "2025-11-23T01:01:12.886333+00:00",
+  "completedAt": "2025-11-24T18:59:46.688Z",
+  "submitterEmail": "diego.funes@fiestainsurance.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": true,
+  "supplyItem": "Printer Paper",
+  "supplyStockOnHand": "1 box ",
+  "supplyExtraNotes": "need 9 boxes test!!!!!",
+  "orderStatus": "Pending Approval",
+  "qtyApproved": null,
+  "qtyOrdered": null,
+  "vendor": null,
+  "trackingNumber": null,
+  "expectedDelivery": null,
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: diego.funes@fiestainsurance.com
+[server] Subject: ✅ Completed: Ticket #140 - CA074 CERES
+[server] Email sent successfully. MessageId: <98ac74df-1f87-0733-d01b-ec4a25fa1f5a@gaytanandpineda.agency>
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 139,
+  "office": "CA010 NOBLE",
+  "urgency": "Medium",
+  "category": "Operations Management: Office Supply Request",
+  "description": "Jose luis - Current supply stock:\n- Item: Printer Paper\n- Current stock: 1 box\n\nOther details:\nNeed 10 boxes for tax season TEST!!!!\n\nAdditional Notes:\nTest!!!",
+  "createdAt": "2025-11-22T05:31:36.787881+00:00",
+  "completedAt": "2025-11-24T18:59:59.210Z",
+  "submitterEmail": "diego.funes@fiestainsurance.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": true,
+  "supplyItem": "Printer Paper",
+  "supplyStockOnHand": "1 box",
+  "supplyExtraNotes": "Need 10 boxes for tax season TEST!!!!",
+  "orderStatus": "Pending Approval",
+  "qtyApproved": null,
+  "qtyOrdered": null,
+  "vendor": null,
+  "trackingNumber": null,
+  "expectedDelivery": null,
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: diego.funes@fiestainsurance.com
+[server] Subject: ✅ Completed: Ticket #139 - CA010 NOBLE
+[server] Email sent successfully. MessageId: <179f3a0e-ed25-880e-275f-7aeff0c2f557@gaytanandpineda.agency>
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 136,
+  "office": "CA010 NOBLE",
+  "urgency": "Medium",
+  "category": "Operations Management: Office Supply Request",
+  "description": "Jose Luis  - Current supply stock:\n- Item: Policy Jackets\n- Current stock: 1 box left \n\nOther details:\n1 box per month",
+  "createdAt": "2025-11-21T23:28:04.12646+00:00",
+  "completedAt": "2025-11-24T19:00:06.947Z",
+  "submitterEmail": "diego.funes@fiestainsurance.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": true,
+  "supplyItem": "Policy Jackets",
+  "supplyStockOnHand": "1 box left ",
+  "supplyExtraNotes": "1 box per month ",
+  "orderStatus": "Pending Approval",
+  "qtyApproved": null,
+  "qtyOrdered": null,
+  "vendor": null,
+  "trackingNumber": null,
+  "expectedDelivery": null,
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: diego.funes@fiestainsurance.com
+[server] Subject: ✅ Completed: Ticket #136 - CA010 NOBLE
+[server] Email sent successfully. MessageId: <0d3f4f02-b1a3-310f-87f5-4b5ed11d04ee@gaytanandpineda.agency>
+======================================
+[server] POST /api/ticket-event body: {
+  "eventType": "completed",
+  "ticketId": 74,
+  "office": "CA074",
+  "urgency": "Critical",
+  "category": "Tax: Tax Software Support Needed",
+  "description": "Jose Luis  - Please keep my SBTPG account active for the next tax season for my office CA074",
+  "createdAt": "2025-11-06T00:58:44.555638+00:00",
+  "completedAt": "2025-11-24T19:00:32.047Z",
+  "submitterEmail": "jlrinsure@gmail.com",
+  "completedBy": "jreyna@fiestainsurance.com",
+  "isSupplyTicket": false,
+  "supplyItem": null,
+  "supplyStockOnHand": null,
+  "supplyExtraNotes": null,
+  "orderStatus": "Pending Approval",
+  "qtyApproved": null,
+  "qtyOrdered": null,
+  "vendor": null,
+  "trackingNumber": null,
+  "expectedDelivery": null,
+  "delivered": false,
+  "deliveredDate": null,
+  "deliveredBy": null,
+  "adminNotes": null
+}
+[server] creating transporter with user: admin@gaytanandpineda.agency
+[server] Sending email...
+[server] To: jlrinsure@gmail.com
+[server] Subject: ✅ Completed: Ticket #74 - CA074
+[server] Email sent successfully. MessageId: <fd487f3b-fa6d-9403-d1e3-32ec9f5c3451@gaytanandpineda.agency>
+[dotenv@17.2.3] injecting env (7) from .env.server -- tip: ✅ audit secrets and track compliance: https://dotenvx.com/ops
+Email notification server listening on http://localhost:4000
