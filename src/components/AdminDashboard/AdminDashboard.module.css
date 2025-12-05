@@ -346,3 +346,427 @@
     width: var(--sidebar-w); /* still responsive if collapsed */
   }
 }
+
+/* Add to AdminDashboard.module.css */
+
+.stickyCol {
+  position: sticky;
+  left: 0;
+  background-color: #fff; /* Must have background or transparent parts will show text behind it */
+  z-index: 10;
+  border-right: 2px solid #eee;
+  font-weight: bold;
+}
+
+/* Ensure the detailed table doesn't break the page width */
+.regionTableContainer {
+    width: 100%;
+    overflow-x: auto; /* Adds scrollbar only to this block */
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+/* Make headers sticky too if the list is long */
+.ticketsTable th {
+    position: sticky;
+    top: 0;
+    z-index: 5; /* Lower than stickyCol z-index */
+    background-color: #f8f9fa;
+}
+
+/* Fix stickyCol z-index in header to overlap sticky header row */
+.ticketsTable th.stickyCol {
+    z-index: 15;
+}
+
+/* ... existing CSS ... */
+
+.stickyCol {
+    position: sticky;
+    left: 0;
+    background-color: #fff;
+    z-index: 10;
+    border-right: 2px solid #eee;
+    font-weight: bold;
+    min-width: 120px;
+}
+
+/* Modal Styles */
+.modalOverlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5); /* Dimmed background */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modalContent {
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+.modalHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+
+.modalHeader button {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.comparisonGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.compCard {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #eee;
+}
+
+.compCard h4 {
+    margin-top: 0;
+    color: #c0392b;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 5px;
+}
+
+.compRow {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+}
+
+.trendRow {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    font-weight: bold;
+    background: #fff;
+    padding: 5px;
+    border-radius: 4px;
+}
+
+.viewBtn {
+    background-color: #34495e;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.activeTab {
+    padding: 10px 20px;
+    background-color: #c0392b;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.inactiveTab {
+    padding: 10px 20px;
+    background-color: #ddd;
+    color: black;
+    border: none;
+    cursor: pointer;
+}
+
+/* --- Modal Improvements --- */
+
+.heroNumber {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #2c3e50;
+    margin: 10px 0;
+}
+
+.badgeGreen {
+    background: #e8f5e9;
+    color: #27ae60;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+.badgeRed {
+    background: #ffebee;
+    color: #c0392b;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+/* Progress Bar */
+.progressBarBg {
+    width: 100%;
+    height: 8px;
+    background-color: #eee;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progressBarFill {
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+/* Trend Bars (The Mini Chart) */
+.trendContainer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px; /* Space between bars */
+    height: 60px; /* Height of the chart area */
+    margin-top: 5px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #eee;
+}
+
+.trendBarWrapper {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    position: relative;
+}
+
+.trendBar {
+    width: 100%;
+    border-radius: 3px 3px 0 0;
+    transition: height 0.3s ease;
+}
+
+/* Hover effect to show value? You can add tooltip logic later */
+.trendBarWrapper:hover .trendBar {
+    opacity: 0.8;
+}
+
+/* Mix Bar (Stacked) */
+.mixBarContainer {
+    display: flex;
+    width: 100%;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 10px 0;
+}
+
+.mixSegment {
+    height: 100%;
+}
+
+.mixLegend {
+    display: flex;
+    gap: 15px;
+    font-size: 0.75rem;
+    color: #666;
+}
+
+.dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+
+/* --- Grand Total Banner --- */
+.grandTotalContainer {
+    background: #2c3e50; /* Dark contrast background */
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin-bottom: 25px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.grandTotalLabel {
+    font-size: 1.2rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-right: 1px solid rgba(255,255,255,0.3);
+    padding-right: 20px;
+    margin-right: 10px;
+}
+
+.gtGridSummary, .gtGridTrends {
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+.gtGridSummary div, .gtGridTrends div {
+    display: flex;
+    flex-direction: column;
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+.gtGridSummary span, .gtGridTrends span {
+    font-size: 0.75rem;
+    color: #bdc3c7; /* Light grey text for labels */
+    font-weight: normal;
+    text-transform: uppercase;
+}
+
+/* --- Modal Updates --- */
+.modalSelect {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background-color: white;
+    margin-top: 5px;
+    cursor: pointer;
+}
+
+/* --- Updated Trend Chart with Labels --- */
+.trendContainer {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px; 
+    height: 100px; /* Made slightly taller to accommodate labels */
+    margin-top: 10px;
+    padding-bottom: 0;
+    border-bottom: 1px solid #eee;
+}
+
+.trendBarWrapper {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column; /* Stack bar and labels vertically */
+    justify-content: flex-end;
+    align-items: center;
+    position: relative;
+}
+
+.trendBar {
+    width: 80%; /* Slimmer bars look better with text below */
+    border-radius: 3px 3px 0 0;
+    transition: height 0.3s ease;
+    min-height: 4px; /* Ensure 0 values still have a line */
+}
+
+.trendLabelVal {
+    font-size: 0.7rem;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-top: 4px;
+}
+
+.trendLabelMonth {
+    font-size: 0.65rem;
+    color: #95a5a6;
+    text-transform: uppercase;
+}
+
+/* --- Executive Modal Styles --- */
+
+/* Ranking Badge (Top Right) */
+.rankBadge {
+    background: #2c3e50;
+    color: #f1c40f; /* Gold text */
+    padding: 10px 15px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+/* YTD Section */
+.ytdContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 15px;
+    background: #fcfcfc;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #eee;
+}
+
+.ytdRow {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 0.9rem;
+}
+
+.ytdBarBg {
+    flex: 1;
+    height: 24px; /* Thicker bars */
+    background: #ecf0f1;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.ytdBarFill {
+    height: 100%;
+    border-radius: 0 4px 4px 0;
+    transition: width 0.5s ease;
+}
+
+/* Velocity Grid */
+.velocityGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    width: 100%;
+    text-align: center;
+    background: #fff;
+    border: 1px solid #eee;
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.velocityGrid div {
+    display: flex;
+    flex-direction: column;
+}
+
+.velocityGrid span {
+    font-size: 0.75rem;
+    color: #999;
+    text-transform: uppercase;
+}
+
+/* Efficiency Stats */
+.statRow {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+}
+
+.statRow span {
+    color: #555;
+}
