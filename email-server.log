@@ -221,3 +221,6 @@ Email notification server listening on http://localhost:4000
 [server] Email sent successfully. MessageId: <fd487f3b-fa6d-9403-d1e3-32ec9f5c3451@gaytanandpineda.agency>
 [dotenv@17.2.3] injecting env (7) from .env.server -- tip: ✅ audit secrets and track compliance: https://dotenvx.com/ops
 Email notification server listening on http://localhost:4000
+[dotenv@17.2.3] injecting env (7) from .env.server -- tip: ⚙️  enable debug logging with { debug: true }
+Email notification server listening on http://localhost:4000
+^C
