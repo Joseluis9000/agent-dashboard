@@ -223,4 +223,6 @@ Email notification server listening on http://localhost:4000
 Email notification server listening on http://localhost:4000
 [dotenv@17.2.3] injecting env (7) from .env.server -- tip: ⚙️  enable debug logging with { debug: true }
 Email notification server listening on http://localhost:4000
+^C[dotenv@17.2.3] injecting env (7) from .env.server -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+Email notification server listening on http://localhost:4000
 ^C

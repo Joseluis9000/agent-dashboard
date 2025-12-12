@@ -770,3 +770,245 @@
 .statRow span {
     color: #555;
 }
+
+/* =========================
+   CUSTOM REPORTS - POLISH
+   ========================= */
+
+.customReportsWrap {
+  margin-top: 10px;
+}
+
+.customReportsCard {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+}
+
+.customReportsHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.customReportsTitle {
+  font-size: 1.15rem;
+  font-weight: 900;
+  color: #243447;
+  margin: 0;
+}
+
+.customReportsSub {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: #6b7785;
+}
+
+.customReportsReportSelectWrap {
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.customReportsLabel {
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #6b7785;
+}
+
+/* Filter grid */
+.customReportsFiltersGrid {
+  margin-top: 14px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.filterBlock {
+  background: #fbfcfe;
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.filterBlockTitle {
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: #3b4a5a;
+  margin-bottom: 8px;
+}
+
+/* Column spans (adjust as you like) */
+.span3 { grid-column: span 3; }
+.span4 { grid-column: span 4; }
+.span5 { grid-column: span 5; }
+.span6 { grid-column: span 6; }
+
+@media (max-width: 1200px) {
+  .customReportsFiltersGrid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .span3, .span4, .span5, .span6 { grid-column: span 6; }
+}
+
+@media (max-width: 720px) {
+  .customReportsFiltersGrid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+  .span3, .span4, .span5, .span6 { grid-column: span 1; }
+}
+
+/* Multi-select polish */
+.multiSelect {
+  width: 100%;
+  height: 140px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: #fff;
+  padding: 8px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.multiSelect:focus {
+  border-color: rgba(192,57,43,0.45);
+  box-shadow: 0 0 0 4px rgba(192,57,43,0.10);
+}
+
+.pillRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+/* Small buttons in filter blocks */
+.smallBtn {
+  background: #eef2f7;
+  border: 1px solid rgba(0,0,0,0.08);
+  color: #243447;
+  font-weight: 800;
+  border-radius: 10px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.smallBtn:hover {
+  background: #e6ecf5;
+}
+
+/* Fee type checklist */
+.feeTypeBox {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.10);
+  border-radius: 10px;
+  padding: 10px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.feeTypeRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  font-size: 0.92rem;
+  color: #243447;
+}
+
+.feeTypeRow input {
+  transform: scale(1.05);
+}
+
+/* Summary strip (period comparison) */
+.summaryStrip {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.05);
+  margin: 12px 0;
+}
+
+.summaryStripTitle {
+  font-weight: 900;
+  color: #243447;
+  margin-bottom: 6px;
+}
+
+.summaryStripRow {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+  color: #243447;
+}
+
+.summaryStripHint {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #6b7785;
+}
+
+/* Output table container */
+.reportTableWrap {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.05);
+}
+
+/* Make your existing ticketsTable look nicer inside reports */
+.reportTableWrap .ticketsTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  color: #243447;
+  font-weight: 900;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  border-bottom: 1px solid rgba(0,0,0,0.10);
+}
+
+.reportTableWrap .ticketsTable tbody tr:nth-child(even) {
+  background: #fbfcfe;
+}
+
+.reportTableWrap .ticketsTable tbody tr:hover {
+  background: rgba(192,57,43,0.05);
+}
+
+/* Sticky first columns for wide tables */
+.stickyColReport {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 3;
+  box-shadow: 1px 0 0 rgba(0,0,0,0.06);
+}
+
+.stickyColReport2 {
+  position: sticky;
+  left: 160px; /* match Office column width */
+  background: #fff;
+  z-index: 3;
+  box-shadow: 1px 0 0 rgba(0,0,0,0.06);
+}
+
+/* Optional: make monthSelector inputs look more consistent in filters */
+.filterBlock :global(select),
+.filterBlock select {
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: #fff;
+  padding: 8px 10px;
+  font-weight: 700;
+}
+
