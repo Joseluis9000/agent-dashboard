@@ -97,19 +97,7 @@ const EODHistory = () => {
                 return;
             }
 
-            // --- START OF CHANGE ---
-            // Calculate date 7 days ago to ensure we capture all currently active offices
-            // without hitting the 1000-row limit on the full history.
-            const dateSevenDaysAgo = new Date();
-            dateSevenDaysAgo.setDate(dateSevenDaysAgo.getDate() - 7);
-            const dateString = dateSevenDaysAgo.toISOString().split('T')[0];
-
-            const { data: allOfficesData, error: officeError } = await supabase
-                .from('eod_reports')
-                .select('office_number')
-                .gte('report_date', dateString); // Only look at last 7 days
-            // --- END OF CHANGE ---
-
+            const { data: allOfficesData, error: officeError } = await supabase.from('eod_reports').select('office_number');
             if (officeError) {
                 setError("Could not fetch office list.");
                 setLoading(false);
@@ -167,8 +155,7 @@ const EODHistory = () => {
             }
         };
         fetchDailyData();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [selectedDate, selectedOffice, user]);
+    }, [selectedDate, selectedOffice, user]);
 
     const { officeTotals, agentBreakdown, officeSummary } = useMemo(() => {
         const rawTotals = officeReports.reduce((acc, report) => {
