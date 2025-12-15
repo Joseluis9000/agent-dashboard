@@ -97,7 +97,17 @@ const EODHistory = () => {
                 return;
             }
 
-            const { data: allOfficesData, error: officeError } = await supabase.from('eod_reports').select('office_number');
+            // --- FIX 1: Fetch active offices from the last 7 days with a 5000 row limit ---
+            const dateSevenDaysAgo = new Date();
+            dateSevenDaysAgo.setDate(dateSevenDaysAgo.getDate() - 7);
+            const dateString = dateSevenDaysAgo.toISOString().split('T')[0];
+
+            const { data: allOfficesData, error: officeError } = await supabase
+                .from('eod_reports')
+                .select('office_number')
+                .gte('report_date', dateString)
+                .limit(5000); // Increased limit to ensure all reports are captured
+
             if (officeError) {
                 setError("Could not fetch office list.");
                 setLoading(false);
@@ -155,7 +165,9 @@ const EODHistory = () => {
             }
         };
         fetchDailyData();
-    }, [selectedDate, selectedOffice, user]);
+        // --- FIX 2: Depend on user.email string to prevent infinite loops ---
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedDate, selectedOffice, user?.email]);
 
     const { officeTotals, agentBreakdown, officeSummary } = useMemo(() => {
         const rawTotals = officeReports.reduce((acc, report) => {
@@ -266,7 +278,6 @@ const EODHistory = () => {
                                                     {formatCurrency(agent.revenue)}
                                                     {agent.isCorpOwed && <span className={styles.corpOwesTable}>Corp Owes</span>}
                                                 </td>
-                                                {/* **MODIFIED**: This is the new logic for highlighting */}
                                                 <td className={
                                                     (agent.cashDifference < 0 || agent.cashDifference > 5) ? styles.short : 
                                                     (agent.cashDifference > 0 && agent.cashDifference <= 5) ? styles.over : ''
