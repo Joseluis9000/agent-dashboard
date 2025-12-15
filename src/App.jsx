@@ -227,15 +227,27 @@ function AppRoutes() {
       if (!res.ok) return;
 
       const contentType = res.headers.get('content-type') || '';
-
-      if (!contentType.includes('application/json')) {
-        return; // skip if dev server served HTML
-      }
+      if (!contentType.includes('application/json')) return;
 
       const data = await res.json();
+      const serverVersion = data?.version;
 
-      if (data?.version && data.version !== APP_VERSION) {
-        window.location.reload();
+      if (serverVersion && serverVersion !== APP_VERSION) {
+        // 🛡️ Safety Breaker: Check if we already tried to reload for this specific version
+        const lastAttempt = localStorage.getItem('update_attempt_version');
+
+        if (lastAttempt !== serverVersion) {
+          // First time detecting this mismatch? Try reloading to sync.
+          console.log(`Version mismatch detected (Server: ${serverVersion} vs App: ${APP_VERSION}). Reloading...`);
+          localStorage.setItem('update_attempt_version', serverVersion);
+          window.location.reload();
+        } else {
+          // We already reloaded and they STILL don't match? Stop the loop.
+          console.warn(`Auto-update loop detected. Staying on App version ${APP_VERSION} despite Server saying ${serverVersion}.`);
+        }
+      } else {
+        // Versions match! Clear the safety flag so future updates work normally.
+        localStorage.removeItem('update_attempt_version');
       }
     } catch (e) {
       // quiet in dev
