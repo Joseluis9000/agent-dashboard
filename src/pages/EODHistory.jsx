@@ -168,7 +168,7 @@ const EODHistory = () => {
         };
         fetchDailyData();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedDate, selectedOffice, user]);
+}, [selectedDate, selectedOffice, user]);
 
     const { officeTotals, agentBreakdown, officeSummary } = useMemo(() => {
         const rawTotals = officeReports.reduce((acc, report) => {
