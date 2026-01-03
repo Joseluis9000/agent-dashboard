@@ -2,10 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import { supabase } from '../../supabaseClient';
-// --- Use Submit styles ---
-import styles from './UnderwritingSubmit.module.css'; // Corrected back to its own CSS
+import styles from './UnderwritingSubmit.module.css'; 
 
-/* ---------- Office list (Keep as is) ---------- */
+/* ---------- Office list ---------- */
 const OFFICES = [
   { value: 'ca010', label: 'CA010 NOBLE' },
   { value: 'ca011', label: 'CA011 VISALIA' },
@@ -52,7 +51,7 @@ const OFFICES = [
   { value: 'ca251', label: 'CA251 LA PUENTE' },
 ];
 
-/* ---------- Week helpers (Keep as is) ---------- */
+/* ---------- Week helpers ---------- */
 const toUTCDateOnly = (d) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 const mondayOf = (d) => {
   const u = toUTCDateOnly(d);
@@ -104,6 +103,39 @@ const EN_CHECKLIST_ITEMS = [
     { key: 'en_premium_match', label: 'Premium Submitted Matches Receipt' },
 ];
 
+const TAX_CHECKLIST_ITEMS = [
+  // --- 1. IDENTITY & DOCS ---
+  { key: 'tax_uploads', label: 'All Docs Uploaded (ID, SSN, Income, 8879, Consent)' },
+  { key: 'tax_pii_match', label: 'PII Match: Name/DOB/SSN match ID Cards exactly?' },
+  { key: 'tax_dep_match', label: 'Dependents: Names/DOBs match SSN Cards?' },
+
+  // --- 2. INCOME & HEALTHCARE ---
+  { key: 'tax_w2_match', label: 'W-2 Entry Matches Scan?' },
+  { key: 'tax_overtime_match', label: 'Overtime Amount matches YTD on Paystub?' },
+  { key: 'tax_tips_match', label: 'Tips Amount matches Paystub?' },
+  { key: 'tax_healthcare', label: 'Healthcare: Did Agent select YES/NO for Covered CA?' },
+
+  // --- 3. COMPLIANCE ---
+  { key: 'tax_8867_dd', label: 'Form 8867 (Due Diligence) 100% Complete?' },
+  { key: 'tax_credits_proof', label: 'Credits (CTC/EITC/AOTC): Proof Docs Uploaded?' },
+  { key: 'tax_vehicle_credit', label: 'New Vehicle Credit: Document/Purchase Agreement present?' },
+
+  // --- 4. BANK PRODUCT - GENERAL ---
+  { key: 'tax_bank_selection', label: 'Bank Selection: Matches Client Request (RT vs Advance)?', isBank: true },
+
+  // --- 5. ADVANCE SPECIFIC ---
+  { key: 'tax_bank_delivery', label: 'Delivery: SBTPG Fast Cash Advance w/ DD or Check', isAdvanceCritical: true },
+  { key: 'tax_bank_finance', label: 'Advance Amount: With Finance Charge Up to $7,000', isAdvanceCritical: true },
+  { key: 'tax_bank_preack', label: 'Pre-Ack Question: MUST BE YES', isAdvanceCritical: true },
+  { key: 'tax_bank_consent', label: 'Taxpayer Consent: MUST BE YES', isAdvanceCritical: true },
+  { key: 'tax_bank_sigs', label: 'BOTH SBTPG Consent Forms Signed & Uploaded?', isAdvanceCritical: true },
+
+  // --- 6. FINAL SIGN OFF ---
+  { key: 'tax_refund_final', label: 'Refund Amount & Method Verified in E-File Section?' },
+  { key: 'tax_signature_quality', label: 'Signature Check: Signed via Pad? (No Mouse Signatures)' },
+  { key: 'tax_8879_signed', label: 'Tax Return Signed by Taxpayer?' },
+];
+
 // --- ChatCell Component ---
 const ChatCell = ({
   row, canMessage, draft, setDraft, sendMessage, composerRef,
@@ -149,22 +181,47 @@ const ChatCell = ({
 
 // --- ReadOnlyChecklistTab Component ---
 const ReadOnlyChecklistTab = ({ row }) => {
-  const isNB = useMemo(() => (row.transaction_type || '').toUpperCase().includes('NB'), [row.transaction_type]); // Use useMemo
-  // No need for setSelectedList state anymore
+  const transactionType = (row.transaction_type || '').toUpperCase();
+  const isNB = transactionType.includes('NB');
+  const isTax = transactionType.includes('TAX');
+
   const checklistData = row.checklist_data || {};
   const [showHistory, setShowHistory] = useState(false);
 
+  // Logic Helpers
   const paymentMethod = (checklistData.payment_method || '').toLowerCase();
   const coverageType = (checklistData.coverage_type || '').toLowerCase();
-  const baseItems = isNB ? NB_CHECKLIST_ITEMS : EN_CHECKLIST_ITEMS; // Directly use isNB
+  const taxReturnType = (checklistData.tax_return_type || 'standard').toLowerCase();
 
-  const itemsToRender = useMemo(() => baseItems.filter(item => { // Memoize filter result
-    if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') return paymentMethod !== 'cash';
-    if (item.key === 'nb_photos' || item.key === 'en_photos') return coverageType !== 'liability';
+  // Select Base List
+  let baseItems = EN_CHECKLIST_ITEMS;
+  let labelType = 'Endorsement (EN)';
+  if (isNB) {
+    baseItems = NB_CHECKLIST_ITEMS;
+    labelType = 'New Business (NB)';
+  } else if (isTax) {
+    baseItems = TAX_CHECKLIST_ITEMS;
+    labelType = 'Tax Return';
+  }
+
+  // Filter Items
+  const itemsToRender = useMemo(() => baseItems.filter(item => {
+    // 1. Insurance Filters
+    if (!isTax) {
+        if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') return paymentMethod !== 'cash';
+        if (item.key === 'nb_photos' || item.key === 'en_photos') return coverageType !== 'liability';
+    }
+    // 2. Tax Filters
+    if (isTax) {
+        const isAdvance = taxReturnType === 'bank_advance';
+        const isBank = taxReturnType === 'bank_rt' || isAdvance;
+        if (item.isAdvanceCritical && !isAdvance) return false;
+        if (item.isBank && !isBank) return false;
+    }
     return true;
-  }), [baseItems, paymentMethod, coverageType]);
+  }), [baseItems, paymentMethod, coverageType, isTax, taxReturnType]);
 
-  const history = useMemo(() => Array.isArray(checklistData.history) ? checklistData.history : [], [checklistData.history]); // Memoize history
+  const history = useMemo(() => Array.isArray(checklistData.history) ? checklistData.history : [], [checklistData.history]);
 
   const getStatusStyle = (status) => {
       switch (status) {
@@ -178,15 +235,22 @@ const ReadOnlyChecklistTab = ({ row }) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', flexGrow: 1, padding: '0.25rem' }}>
-      {/* --- MODIFIED: Removed checklist select, added display text --- */}
       <div style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
-         <span className={styles.checklistTypeDisplay}> {/* Added a class for potential styling */}
-           Checklist Type: <strong>{isNB ? 'New Business (NB)' : 'Endorsement (EN)'}</strong>
+         <span className={styles.checklistTypeDisplay}>
+           Checklist Type: <strong>{labelType}</strong>
          </span>
-        <span style={{ fontSize: '0.9rem' }}>Payment: <strong>{checklistData.payment_method || 'N/A'}</strong></span>
-        <span style={{ fontSize: '0.9rem' }}>Coverage: <strong>{checklistData.coverage_type || 'N/A'}</strong></span>
+         {!isTax && (
+            <>
+                <span style={{ fontSize: '0.9rem' }}>Payment: <strong>{checklistData.payment_method || 'N/A'}</strong></span>
+                <span style={{ fontSize: '0.9rem' }}>Coverage: <strong>{checklistData.coverage_type || 'N/A'}</strong></span>
+            </>
+         )}
+         {isTax && (
+            <span style={{ fontSize: '0.9rem' }}>
+                Return Type: <strong>{taxReturnType === 'bank_advance' ? '🚨 Advance' : taxReturnType === 'bank_rt' ? 'Bank Product' : 'Standard'}</strong>
+            </span>
+         )}
       </div>
-      {/* --- END MODIFICATION --- */}
 
       <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 1fr 1fr 1fr', alignItems: 'center', gap: '0.75rem 0.5rem' }}>
         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'center' }}>Status</span>
@@ -231,7 +295,6 @@ const ReadOnlyChecklistTab = ({ row }) => {
 
 // --- DetailsModal Component ---
 const DetailsModal = ({ info, onClose, user, ...chatProps }) => {
-    // ... (Modal implementation remains the same)
      const { row } = info;
      const [activeTab, setActiveTab] = useState('Conversation');
      const canMessage = (row.status || '').toLowerCase() !== 'approved';
@@ -299,24 +362,30 @@ export default function UnderwritingSubmit() {
   const composerRef = useRef(null);
   const emojiBtnRef = useRef(null);
   const emojiPanelRef = useRef(null);
-
-  // --- ADDED: State for submission status ---
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Helper boolean to check if Tax mode is active
+  const isTax = form.transaction_type === 'TAX';
 
   // --- ADDED: Derived state for form validity ---
   const isFormValid = useMemo(() => {
-    // Check if all required fields (excluding optional ones) have a value
-    return (
+    // Common checks
+    const common = 
       form.effective_date?.trim() &&
       form.office_code?.trim() &&
       form.transaction_type?.trim() &&
-      form.policy_number?.trim() &&
+      form.policy_number?.trim() && // This holds SSN for tax
       form.customer_name?.trim() &&
-      form.phone_number?.trim() &&
-      form.premium?.trim() && // Check string value, actual number validation happens in submit
-      form.total_bf?.trim() // Check string value, actual number validation happens in submit
-    );
-  }, [form]); // Re-calculate when form changes
+      form.phone_number?.trim();
+
+    // If Tax, we don't need Premium or Total BF
+    if (isTax) {
+        return common;
+    }
+
+    // If Insurance, we need Premium and Total BF
+    return common && form.premium?.trim() && form.total_bf?.trim();
+  }, [form, isTax]);
 
   const emojiList = useMemo(() => [
     '😀','😁','😂','🤣','😊','😍','😎','🙂','😉',
@@ -324,36 +393,34 @@ export default function UnderwritingSubmit() {
   ], []);
 
   const insertEmoji = useCallback((emoji, rowId) => {
-    // ... (insertEmoji logic) ...
-     if (!rowId) return;
-     const ta = composerRef.current;
-     const current = draft[rowId] || '';
-     if (!ta) {
-       setDraft((s) => ({ ...s, [rowId]: current + emoji }));
-       setShowEmoji(false);
-       return;
-     }
-     const start = ta.selectionStart ?? current.length;
-     const end = ta.selectionEnd ?? current.length;
-     const next = current.slice(0, start) + emoji + current.slice(end);
-     setDraft((s) => ({ ...s, [rowId]: next }));
-     requestAnimationFrame(() => {
-       ta?.focus?.();
-       const pos = start + emoji.length;
-       ta?.setSelectionRange?.(pos, pos);
-     });
-     setShowEmoji(false);
+      if (!rowId) return;
+      const ta = composerRef.current;
+      const current = draft[rowId] || '';
+      if (!ta) {
+        setDraft((s) => ({ ...s, [rowId]: current + emoji }));
+        setShowEmoji(false);
+        return;
+      }
+      const start = ta.selectionStart ?? current.length;
+      const end = ta.selectionEnd ?? current.length;
+      const next = current.slice(0, start) + emoji + current.slice(end);
+      setDraft((s) => ({ ...s, [rowId]: next }));
+      requestAnimationFrame(() => {
+        ta?.focus?.();
+        const pos = start + emoji.length;
+        ta?.setSelectionRange?.(pos, pos);
+      });
+      setShowEmoji(false);
   }, [draft]);
 
   useEffect(() => {
-    // ... (emoji panel handling) ...
-     if (!showEmoji) return;
-     const onDocClick = (e) => {
-       if ( emojiPanelRef.current && !emojiPanelRef.current.contains(e.target) && emojiBtnRef.current && !emojiBtnRef.current.contains(e.target) ) { setShowEmoji(false); }
-     };
-     const onEsc = (e) => e.key === 'Escape' && setShowEmoji(false);
-     document.addEventListener('mousedown', onDocClick); document.addEventListener('keydown', onEsc);
-     return () => { document.removeEventListener('mousedown', onDocClick); document.removeEventListener('keydown', onEsc); };
+      if (!showEmoji) return;
+      const onDocClick = (e) => {
+        if ( emojiPanelRef.current && !emojiPanelRef.current.contains(e.target) && emojiBtnRef.current && !emojiBtnRef.current.contains(e.target) ) { setShowEmoji(false); }
+      };
+      const onEsc = (e) => e.key === 'Escape' && setShowEmoji(false);
+      document.addEventListener('mousedown', onDocClick); document.addEventListener('keydown', onEsc);
+      return () => { document.removeEventListener('mousedown', onDocClick); document.removeEventListener('keydown', onEsc); };
   }, [showEmoji]);
 
   useEffect(() => {
@@ -362,74 +429,71 @@ export default function UnderwritingSubmit() {
   }, []);
 
   const loadMine = useCallback(async () => {
-    // ... (loadMine logic - check required fields are selected) ...
-     if (!user?.id) return;
-     setLoading(true);
-     setMsg('');
-     const startIso = `${isoDate(weekStart)}T00:00:00Z`;
-     const endIso = `${isoDate(addDays(weekStart, 6))}T23:59:59Z`;
-     const selectQuery = 'id, created_at, office_code, office, transaction_type, policy_number, customer_name, status, claimed_by, claimed_by_email, claimed_by_first, claimed_by_last, uw_notes, pending_items, priority, checklist_data'; // Be more explicit
-     const { data, error } = await supabase
-       .from('uw_submissions')
-       .select(selectQuery)
-       .eq('agent_id', user.id)
-       .gte('created_at', startIso)
-       .lte('created_at', endIso)
-       .order('created_at', { ascending: false });
+      if (!user?.id) return;
+      setLoading(true);
+      setMsg('');
+      const startIso = `${isoDate(weekStart)}T00:00:00Z`;
+      const endIso = `${isoDate(addDays(weekStart, 6))}T23:59:59Z`;
+      const selectQuery = 'id, created_at, office_code, office, transaction_type, policy_number, customer_name, status, claimed_by, claimed_by_email, claimed_by_first, claimed_by_last, uw_notes, pending_items, priority, checklist_data';
+      const { data, error } = await supabase
+        .from('uw_submissions')
+        .select(selectQuery)
+        .eq('agent_id', user.id)
+        .gte('created_at', startIso)
+        .lte('created_at', endIso)
+        .order('created_at', { ascending: false });
 
-     if (error) { /* ... error handling ... */ return; }
-     const allData = data || [];
-     const pending = allData.filter((r) => (r.status || '').toLowerCase() !== 'approved');
-     const accepted = allData.filter((r) => (r.status || '').toLowerCase() === 'approved');
-     setItems({ pending, accepted });
-     const ids = Array.from(new Set(allData.map((r) => r.claimed_by).filter(Boolean)));
-     if (ids.length) {
-       const { data: profs, error: pErr } = await supabase.from('profiles').select('id, full_name, first_name, email').in('id', ids);
-       if (!pErr && profs) {
-         const map = {};
-         for (const p of profs) {
-           const first = p.first_name || (p.full_name || '').split(' ')[0] || (p.email || '').split('@')[0];
-           map[p.id] = first ? first.charAt(0).toUpperCase() + first.slice(1) : '—';
-         }
-         setUwMap(map);
-       } else { setUwMap({}); }
-     } else { setUwMap({}); }
-     setLoading(false);
+      if (error) { return; }
+      const allData = data || [];
+      const pending = allData.filter((r) => (r.status || '').toLowerCase() !== 'approved');
+      const accepted = allData.filter((r) => (r.status || '').toLowerCase() === 'approved');
+      setItems({ pending, accepted });
+      const ids = Array.from(new Set(allData.map((r) => r.claimed_by).filter(Boolean)));
+      if (ids.length) {
+        const { data: profs, error: pErr } = await supabase.from('profiles').select('id, full_name, first_name, email').in('id', ids);
+        if (!pErr && profs) {
+          const map = {};
+          for (const p of profs) {
+            const first = p.first_name || (p.full_name || '').split(' ')[0] || (p.email || '').split('@')[0];
+            map[p.id] = first ? first.charAt(0).toUpperCase() + first.slice(1) : '—';
+          }
+          setUwMap(map);
+        } else { setUwMap({}); }
+      } else { setUwMap({}); }
+      setLoading(false);
   }, [user?.id, weekStart]);
 
   useEffect(() => { loadMine(); }, [loadMine]);
 
   useEffect(() => {
-    // ... (Realtime subscription logic) ...
-     if (!user?.id) return;
-     const startIso = `${isoDate(weekStart)}T00:00:00Z`;
-     const endIso = `${isoDate(addDays(weekStart, 6))}T23:59:59Z`;
-     const handleChanges = (payload) => { /* ... handling logic ... */ };
-     const channel = supabase
-       .channel('agent_uw_submissions_changes')
-       .on('postgres_changes', { event: '*', schema: 'public', table: 'uw_submissions', filter: `agent_id=eq.${user.id}` }, handleChanges)
-       .subscribe((status, err) => { /* ... logging ... */ });
-     return () => { supabase.removeChannel(channel).catch(console.error); };
+      if (!user?.id) return;
+      // Removed the unused startIso and endIso definitions here to fix warnings.
+      const handleChanges = (payload) => { /* ... handling logic ... */ };
+      const channel = supabase
+        .channel('agent_uw_submissions_changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'uw_submissions', filter: `agent_id=eq.${user.id}` }, handleChanges)
+        .subscribe((status, err) => { });
+      return () => { supabase.removeChannel(channel).catch(console.error); };
   }, [user?.id, weekStart, manageInfo, loadMine]);
 
   const submit = async (e) => {
     e.preventDefault();
-    // --- ADDED: Check form validity before proceeding ---
     if (!isFormValid) {
-        setMsg('Error: Please fill in all required fields (marked implicitly).');
+        setMsg('Error: Please fill in all required fields.');
         return;
     }
-    // --- END Check ---
 
-    setIsSubmitting(true); // Disable button
-    setMsg('Submitting...'); // Show submitting message
+    setIsSubmitting(true);
+    setMsg('Submitting...');
 
-    // Rest of submit logic remains the same...
-    if (!user?.id || !user?.email) { /* ... */ setIsSubmitting(false); return; }
+    if (!user?.id || !user?.email) { setIsSubmitting(false); return; }
     if (rememberOffice && form.office_code) { localStorage.setItem('default_office_code', form.office_code); }
+    
+    // Logic for premium/bf based on Tax mode
     const premiumNum = form.premium === '' ? null : Number(form.premium);
     const totalBfNum = form.total_bf === '' ? null : Number(form.total_bf);
     const splitPayNum = form.split_pay === '' ? null : Number(form.split_pay);
+    
     const now = new Date().toISOString();
     const officeLabel = OFFICES.find(o => o.value === form.office_code)?.label || form.office_code;
     const fullName = profile?.full_name || user?.user_metadata?.full_name || user?.user_metadata?.name || '';
@@ -446,68 +510,64 @@ export default function UnderwritingSubmit() {
       effective_date: form.effective_date || null, office_code: form.office_code.trim(), office: officeLabel,
       transaction_type: form.transaction_type || null, policy_number: form.policy_number.trim(),
       customer_name: form.customer_name?.trim() || null, phone_number: form.phone_number?.trim() || null,
-      premium: Number.isFinite(premiumNum) ? premiumNum : null, total_bf: Number.isFinite(totalBfNum) ? totalBfNum : null,
-      attachments: { total_bf: Number.isFinite(totalBfNum) ? totalBfNum : null, split_pay_amount: Number.isFinite(splitPayNum) ? splitPayNum : null, },
+      
+      // If Tax, force null for financials
+      premium: isTax ? null : (Number.isFinite(premiumNum) ? premiumNum : null), 
+      total_bf: isTax ? null : (Number.isFinite(totalBfNum) ? totalBfNum : null),
+      attachments: { 
+          total_bf: isTax ? null : (Number.isFinite(totalBfNum) ? totalBfNum : null), 
+          split_pay_amount: isTax ? null : (Number.isFinite(splitPayNum) ? splitPayNum : null), 
+      },
+      
       pending_items: form.details?.trim() ? [{ from: 'agent', text: form.details.trim(), at: now, by: user.email }] : [],
       status: 'Submitted', priority: Number(form.priority) || 3, last_action_at: now, last_updated_by: user.id, last_updated_by_email: user.email,
       checklist_data: {},
     };
 
-    const { data: inserted, error } = await supabase.from('uw_submissions').insert(payload).select('id').single();
+    const { error } = await supabase.from('uw_submissions').insert(payload).select('id').single();
 
     if (error) {
       setMsg(`Error: ${error.message}`);
-      setIsSubmitting(false); // Re-enable button on error
+      setIsSubmitting(false);
       return;
     }
 
-    if (Number.isFinite(totalBfNum)) { /* ... (bf saving logic) ... */ }
-
     setMsg('Submitted!');
-    resetForm(); // Use resetForm function
+    resetForm();
     loadMine();
-    setIsSubmitting(false); // Re-enable button on success
+    setIsSubmitting(false);
   };
 
   const appendMessage = useCallback(async (rowId, thread, text) => {
-    // ... (appendMessage logic) ...
-     if (!text || !user?.email || !user?.id) return;
-     const newMessage = { from: 'agent', text: text, at: new Date().toISOString(), by: user.email };
-     const newThread = [...(Array.isArray(thread) ? thread : []), newMessage];
-     if (manageInfo && manageInfo.row.id === rowId) { /* ... optimistic update ... */ }
-     const { error } = await supabase.from('uw_submissions').update({ pending_items: newThread, last_action_at: newMessage.at, last_updated_by: user.id, last_updated_by_email: user.email, }).eq('id', rowId);
-     if (error) { console.error("Append message error:", error); loadMine(); throw error; }
+      if (!text || !user?.email || !user?.id) return;
+      const newMessage = { from: 'agent', text: text, at: new Date().toISOString(), by: user.email };
+      const newThread = [...(Array.isArray(thread) ? thread : []), newMessage];
+      if (manageInfo && manageInfo.row.id === rowId) { /* ... optimistic update ... */ }
+      const { error } = await supabase.from('uw_submissions').update({ pending_items: newThread, last_action_at: newMessage.at, last_updated_by: user.id, last_updated_by_email: user.email, }).eq('id', rowId);
+      if (error) { console.error("Append message error:", error); loadMine(); throw error; }
   }, [user, manageInfo, loadMine]);
 
   const sendMessage = useCallback(async (row) => {
-    // ... (sendMessage logic) ...
-     const text = (draft[row.id] || '').trim();
-     if (!text) return;
-     try {
-       await appendMessage(row.id, row.pending_items, text);
-       setDraft((s) => ({ ...s, [row.id]: '' }));
-       setShowEmoji(false);
-     } catch (e) { alert(`Failed to send message: ${e.message}`); }
+      const text = (draft[row.id] || '').trim();
+      if (!text) return;
+      try {
+        await appendMessage(row.id, row.pending_items, text);
+        setDraft((s) => ({ ...s, [row.id]: '' }));
+        setShowEmoji(false);
+      } catch (e) { alert(`Failed to send message: ${e.message}`); }
   }, [draft, appendMessage]);
 
   const prettyUnderwriter = (row) => {
-    // ... (prettyUnderwriter logic) ...
-     if (row.claimed_by && uwMap[row.claimed_by]) return uwMap[row.claimed_by];
-     if (row.claimed_by_first) return row.claimed_by_first;
-     if (row.claimed_by_email) { /* ... fallback ... */ }
-     return '—';
-  };
-
-  const lastMessage = (row) => {
-    // ... (lastMessage logic) ...
-     const t = Array.isArray(row.pending_items) ? row.pending_items : [];
-     return t.length ? t[t.length - 1] : null;
+      if (row.claimed_by && uwMap[row.claimed_by]) return uwMap[row.claimed_by];
+      if (row.claimed_by_first) return row.claimed_by_first;
+      if (row.claimed_by_email) { /* ... fallback ... */ }
+      return '—';
   };
 
   const chatProps = useMemo(() => ({
     draft, setDraft, sendMessage, composerRef, emojiBtnRef, emojiPanelRef,
     showEmoji, setShowEmoji, emojiList, insertEmoji,
-  }), [draft, sendMessage, showEmoji, emojiList, insertEmoji]); // Added insertEmoji back
+  }), [draft, sendMessage, showEmoji, emojiList, insertEmoji]);
 
   const resetForm = () => {
     setForm({
@@ -529,14 +589,12 @@ export default function UnderwritingSubmit() {
   if (!user) { return <div className={styles.container}><p>Loading session…</p></div>; }
 
   const PendingRow = (r) => {
-    // ... (PendingRow JSX) ...
-     const isUrgent = r.priority === 1;
-     return ( <tr key={r.id} style={{ background: isUrgent ? 'var(--warning-light-bg)' : 'var(--danger-light-bg)' }}> <td>{new Date(r.created_at).toLocaleString()}</td> <td>{r.office || r.office_code || '—'}</td> <td>{r.transaction_type || '—'}</td> <td>{r.policy_number || '—'}</td> <td>{r.customer_name || '—'}</td> <td>{r.status || '—'}</td> <td>{prettyUnderwriter(r)}</td> <td> <button className={styles.secondaryBtn} onClick={() => { setManageInfo({ row: r }); setShowEmoji(false); }}> View Details </button> </td> </tr> );
+      const isUrgent = r.priority === 1;
+      return ( <tr key={r.id} style={{ background: isUrgent ? 'var(--warning-light-bg)' : 'var(--danger-light-bg)' }}> <td>{new Date(r.created_at).toLocaleString()}</td> <td>{r.office || r.office_code || '—'}</td> <td>{r.transaction_type || '—'}</td> <td>{r.policy_number || '—'}</td> <td>{r.customer_name || '—'}</td> <td>{r.status || '—'}</td> <td>{prettyUnderwriter(r)}</td> <td> <button className={styles.secondaryBtn} onClick={() => { setManageInfo({ row: r }); setShowEmoji(false); }}> View Details </button> </td> </tr> );
   };
 
   const AcceptedRow = (r) => {
-    // ... (AcceptedRow JSX) ...
-     return ( <tr key={r.id} style={{ background: 'var(--success-light-bg)' }}> <td>{new Date(r.created_at).toLocaleString()}</td> <td>{r.office || r.office_code || '—'}</td> <td>{r.transaction_type || '—'}</td> <td>{r.policy_number || '—'}</td> <td>{r.customer_name || '—'}</td> <td>{r.status || '—'}</td> <td>{prettyUnderwriter(r)}</td> <td> <button className={styles.secondaryBtn} onClick={() => { setManageInfo({ row: r }); setShowEmoji(false); }}> View Details </button> </td> </tr> );
+      return ( <tr key={r.id} style={{ background: 'var(--success-light-bg)' }}> <td>{new Date(r.created_at).toLocaleString()}</td> <td>{r.office || r.office_code || '—'}</td> <td>{r.transaction_type || '—'}</td> <td>{r.policy_number || '—'}</td> <td>{r.customer_name || '—'}</td> <td>{r.status || '—'}</td> <td>{prettyUnderwriter(r)}</td> <td> <button className={styles.secondaryBtn} onClick={() => { setManageInfo({ row: r }); setShowEmoji(false); }}> View Details </button> </td> </tr> );
   };
 
   return (
@@ -553,85 +611,106 @@ export default function UnderwritingSubmit() {
 
       <form onSubmit={submit} className={styles.card}>
         <div className={styles.grid}>
-          {/* --- ADDED required prop to necessary fields --- */}
           <input
             type="date"
             value={form.effective_date}
             onChange={(e) => setForm({ ...form, effective_date: e.target.value })}
             aria-label="Effective Date"
-            required // Date is required
+            required
           />
           <div className={styles.officeGroup}>
             <select
               value={form.office_code}
               onChange={(e) => setForm({ ...form, office_code: e.target.value })}
-              required // Office is required
+              required
               aria-label="Select Office"
             >
-              <option value="">Select Office *</option> {/* Added asterisk */}
+              <option value="">Select Office *</option>
               {OFFICES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <label className={styles.rememberOffice}>
               <input type="checkbox" checked={rememberOffice} onChange={(e) => setRememberOffice(e.target.checked)} /> Remember
             </label>
           </div>
+          
           <select
             value={form.transaction_type}
-            onChange={(e) => setForm({ ...form, transaction_type: e.target.value })}
-            required // Transaction Type is required
+            onChange={(e) => {
+                const newVal = e.target.value;
+                setForm(prev => ({ 
+                    ...prev, 
+                    transaction_type: newVal,
+                    // Optional: Clear premium/BF if switching to Tax to avoid confusion
+                    premium: newVal === 'TAX' ? '' : prev.premium,
+                    total_bf: newVal === 'TAX' ? '' : prev.total_bf,
+                }));
+            }}
+            required
             title="Transaction Type"
             aria-label="Transaction Type"
           >
             <option value="NB">NB — New Business</option>
             <option value="EN">EN — Endorsement</option>
+            <option value="TAX">TAX — Tax Return</option>
           </select>
+
           <input
-            placeholder="Policy Number *" // Added asterisk
+            placeholder={isTax ? "Last 4 of SSN *" : "Policy Number *"}
             value={form.policy_number}
             onChange={(e) => setForm({ ...form, policy_number: e.target.value })}
-            required // Policy Number is required
-            aria-label="Policy Number"
+            required
+            aria-label={isTax ? "Last 4 of SSN" : "Policy Number"}
+            maxLength={isTax ? 4 : undefined} // Optional: limit to 4 if Tax
           />
+
           <input
-            placeholder="Customer Name *" // Added asterisk
+            placeholder="Customer Name *"
             value={form.customer_name}
             onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
-            required // Customer Name is required
+            required
             aria-label="Customer Name"
           />
           <input
-            placeholder="Phone Number *" // Added asterisk
+            placeholder="Phone Number *"
             value={form.phone_number}
             onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
-            required // Phone Number is required
+            required
             aria-label="Phone Number"
           />
+          
           <input
             type="number"
             step="0.01"
-            placeholder="Premium *" // Added asterisk
+            placeholder={isTax ? "Premium (N/A)" : "Premium *"}
             value={form.premium}
             onChange={(e) => setForm({ ...form, premium: e.target.value })}
-            required // Premium is required
+            required={!isTax}
+            disabled={isTax}
             aria-label="Premium"
+            style={isTax ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed' } : {}}
           />
+          
           <input
             type="number"
             step="0.01"
-            placeholder="Total BF *" // Added asterisk
+            placeholder={isTax ? "Total BF (N/A)" : "Total BF *"}
             value={form.total_bf}
             onChange={(e) => setForm({ ...form, total_bf: e.target.value })}
-            required // Total BF is required
+            required={!isTax}
+            disabled={isTax}
             aria-label="Total BF"
+            style={isTax ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed' } : {}}
           />
+          
           <input
             type="number"
             step="0.01"
-            placeholder="Split Pay Amount (If Any)"
+            placeholder={isTax ? "Split Pay (N/A)" : "Split Pay Amount (If Any)"}
             value={form.split_pay}
             onChange={(e) => setForm({ ...form, split_pay: e.target.value })}
             aria-label="Split Pay Amount"
-             // Optional - no 'required'
+            disabled={isTax}
+            style={isTax ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed' } : {}}
           />
         </div>
 
@@ -642,24 +721,22 @@ export default function UnderwritingSubmit() {
           onChange={(e) => setForm({ ...form, details: e.target.value })}
           aria-label="Message to Underwriter"
           style={{ marginTop: '1rem' }}
-          // Optional - no 'required'
         />
-        {/* --- ADDED disabled prop based on validity and submission status --- */}
+        
         <button
           type="submit"
           className={styles.submit}
           style={{ marginTop: '1rem' }}
-          disabled={!isFormValid || isSubmitting} // Disable if not valid or submitting
+          disabled={!isFormValid || isSubmitting}
         >
           {isSubmitting ? 'Submitting...' : 'Submit to Underwriting'}
         </button>
       </form>
 
-      {/* --- My Submissions Section (Remains the same) --- */}
+      {/* --- My Submissions Section --- */}
       <h2 className={styles.subTitle}>My Submissions</h2>
       <div className={styles.card}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
-          {/* ... week selector ... */}
            <div style={{ fontWeight: 600, marginRight: '0.5rem' }}>Week:</div>
            <button className={styles.iconBtn} onClick={() => setWeekStart((d) => addDays(d, -7))} title="Previous week">‹</button>
            <div style={{ minWidth: '180px', textAlign: 'center', fontWeight: 500 }}>{weekLabel(weekStart)}</div>
@@ -681,7 +758,7 @@ export default function UnderwritingSubmit() {
         )}
       </div>
 
-      {/* --- Modal Rendering (Remains the same) --- */}
+      {/* --- Modal Rendering --- */}
       {manageInfo && ( <DetailsModal info={manageInfo} onClose={() => { setManageInfo(null); setShowEmoji(false); }} user={user} {...chatProps} /> )}
     </div>
   );
