@@ -1,4 +1,3 @@
-// src/pages/uw/UnderwritingDashboard.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import { supabase } from '../../supabaseClient';
@@ -41,6 +40,42 @@ const EN_CHECKLIST_ITEMS = [
   { key: 'en_uploaded_to_matrix', label: 'Uploaded To Matrix / Proof Of E-Sign' },
   { key: 'en_supporting_docs', label: 'Supporting Documents sent to Insurance company' },
   { key: 'en_premium_match', label: 'Does Premium Amount Submitted Match Receipt?' },
+];
+
+const TAX_CHECKLIST_ITEMS = [
+  // --- 1. IDENTITY & DOCS ---
+  { key: 'tax_uploads', label: 'All Docs Uploaded (ID, SSN, Income, 8879, Consent)' },
+  { key: 'tax_matrix_receipt', label: 'Agency Matrix Receipt Created?' }, // <--- ADDED HERE
+  { key: 'tax_pii_match', label: 'PII Match: Name/DOB/SSN match ID Cards exactly?' },
+  { key: 'tax_dep_match', label: 'Dependents: Names/DOBs match SSN Cards?' },
+
+  // --- 2. INCOME & HEALTHCARE ---
+  { key: 'tax_w2_match', label: 'W-2 Entry Matches Scan?' },
+  { key: 'tax_overtime_match', label: 'Overtime Amount matches YTD on Paystub?' },
+  { key: 'tax_tips_match', label: 'Tips Amount matches Paystub?' },
+  { key: 'tax_healthcare', label: 'Healthcare: Did Agent select YES/NO for Covered CA?' }, 
+
+  // --- 3. COMPLIANCE ---
+  { key: 'tax_8867_dd', label: 'Form 8867 (Due Diligence) 100% Complete?' },
+  { key: 'tax_credits_proof', label: 'Credits (CTC/EITC/AOTC): Proof Docs Uploaded?' },
+  { key: 'tax_vehicle_credit', label: 'New Vehicle Credit: Document/Purchase Agreement present?' },
+
+  // --- 4. BANK PRODUCT - GENERAL (Applies to RT & Advance) ---
+  // These show up if ANY Bank Product is selected
+  { key: 'tax_bank_selection', label: 'Bank Selection: Matches Client Request (RT vs Advance)?', isBank: true },
+
+  // --- 5. ADVANCE SPECIFIC (The "Red" Flags) ---
+  // These ONLY show up if "Advance" is selected
+  { key: 'tax_bank_delivery', label: 'Delivery: SBTPG Fast Cash Advance w/ DD or Check', isAdvanceCritical: true },
+  { key: 'tax_bank_finance', label: 'Advance Amount: With Finance Charge Up to $7,000', isAdvanceCritical: true },
+  { key: 'tax_bank_preack', label: 'Pre-Ack Question: MUST BE YES', isAdvanceCritical: true },
+  { key: 'tax_bank_consent', label: 'Taxpayer Consent: MUST BE YES', isAdvanceCritical: true },
+  { key: 'tax_bank_sigs', label: 'BOTH SBTPG Consent Forms Signed & Uploaded?', isAdvanceCritical: true },
+
+  // --- 6. FINAL SIGN OFF ---
+  { key: 'tax_refund_final', label: 'Refund Amount & Method Verified in E-File Section?' },
+  { key: 'tax_signature_quality', label: 'Signature Check: Signed via Pad? (No Mouse Signatures)' },
+  { key: 'tax_8879_signed', label: 'Tax Return Signed by Taxpayer?' },
 ];
 // --- END CHECKLIST DEFINITIONS ---
 
@@ -200,7 +235,7 @@ const RowBase = ({
   const unassigned = !r.claimed_by;
   const last = (Array.isArray(r.pending_items) ? r.pending_items : []).slice(-1)[0];
   const newReply = last?.from === 'agent';
-  
+   
   const canTakeOver =
     !!r.claimed_at &&
     !mine &&
@@ -218,12 +253,12 @@ const RowBase = ({
         {newReply && <span className={styles.newMsgBadge}>New Msg</span>}
       </td>
       <td>
-        {(r.agent && (r.agent.first_name || r.agent.last_name))
-          ? `${r.agent.first_name || ''} ${r.agent.last_name || ''}`.trim()
-          : (r.agent_first_name || r.agent_last_name) 
-            ? `${r.agent_first_name || ''} ${r.agent_last_name || ''}`.trim()
-            : (r.agent_email || '').split('@')[0] || '-'}
-      </td>
+        {(r.agent && (r.agent.first_name || r.agent.last_name))
+          ? `${r.agent.first_name || ''} ${r.agent.last_name || ''}`.trim()
+          : (r.agent_first_name || r.agent_last_name) 
+            ? `${r.agent_first_name || ''} ${r.agent_last_name || ''}`.trim()
+            : (r.agent_email || '').split('@')[0] || '-'}
+      </td>
       <td>{r.office || '—'}</td>
       <td>{r.transaction_type || '—'}</td>
       <td>{r.policy_number || '—'}</td>
@@ -266,15 +301,21 @@ const RowBase = ({
   );
 };
 
-// --- *** MODIFIED ChecklistTab COMPONENT *** ---
+// --- *** UPDATED ChecklistTab COMPONENT *** ---
 const ChecklistTab = ({ row, onSave, user, profile }) => {
-  const isNB = (row.transaction_type || '').toUpperCase().includes('NB');
-  const [selectedList, setSelectedList] = useState(isNB ? 'NB' : 'EN');
-  
+  // Determine default list based on transaction type
+  const getListType = () => {
+    const type = (row.transaction_type || '').toUpperCase();
+    if (type.includes('TAX')) return 'TAX';
+    if (type.includes('NB')) return 'NB';
+    return 'EN';
+  };
+
+  const [selectedList, setSelectedList] = useState(getListType());
   const [checklistData, setChecklistData] = useState(row.checklist_data || {});
   const [showHistory, setShowHistory] = useState(false);
 
-  // Debouncer for saving NOTES and DROPDOWNS
+  // Debouncer for saving
   const debouncedSave = useRef(
     ((func, delay) => {
       let timeout;
@@ -284,152 +325,165 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
       };
     })((newChecklistData) => {
       onSave(newChecklistData);
-    }, 1000) // Save 1 second after last change
+    }, 1000)
   ).current;
 
-  // --- Function for NOTES change (debounced) ---
   const handleNoteChange = (key, newNote) => {
     const existingItemData = checklistData[key] || { status: 'N/A', notes: '', reviewed_by: '', checked_at: null };
-    
-    const updatedItem = {
-      ...existingItemData,
-      notes: newNote, // Only update the note
-    };
-    
-    const newData = {
-      ...checklistData,
-      [key]: updatedItem,
-    };
-    
-    setChecklistData(newData); // Update local state immediately
-    debouncedSave(newData); // Call debounced save for notes
+    const newData = { ...checklistData, [key]: { ...existingItemData, notes: newNote } };
+    setChecklistData(newData);
+    debouncedSave(newData);
   };
 
-  // --- Function for STATUS change (immediate save + history log) ---
   const handleStatusChange = (key, newStatus) => {
     const uwName = (profile?.full_name || user?.email?.split('@')[0]) || 'Unknown User';
     const existingItemData = checklistData[key] || { status: 'N/A', notes: '', reviewed_by: '', checked_at: null };
-    
-    // If status didn't change, do nothing
     if (newStatus === existingItemData.status) return;
 
     const existingHistory = Array.isArray(checklistData.history) ? checklistData.history : [];
     let newHistory = [...existingHistory];
-    let updatedItemData;
     const newTimestamp = new Date().toISOString();
-    const currentNotes = existingItemData.notes || ''; // Preserve existing notes
-
-    // --- FIX: Define baseItems INSIDE the handler ---
-    const baseItems = selectedList === 'NB' ? NB_CHECKLIST_ITEMS : EN_CHECKLIST_ITEMS;
-    // ---
     
-    // 1. Create the history log entry for this action
+    // Helper to find label
+    let currentBaseItems = NB_CHECKLIST_ITEMS;
+    if (selectedList === 'EN') currentBaseItems = EN_CHECKLIST_ITEMS;
+    if (selectedList === 'TAX') currentBaseItems = TAX_CHECKLIST_ITEMS;
+    
     newHistory.push({
       item: key,
-      label: (baseItems.find(i => i.key === key) || {}).label || key, // Get the human-readable label
-      status: newStatus, // Log the NEW status
-      notes: currentNotes, // Log the notes as they were when status changed
+      label: (currentBaseItems.find(i => i.key === key) || {}).label || key,
+      status: newStatus,
+      notes: existingItemData.notes || '',
       by: uwName,
       at: newTimestamp,
     });
-    
-    // 2. Update the item itself
-    if (newStatus !== 'N/A') {
-      updatedItemData = {
-        ...existingItemData,
-        status: newStatus,
-        notes: currentNotes,
-        reviewed_by: uwName,
-        checked_at: newTimestamp,
-      };
-    } else {
-      updatedItemData = {
-        ...existingItemData,
-        status: 'N/A',
-        notes: currentNotes,
-        reviewed_by: '',
-        checked_at: null,
-      };
-    }
-    
-    // 3. Create final data object and save immediately
-    const newData = {
-      ...checklistData,
-      history: newHistory,
-      [key]: updatedItemData,
+
+    const updatedItemData = {
+      ...existingItemData,
+      status: newStatus,
+      reviewed_by: newStatus !== 'N/A' ? uwName : '',
+      checked_at: newStatus !== 'N/A' ? newTimestamp : null,
     };
 
-    setChecklistData(newData); // Update local state
-    onSave(newData); // Save IMMEDIATELY (no debounce for status changes)
+    const newData = { ...checklistData, history: newHistory, [key]: updatedItemData };
+    setChecklistData(newData);
+    onSave(newData);
   };
-  
-  // Dynamic Filtering Logic
+
+  // Logic Helpers
   const paymentMethod = (checklistData.payment_method || 'cc').toLowerCase();
   const coverageType = (checklistData.coverage_type || 'full coverage').toLowerCase();
-  const baseItems = selectedList === 'NB' ? NB_CHECKLIST_ITEMS : EN_CHECKLIST_ITEMS;
+  
+  // Tax Return Type Logic: 'standard', 'bank_rt', 'bank_advance'
+  const taxReturnType = (checklistData.tax_return_type || 'standard').toLowerCase();
 
+  let baseItems = NB_CHECKLIST_ITEMS;
+  if (selectedList === 'EN') baseItems = EN_CHECKLIST_ITEMS;
+  if (selectedList === 'TAX') baseItems = TAX_CHECKLIST_ITEMS;
+
+  // --- FILTERING LOGIC ---
   const itemsToRender = baseItems.filter(item => {
-    if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') {
-      return paymentMethod !== 'cash';
+    // 1. Insurance Filters
+    if (selectedList !== 'TAX') {
+        if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') return paymentMethod !== 'cash';
+        if (item.key === 'nb_photos' || item.key === 'en_photos') return coverageType !== 'liability';
     }
-    if (item.key === 'nb_photos' || item.key === 'en_photos') {
-      return coverageType !== 'liability';
+    // 2. Tax Filters
+    if (selectedList === 'TAX') {
+        const isAdvance = taxReturnType === 'bank_advance';
+        const isBank = taxReturnType === 'bank_rt' || isAdvance;
+
+        // If item is strictly for Advance, only show if Advance is selected
+        if (item.isAdvanceCritical && !isAdvance) return false;
+
+        // If item is general Bank (RT or Advance), only show if Bank is selected
+        if (item.isBank && !isBank) return false;
     }
     return true;
   });
 
-  // Handler for the top-level dropdowns (Payment, Coverage)
   const handleDropdownChange = (key, value) => {
-    const newData = {
-      ...checklistData,
-      [key]: value,
-    };
+    const newData = { ...checklistData, [key]: value };
     setChecklistData(newData);
-    debouncedSave(newData); // Use the debounced save
+    debouncedSave(newData);
   };
-  
+
   const history = Array.isArray(checklistData.history) ? checklistData.history : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', flexGrow: 1, padding: '0.25rem' }}>
       
-      {/* Policy Type Dropdowns */}
-      <div style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-        <select
-          value={selectedList}
-          onChange={(e) => setSelectedList(e.target.value)}
-          className={styles.select}
-          style={{ minWidth: '150px' }}
-        >
-          <option value="NB">NB Checklist</option>
-          <option value="EN">EN Checklist</option>
-        </select>
-        
-        <select
-          value={checklistData.payment_method || ''}
-          onChange={(e) => handleDropdownChange('payment_method', e.target.value)}
-          className={styles.select}
-          style={{ minWidth: '170px' }}
-        >
-          <option value="">Select Payment Method...</option>
-          <option value="cc">Credit Card</option>
-          <option value="cash">Cash</option>
-          <option value="ach">ACH / E-Check</option>
-        </select>
+      {/* --- TOP CONTROLS --- */}
+      <div style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
+        <div style={{display:'flex', flexDirection:'column'}}>
+            <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Checklist Type</label>
+            <select
+            value={selectedList}
+            onChange={(e) => setSelectedList(e.target.value)}
+            className={styles.select}
+            style={{ minWidth: '150px' }}
+            >
+            <option value="NB">Insurance: NB</option>
+            <option value="EN">Insurance: EN</option>
+            <option value="TAX">Tax Return</option>
+            </select>
+        </div>
 
-        <select
-          value={checklistData.coverage_type || ''}
-          onChange={(e) => handleDropdownChange('coverage_type', e.target.value)}
-          className={styles.select}
-          style={{ minWidth: '170px' }}
-        >
-          <option value="">Select Coverage Type...</option>
-          <option value="full coverage">Full Coverage</option>
-          <option value="liability">Liability</option>
-        </select>
+        {selectedList !== 'TAX' && (
+            <>
+                <div style={{display:'flex', flexDirection:'column'}}>
+                    <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Payment</label>
+                    <select
+                        value={checklistData.payment_method || ''}
+                        onChange={(e) => handleDropdownChange('payment_method', e.target.value)}
+                        className={styles.select}
+                        style={{ minWidth: '140px' }}
+                    >
+                        <option value="">Select...</option>
+                        <option value="cc">Credit Card</option>
+                        <option value="cash">Cash</option>
+                        <option value="ach">ACH</option>
+                    </select>
+                </div>
+                <div style={{display:'flex', flexDirection:'column'}}>
+                    <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Coverage</label>
+                    <select
+                        value={checklistData.coverage_type || ''}
+                        onChange={(e) => handleDropdownChange('coverage_type', e.target.value)}
+                        className={styles.select}
+                        style={{ minWidth: '140px' }}
+                    >
+                        <option value="">Select...</option>
+                        <option value="full coverage">Full Coverage</option>
+                        <option value="liability">Liability</option>
+                    </select>
+                </div>
+            </>
+        )}
+
+        {/* --- UPDATED TAX DROPDOWN --- */}
+        {selectedList === 'TAX' && (
+            <div style={{display:'flex', flexDirection:'column'}}>
+                <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Return Type</label>
+                <select
+                    value={checklistData.tax_return_type || 'standard'}
+                    onChange={(e) => handleDropdownChange('tax_return_type', e.target.value)}
+                    className={styles.select}
+                    style={{ 
+                        minWidth: '220px', 
+                        borderColor: checklistData.tax_return_type === 'bank_advance' ? '#ef4444' : '#d1d5db',
+                        borderWidth: checklistData.tax_return_type === 'bank_advance' ? '2px' : '1px'
+                    }}
+                >
+                    <option value="standard">Standard (Direct to IRS)</option>
+                    <option value="bank_rt">Bank Product (RT Only - Check/DD)</option>
+                    <option value="bank_advance">🚨 Bank Product (ADVANCE) 🚨</option>
+                </select>
+            </div>
+        )}
       </div>
 
-      {/* --- NEW CHECKLIST GRID --- */}
+      {/* --- CHECKLIST GRID --- */}
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr 1fr', alignItems: 'center', gap: '0.75rem 0.5rem' }}>
         {/* Headers */}
         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--muted)' }}>Status</span>
@@ -438,87 +492,87 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--muted)' }}>Reviewed By</span>
         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--muted)' }}>Date Checked</span>
 
-        {/* Items */}
         {itemsToRender.map((item) => {
           const itemData = checklistData[item.key] || { status: 'N/A', notes: '', reviewed_by: '', checked_at: null };
+          
+          // Style Critical Advance Items
+          const isCritical = item.isAdvanceCritical;
+          const rowStyle = isCritical ? { backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', paddingLeft: '5px' } : {};
+
           return (
             <React.Fragment key={item.key}>
-              <select
-                value={itemData.status || 'N/A'}
-                onChange={(e) => handleStatusChange(item.key, e.target.value)}
-                className={styles.inlineSelect}
-                style={{ 
-                  width: '100px', 
-                  backgroundColor: itemData.status === 'Pass' ? '#f0fdf4' : itemData.status === 'Fail' ? '#fef2f2' : '#fff'
-                }}
-              >
-                <option value="N/A">N/A</option>
-                <option value="Pass">Pass</option>
-                <option value="Fail">Fail</option>
-                <option value="Needs Review">Needs Review</option>
-              </select>
-              
-              <label htmlFor={`notes-${item.key}`}>
-                {item.label}
-              </label>
-              
-              <input
-                type="text"
-                id={`notes-${item.key}`}
-                placeholder="Notes..."
-                value={itemData.notes || ''}
-                onChange={(e) => handleNoteChange(item.key, e.target.value)}
-                className={styles.inlineSelect}
-              />
-              
-              <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                {itemData.reviewed_by || '—'}
-              </span>
-              
-              <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                {itemData.checked_at ? new Date(itemData.checked_at).toLocaleString() : '—'}
-              </span>
+              <div style={rowStyle}>
+                <select
+                    value={itemData.status || 'N/A'}
+                    onChange={(e) => handleStatusChange(item.key, e.target.value)}
+                    className={styles.inlineSelect}
+                    style={{ 
+                    width: '100px', 
+                    fontWeight: isCritical ? 'bold' : 'normal',
+                    backgroundColor: itemData.status === 'Pass' ? '#f0fdf4' : itemData.status === 'Fail' ? '#fef2f2' : '#fff'
+                    }}
+                >
+                    <option value="N/A">N/A</option>
+                    <option value="Pass">Pass</option>
+                    <option value="Fail">Fail</option>
+                    <option value="Needs Review">Needs Review</option>
+                </select>
+              </div>
+
+              <div style={rowStyle}>
+                <label htmlFor={`notes-${item.key}`} style={{ fontWeight: isCritical ? 700 : 400, color: isCritical ? '#991b1b' : 'inherit' }}>
+                    {isCritical && '⚠️ '}
+                    {item.label}
+                </label>
+              </div>
+
+              <div style={rowStyle}>
+                <input
+                    type="text"
+                    id={`notes-${item.key}`}
+                    placeholder="Notes..."
+                    value={itemData.notes || ''}
+                    onChange={(e) => handleNoteChange(item.key, e.target.value)}
+                    className={styles.inlineSelect}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                    {itemData.reviewed_by || '—'}
+                </span>
+              </div>
+
+              <div style={rowStyle}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                    {itemData.checked_at ? new Date(itemData.checked_at).toLocaleString() : '—'}
+                </span>
+              </div>
             </React.Fragment>
           );
         })}
       </div>
-      {/* --- END NEW CHECKLIST GRID --- */}
 
-      {/* --- NEW HISTORY LOG --- */}
+      {/* --- HISTORY LOG --- */}
       <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
-        <button 
-          type="button" 
-          className={styles.secondaryBtn}
-          onClick={() => setShowHistory(prev => !prev)}
-        >
+        <button type="button" className={styles.secondaryBtn} onClick={() => setShowHistory(prev => !prev)}>
           {showHistory ? 'Hide' : 'Show'} Change History ({ history.length })
         </button>
-
         {showHistory && (
           <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: '#f8fafc', borderRadius: '8px' }}>
-            {history.length === 0 ? (
-              <span style={{ color: 'var(--muted)' }}>No history found.</span>
-            ) : (
-              [...history].reverse().map((entry, index) => ( // Show most recent first
+            {history.length === 0 ? <span style={{ color: 'var(--muted)' }}>No history found.</span> : 
+              [...history].reverse().map((entry, index) => (
                 <div key={index} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
-                    {entry.by || 'Unknown User'} set "{entry.label}" to "{entry.status}"
+                    {entry.by || 'Unknown'} set "{entry.label}" to "{entry.status}"
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>
-                    {new Date(entry.at).toLocaleString()}
-                  </div>
-                  {entry.notes && (
-                    <div style={{ fontSize: '0.85rem', fontStyle: 'italic', background: '#fff', padding: '4px 6px', borderRadius: '4px', wordBreak: 'break-word' }}>
-                      Note: "{entry.notes}"
-                    </div>
-                  )}
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{new Date(entry.at).toLocaleString()}</div>
                 </div>
               ))
-            )}
+            }
           </div>
         )}
       </div>
-      {/* --- END HISTORY LOG --- */}
     </div>
   );
 };
@@ -626,7 +680,7 @@ const ManageTicketModal = ({
                   </button>
                 </div>
               </div>
-              
+               
               <ChecklistTab 
                 key={row.id}
                 row={row} 
@@ -715,7 +769,7 @@ export default function UnderwritingDashboard() {
   // --- REALTIME useEffect ---
   useEffect(() => {
     if (!user?.id) return;
-    
+     
     const currentDayStart = dayStartISO(day);
     const currentDayEnd = dayEndISO(day);
 
@@ -737,8 +791,8 @@ export default function UnderwritingDashboard() {
                
                const createdToday = newItem.created_at >= currentDayStart && newItem.created_at <= currentDayEnd;
                const shouldBeInPending = newItem.status === 'Pending' && 
-                                       newItem.claimed_by === user.id &&
-                                       createdToday;
+                                         newItem.claimed_by === user.id &&
+                                         createdToday;
                
                if (setter === setAllForWork && shouldBeInQueue && !updatedItems.some(item => item.id === newItem.id)) {
                    updatedItems.push(newItem);
@@ -814,7 +868,7 @@ export default function UnderwritingDashboard() {
           }));
       }
     };
-    
+     
     const channel = supabase
       .channel('uw_submissions_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'uw_submissions' }, handleChanges)
@@ -862,28 +916,26 @@ export default function UnderwritingDashboard() {
     setLoading(true);
     setMsg('');
 
-    // ...
-  // Explicitly define all columns needed by the component
-  const selectQuery = `
-    *, 
-    agent_first_name, 
-    agent_last_name
-  `;
-  // Note: Using '*' and then explicitly listing new columns 
-  // is a common way to force the Supabase client to refresh its schema.
-  // For production, you might list *all* required columns instead of using '*'.
+  // Explicitly define all columns needed by the component
+  const selectQuery = `
+    *, 
+    agent_first_name, 
+    agent_last_name
+  `;
+  // Note: Using '*' and then explicitly listing new columns 
+  // is a common way to force the Supabase client to refresh its schema.
+  // For production, you might list *all* required columns instead of using '*'.
 
-  const forWorkQ = supabase
-      .from('uw_submissions')
-      .select(selectQuery) // <-- MODIFIED
-      .in('status', ['Submitted', 'Claimed'])
-      .order('created_at', { ascending: true });
+  const forWorkQ = supabase
+      .from('uw_submissions')
+      .select(selectQuery) // <-- MODIFIED
+      .in('status', ['Submitted', 'Claimed'])
+      .order('created_at', { ascending: true });
 
-    const pendingQ = supabase
-      .from('uw_submissions')
-      .select(selectQuery) // <-- MODIFIED
-      .in('status', ['Pending', 'Cannot Locate Policy'])
-// ...
+    const pendingQ = supabase
+      .from('uw_submissions')
+      .select(selectQuery) // <-- MODIFIED
+      .in('status', ['Pending', 'Cannot Locate Policy'])
       .eq('claimed_by', user.id)
       .gte('created_at', dayStartISO(day))
       .lte('created_at', dayEndISO(day))
@@ -1175,7 +1227,7 @@ export default function UnderwritingDashboard() {
     emojiList,
     insertEmoji,
   }), [openChatRow, setOpenChatRow, draft, sendChat, showEmoji, emojiList, insertEmoji]);
-  
+   
   const uwFullName = profile?.full_name || user?.user_metadata?.full_name || user?.user_metadata?.name || '';
   let uwFirstName = profile?.first_name || user?.user_metadata?.first_name || '';
   if (!uwFirstName && uwFullName) {
@@ -1195,7 +1247,7 @@ export default function UnderwritingDashboard() {
       <h1 className={styles.title}>Underwriting Dashboard</h1>
       <h2 className={styles.welcomeMessage}>Welcome, {welcomeName}!</h2>
       {msg && <div className={styles.message}>{msg}</div>}
-      
+       
       {/* KPIs */}
       <div className={styles.kpis}>
         <div className={styles.kpiCard}>
@@ -1211,7 +1263,7 @@ export default function UnderwritingDashboard() {
           <div className={styles.kpiValue}>{pendingToday.length}</div>
         </div>
       </div>
-      
+       
       {/* Status Bar */}
       <div className={styles.card}>
         <div className={styles.kpiLabel} style={{ marginBottom: 8 }}>
