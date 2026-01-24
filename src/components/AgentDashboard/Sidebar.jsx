@@ -20,9 +20,12 @@ const Sidebar = ({ onLogout }) => {
   const menuItems = useMemo(() => {
     const items = [
       { path: '/dashboard', label: 'Dashboard' },
-      // Scanning Violations removed; we use "My Violations" now
+
+      // Agent items
+      { path: '/agent/commission', label: 'Tax Commission Log' }, // ✅ ADDED
       { path: '/agent/violations', label: 'My Violations' },
-      // ✅ Reinstated: always visible
+
+      // Shared tools
       { path: '/uw/submit', label: 'Underwriting Submit' },
       { path: '/disqualified-policies', label: 'Disqualified Policies' },
       { path: '/ticketing-system', label: 'Appointment Calendar' },
@@ -45,6 +48,7 @@ const Sidebar = ({ onLogout }) => {
         alt="Fiesta Insurance Logo"
         className={styles.logo}
       />
+
       <nav>
         {menuItems.map((item) => (
           <button
@@ -58,6 +62,7 @@ const Sidebar = ({ onLogout }) => {
           </button>
         ))}
       </nav>
+
       <button onClick={onLogout} className={styles.logoutButton} type="button">
         Logout
       </button>
@@ -66,5 +71,6 @@ const Sidebar = ({ onLogout }) => {
 };
 
 export default Sidebar;
+
 
 
