@@ -61,6 +61,18 @@ const UnderwriterLayout = () => {
           >
             Underwriting Log
           </button>
+
+          {/* ✅ NEW: Tax Reconciliation */}
+          <button
+            type="button"
+            onClick={() => navigate('/uw/tax-reconciliation')}
+            className={`${styles.navItem} ${
+              isActive('/uw/tax-reconciliation') ? styles.active : ''
+            }`}
+            aria-current={isActive('/uw/tax-reconciliation') ? 'page' : undefined}
+          >
+            Tax Reconciliation
+          </button>
         </nav>
 
         {/* Footer */}
@@ -80,5 +92,3 @@ const UnderwriterLayout = () => {
 };
 
 export default UnderwriterLayout;
-
-
