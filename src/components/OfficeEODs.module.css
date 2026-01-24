@@ -280,3 +280,457 @@
 .errorText {
   color: #e53e3e;
 }
+
+.missingEodRow {
+  background: rgba(229, 62, 62, 0.12); /* light red */
+}
+
+.missingBadge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(229, 62, 62, 0.18);
+  color: #e53e3e;
+  font-weight: 700;
+}
+
+/* --- NEW STYLES FOR MISSING RECEIPTS FEATURE --- */
+
+.warningBadge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 9999px;
+  background-color: #FED7D7; /* Light Red */
+  color: #C53030;             /* Dark Red Text */
+  font-weight: 700;
+  display: inline-block;
+}
+
+.missingReceiptsDetail {
+  background-color: #fff5f5 !important; /* Very light red background */
+  padding: 1rem !important;
+}
+
+.missingReceiptsContainer {
+  font-size: 0.85rem;
+  color: #C53030;
+}
+
+.missingReceiptsList {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+}
+
+.missingReceiptItem {
+  background: #fff;
+  border: 1px solid #feb2b2;
+  color: #C53030;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.viewReportBtn {
+  margin-top: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  background-color: #fff;
+  border: 1px solid #C53030;
+  color: #C53030;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.viewReportBtn:hover {
+  background-color: #C53030;
+  color: white;
+}
+
+.mainContent {
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.pageHeader {
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 1rem;
+}
+
+/* --- KPI STYLES --- */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.kpiCard {
+  background-color: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.kpiLabel {
+  font-size: 0.9rem;
+  color: #4a5568;
+  font-weight: 500;
+}
+
+.kpiValue {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1a202c;
+}
+
+.card {
+  background-color: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+/* --- FILTER BAR STYLES --- */
+.filterBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.dateRangePickers {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.dateFilter label {
+  margin-right: 0.5rem;
+  font-weight: 500;
+}
+
+.dateFilter input {
+  padding: 0.5rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+}
+
+/* ---------- Reusable button styles (APPLY to view buttons AND arrows) ---------- */
+.navBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+}
+
+.navBtn:hover {
+  background: #f8fafc;
+}
+
+.navBtnActive {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #ffffff;
+}
+
+/* Compact square for the arrow buttons */
+.navBtnIcon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+/* Keep the view buttons grouped nicely */
+.viewSwitcher {
+  display: inline-flex;
+  gap: 8px;
+}
+
+/* Day switcher layout only; button visuals come from .navBtn/.navBtnIcon */
+.daySwitcher {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.daySwitcher span {
+  font-weight: 500;
+  color: #4a5568;
+}
+
+/* --- TABLE STYLES --- */
+.tableContainer {
+  overflow-x: auto;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.dataTable th {
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #718096;
+}
+
+/* New Region Row Style */
+.regionRow td {
+  background-color: #edf2f7;
+  color: #4a5568;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  border-top: 2px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.groupRow {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-weight: 500; /* Normal weight for office rows */
+}
+
+.groupRow:hover {
+  background-color: #f7fafc;
+}
+
+.groupRow td span {
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.groupRow td span.expanded {
+  transform: rotate(90deg);
+}
+
+/* New Region Editing Styles */
+.regionCell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.editButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #a0aec0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.groupRow:hover .editButton {
+  opacity: 1;
+}
+
+.editRegionForm {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.editRegionForm input {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  min-width: 150px;
+}
+
+.editRegionForm button {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.editRegionForm button:first-of-type {
+  background-color: #3182ce;
+  color: white;
+}
+
+.editRegionForm .cancelButton {
+  background-color: #e2e8f0;
+  color: #4a5568;
+}
+
+.detailRow td {
+  padding: 0;
+  background-color: #f7fafc;
+}
+
+.subTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.subTable th,
+.subTable td {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.subTable tr:last-child td {
+  border-bottom: none;
+}
+
+.subTable tbody tr {
+  cursor: pointer;
+}
+
+.subTable tbody tr:hover {
+  background-color: #edf2f7;
+}
+
+.statusPill {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.statusVerified {
+  background-color: #c6f6d5;
+  color: #2f855a;
+}
+
+.errorText {
+  color: #e53e3e;
+}
+
+.missingEodRow {
+  background: rgba(229, 62, 62, 0.12); /* light red */
+}
+
+.missingBadge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(229, 62, 62, 0.18);
+  color: #e53e3e;
+  font-weight: 700;
+}
+
+/* --- NEW: Missing Receipts Styles --- */
+
+.warningBadge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 9999px;
+  background-color: #FED7D7; /* Light Red */
+  color: #C53030;             /* Dark Red Text */
+  font-weight: 700;
+  display: inline-block;
+}
+
+.missingReceiptsDetail {
+  background-color: #fff5f5 !important; /* Very light red background */
+  padding: 1rem !important;
+}
+
+.missingReceiptsContainer {
+  font-size: 0.85rem;
+  color: #C53030;
+}
+
+.missingReceiptsList {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+}
+
+.missingReceiptItem {
+  background: #fff;
+  border: 1px solid #feb2b2;
+  color: #C53030;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.viewReportBtn {
+  margin-top: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  background-color: #fff;
+  border: 1px solid #C53030;
+  color: #C53030;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.viewReportBtn:hover {
+  background-color: #C53030;
+  color: white;
+}
+
+/* ... existing styles ... */
+
+.debugBox {
+  background-color: #f7fafc; /* Light Gray/Blue */
+  border: 1px solid #cbd5e0;
+  border-left: 4px solid #4299e1; /* Blue accent on left */
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: #2d3748;
+  line-height: 1.5;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.debugHighlight {
+  font-weight: 700;
+  color: #2b6cb0;
+}
+
+.debugWarning {
+  color: #c53030;
+  font-weight: 600;
+}

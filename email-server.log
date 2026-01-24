@@ -227,4 +227,8 @@ Email notification server listening on http://localhost:4000
 Email notification server listening on http://localhost:4000
 ^C[dotenv@17.2.3] injecting env (7) from .env.server -- tip: ⚙️  suppress all logs with { quiet: true }
 Email notification server listening on http://localhost:4000
+^C[dotenv@17.2.3] injecting env (7) from .env.server -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+Email notification server listening on http://localhost:4000
+^C[dotenv@17.2.3] injecting env (7) from .env.server -- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops
+Email notification server listening on http://localhost:4000
 ^C

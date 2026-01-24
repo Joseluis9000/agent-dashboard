@@ -34,11 +34,19 @@ import EnterViolation from './pages/admin/EnterViolation';
 import ManageViolations from './pages/admin/ManageViolations';
 import AgentViolations from './pages/AgentViolations';
 
+// ✅ ADDED: Agent Commission Log page import
+// Make sure this file exists:
+//   src/pages/agent/AgentCommissionLog.jsx
+import AgentCommissionLog from './pages/agent/AgentCommissionLog';
+
 // Underwriting pages
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
 import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
 import UnderwritingLog from './pages/uw/UnderwritingLog';
 import PendingUnderwriting from './pages/uw/PendingUnderwriting';
+
+// ✅ ADDED: Tax Reconciliation page import
+import TaxReconciliation from './pages/uw/TaxReconciliation';
 
 // Admin EODs
 import OfficeEODs from './components/OfficeEODs';
@@ -262,7 +270,6 @@ function AppRoutes() {
     return () => clearInterval(interval);
   }, []);
 
-
   // 🔐 Decide if we should show the lock screen when a session exists
   //    Poll localStorage every second while a user is logged in.
   useEffect(() => {
@@ -338,6 +345,7 @@ function AppRoutes() {
   }
 
   // ⛔️ REMOVED THE <Router> WRAPPER FROM AROUND <Routes>
+  // NOTE: Make sure BrowserRouter is wrapping <App /> in your src/main.jsx or src/index.jsx.
   return (
     <Routes>
       {/* PUBLIC */}
@@ -375,6 +383,10 @@ function AppRoutes() {
           <Route path="/eod-report" element={<EODReport />} />
           <Route path="/office-eods" element={<EODHistory />} />
           <Route path="/agent/violations" element={<AgentViolations />} />
+
+          {/* ✅ ADDED: Agent commission log route */}
+          <Route path="/agent/commission" element={<AgentCommissionLog />} />
+
           <Route path="/uw/submit" element={<UnderwritingSubmit />} />
         </Route>
       </Route>
@@ -392,6 +404,9 @@ function AppRoutes() {
           <Route path="dashboard" element={<UnderwritingDashboard />} />
           <Route path="pending" element={<PendingUnderwriting />} />
           <Route path="log" element={<UnderwritingLog />} />
+
+          {/* ✅ ADDED: relative child route under /uw */}
+          <Route path="tax-reconciliation" element={<TaxReconciliation />} />
         </Route>
       </Route>
 
