@@ -72,6 +72,16 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
         >
           Manage Violations
         </NavLink>
+
+        {/* ✅ NEW: Admin Commission Log */}
+        <NavLink
+          to="/admin/commission"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Tax Commission Log
+        </NavLink>
       </nav>
 
       <div className={styles.logoutSection}>
@@ -84,4 +94,3 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 };
 
 export default AdminSidebar;
-
