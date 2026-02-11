@@ -1,0 +1,349 @@
+.wrap {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.subTitle {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.search {
+  width: 320px;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.btn {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btnPrimary {
+  padding: 8px 12px;
+  border: 1px solid #222;
+  background: #222;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btnWarn {
+  padding: 8px 12px;
+  border: 1px solid #a33;
+  background: #a33;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tabActive {
+  border-color: #222;
+  background: #222;
+  color: white;
+}
+
+.error {
+  padding: 10px;
+  border: 1px solid #f2c9c9;
+  background: #fff4f4;
+  border-radius: 10px;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 12px;
+  align-items: start;
+}
+
+.tableCard {
+  border: 1px solid #eee;
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+}
+
+.tableTop {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.count {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.tableWrap {
+  overflow: auto;
+  max-height: calc(100vh - 220px);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: #fafafa;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+  padding: 10px;
+}
+
+.table tbody td {
+  border-bottom: 1px solid #f2f2f2;
+  padding: 10px;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: #fafafa;
+}
+
+.empty {
+  padding: 18px;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.good {
+  font-weight: 600;
+}
+
+.drawer {
+  border: 1px solid #eee;
+  border-radius: 12px;
+  background: white;
+  overflow: hidden;
+  min-height: 360px;
+}
+
+.drawerOpen {
+  display: block;
+}
+
+.drawerEmpty {
+  padding: 16px;
+  opacity: 0.75;
+}
+
+.drawerHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.drawerTitle {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.drawerMeta {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+  display: grid;
+  gap: 4px;
+}
+
+.iconBtn {
+  border: 1px solid #ddd;
+  background: white;
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+
+.drawerBody {
+  padding: 12px;
+  display: grid;
+  gap: 14px;
+}
+
+.section {
+  display: grid;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.inline {
+  display: flex;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notesList {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.note {
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fafafa;
+}
+
+.noteTop {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.85;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.noteType {
+  font-weight: 700;
+}
+
+.noteBy {
+  font-weight: 600;
+}
+
+.noteAt {
+  opacity: 0.8;
+}
+
+.noteBody {
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  resize: vertical;
+}
+
+.noteBtns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Badges */
+.badge {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badgeSuccess { background: #e6fffa; color: #2c7a7b; } /* Accepted/Paper */
+.badgeDanger { background: #fff5f5; color: #c53030; border: 1px solid #feb2b2; } /* Rejected */
+.badgeWarning { background: #fffaf0; color: #975a16; } /* Review/Transmitted */
+.badgePrimary { background: #ebf8ff; color: #2b6cb0; } /* Approved/Complete */
+.badgeInfo { background: #edf2f7; color: #4a5568; } /* In Progress */
+
+/* Receipt indicators */
+.receiptError { color: #e53e3e; font-weight: bold; display: flex; align-items: center; gap: 4px; }
+.receiptWarning { color: #dd6b20; font-weight: bold; display: flex; align-items: center; gap: 4px; }
+.receiptGood { color: #38a169; }
+.receiptNeutral { color: #718096; font-style: italic; }
+
+.instructionBox {
+  background: #fffaf0;
+  border-left: 4px solid #ed8936;
+  padding: 12px;
+  font-size: 0.9rem;
+  color: #744210;
+  margin-bottom: 1rem;
+}
+
+.priorityBox {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+}

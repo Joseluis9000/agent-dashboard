@@ -40,6 +40,12 @@ import AdminCommissionLog from './pages/admin/AdminCommissionLog';
 // ✅ ADDED: Agent Commission Log page import
 import AgentCommissionLog from './pages/agent/AgentCommissionLog';
 
+// ✅ ADDED: Admin Tax WIP page import
+import AdminTaxWip from './pages/admin/AdminTaxWip';
+
+// ✅ ADDED: Supervisor Tax WIP page import
+import SupervisorTaxWip from './pages/supervisor/SupervisorTaxWip';
+
 // Underwriting pages
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
 import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
@@ -417,6 +423,9 @@ function AppRoutes() {
           <Route index element={<SupervisorDashboard />} />
           <Route path="office-numbers" element={<OfficeNumbers />} />
           <Route path="tickets" element={<SupervisorTickets />} />
+
+          {/* ✅ ADDED: Supervisor Tax WIP Route */}
+          <Route path="tax-wip" element={<SupervisorTaxWip />} />
         </Route>
       </Route>
 
@@ -434,6 +443,9 @@ function AppRoutes() {
 
           {/* ✅ ADDED: Admin Commission Log Route */}
           <Route path="commission" element={<AdminCommissionLog />} />
+
+          {/* ✅ ADDED: Admin Tax WIP Route */}
+          <Route path="tax-wip" element={<AdminTaxWip />} />
         </Route>
       </Route>
 

@@ -638,6 +638,37 @@ export default function AdminCommissionLog() {
     });
   }, [mergedData, officeGoals, pacingCurve, historical2025Rows, latestLogDateTime]);
 
+  // ✅ GLOBAL KPI (ALL OFFICES) — same engine as offices
+  const allOfficeCodes = useMemo(() => {
+    return Object.values(OFFICE_REGIONS).flat().map(o => o.code);
+  }, []);
+
+  const globalGoalTotal = useMemo(() => {
+    return allOfficeCodes.reduce((sum, code) => sum + (Number(officeGoals?.[code]?.goal) || 0), 0);
+  }, [allOfficeCodes, officeGoals]);
+
+  const globalPriorYearTotal = useMemo(() => {
+    return allOfficeCodes.reduce((sum, code) => sum + (Number(officeGoals?.[code]?.priorYear) || 0), 0);
+  }, [allOfficeCodes, officeGoals]);
+
+  const globalOfficeKpi = useMemo(() => {
+    const currentRows = (mergedData || []).filter(r => allOfficeCodes.includes(r.office_code));
+    const priorRows = (historical2025Rows || []).filter(r => allOfficeCodes.includes(r.office_code));
+
+    const asOf = latestLogDateTime || null;
+    const priorAsOf = makePriorYearCutoff(latestLogDateTime, 2025);
+
+    return calculateProfessionalKPIs({
+      currentRows,
+      priorRows,
+      goal: globalGoalTotal,
+      priorYearTotal: globalPriorYearTotal,
+      pacingCurve,
+      asOfDateTime: asOf,
+      priorAsOfDateTime: priorAsOf
+    });
+  }, [mergedData, historical2025Rows, allOfficeCodes, globalGoalTotal, globalPriorYearTotal, pacingCurve, latestLogDateTime]);
+
   // --- ACTIONS ---
   const handleProcessFix = async (status) => {
     if (!selectedFix) return;
@@ -710,6 +741,26 @@ export default function AdminCommissionLog() {
     );
     setKpiCompareOpen(true);
   };
+
+  // ✅ Compare G&P (All Offices) — opens the same modal but with every office loaded
+  const openCompareAllOffices = () => {
+    setCompareMode("region"); // reuse region mode so scorecard + top5/expand works
+    setCompareRegionName("G&P (All Offices)");
+
+    const allItems = officeKpiData.flatMap(region =>
+      (region.offices || []).map(o => ({
+        region: region.region,
+        code: o.code,
+        name: o.name,
+        kpi: o.kpi,
+        goals: o.goals
+      }))
+    );
+
+    setCompareSelection(allItems);
+    setKpiCompareOpen(true);
+  };
+
 
   if (loading) return <div className="p-10 text-center text-gray-500">Loading Intelligence...</div>;
 
@@ -877,7 +928,8 @@ export default function AdminCommissionLog() {
       {/* OFFICE KPIS TAB */}
       {activeTab === "kpi" && (
         <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
-          <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex justify-between items-center">
+          {/* ✅ KPI HEADER + GLOBAL KPI STRIP */}
+          <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4">
             <div>
               <h2 className="text-xl font-bold text-gray-900">Office Performance Reports</h2>
               <p className="text-sm text-gray-500">
@@ -889,6 +941,72 @@ export default function AdminCommissionLog() {
                 ) : null}
               </p>
             </div>
+
+                        {/* ✅ ALL OFFICES KPI STRIP (GLOBAL) */}
+            <div className="flex flex-wrap gap-3 justify-start lg:justify-center">
+              <div className="px-4 py-3 rounded-2xl border bg-gray-50 min-w-[170px]">
+                <div className="text-[10px] uppercase font-bold text-gray-400">All Offices</div>
+                <div className="text-lg font-black font-mono text-gray-900">
+                  {globalOfficeKpi?.totalTaxes ?? 0}
+                </div>
+                <div className="text-[10px] text-gray-500 font-semibold">
+                  Goal {globalGoalTotal || 0}
+                </div>
+              </div>
+
+              <div className="px-4 py-3 rounded-2xl border bg-white min-w-[170px]">
+                <div className="text-[10px] uppercase font-bold text-gray-400">Expected Today</div>
+                <div className="text-lg font-black font-mono text-gray-900">
+                  {globalOfficeKpi?.expectedCount ?? 0}
+                </div>
+                <div className="text-[10px] text-gray-500 font-semibold">Pacing curve</div>
+              </div>
+
+              <div className="px-4 py-3 rounded-2xl border min-w-[170px] bg-white">
+                <div className="text-[10px] uppercase font-bold text-gray-400">Variance</div>
+                <div className={`text-lg font-black font-mono ${((globalOfficeKpi?.variance ?? 0) >= 0) ? "text-emerald-700" : "text-rose-700"}`}>
+                  Var {fmtSigned(globalOfficeKpi?.variance ?? 0)}
+                </div>
+                <div className="text-[10px] text-gray-500 font-semibold">
+                  Burn {Number(globalOfficeKpi?.burnRateToGoal ?? 0).toFixed(1)}/day
+                </div>
+              </div>
+
+              <div className="px-4 py-3 rounded-2xl border bg-white min-w-[170px]">
+                <div className="text-[10px] uppercase font-bold text-gray-400">YoY</div>
+                <div className={`text-lg font-black font-mono ${((globalOfficeKpi?.yoyVariance ?? 0) >= 0) ? "text-emerald-700" : "text-rose-700"}`}>
+                  {fmtSigned(globalOfficeKpi?.yoyVariance ?? 0)}
+                </div>
+                <div className="text-[10px] text-gray-500 font-semibold">
+                  Yield {Number(globalOfficeKpi?.yieldRate ?? 0).toFixed(0)}%
+                </div>
+              </div>
+
+              <div className="px-4 py-3 rounded-2xl border bg-white min-w-[170px]">
+                <div className="text-[10px] uppercase font-bold text-gray-400">Revenue</div>
+                <div className="text-lg font-black font-mono text-gray-900">
+                  {formatMoney(globalOfficeKpi?.revenue ?? 0)}
+                </div>
+                <div className="text-[10px] text-gray-500 font-semibold">
+                  {globalOfficeKpi?.daysRemaining ?? 0} days left
+                </div>
+              </div>
+
+              {/* ✅ NEW: Compare G&P */}
+              <button
+                onClick={openCompareAllOffices}
+                className="px-4 py-3 rounded-2xl border bg-gray-900 text-white min-w-[170px] text-left shadow-sm hover:bg-gray-800 active:scale-95 transition"
+                title="Compare KPIs for all offices (G&P)"
+              >
+                <div className="text-[10px] uppercase font-bold text-white/70">Compare</div>
+                <div className="text-lg font-black">G&amp;P</div>
+                <div className="text-[10px] text-white/70 font-semibold">
+                  All offices
+                </div>
+              </button>
+            </div>
+
+
             <div className="flex gap-4 text-right">
               <div>
                 <p className="text-[10px] uppercase font-bold text-gray-400">Total Tax Vol</p>

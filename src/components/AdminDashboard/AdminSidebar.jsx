@@ -44,7 +44,7 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
           Office Numbers
         </NavLink>
 
-        {/* NEW: Admin Office EODs */}
+        {/* Admin Office EODs */}
         <NavLink
           to="/admin/office-eods"
           className={({ isActive }) =>
@@ -63,7 +63,6 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
           Manage Users
         </NavLink>
 
-        {/* ✅ Updated Link */}
         <NavLink
           to="/admin/violations"
           className={({ isActive }) =>
@@ -73,7 +72,6 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
           Manage Violations
         </NavLink>
 
-        {/* ✅ NEW: Admin Commission Log */}
         <NavLink
           to="/admin/commission"
           className={({ isActive }) =>
@@ -81,6 +79,16 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
           }
         >
           Tax Commission Log
+        </NavLink>
+
+        {/* ✅ NEW: Tax WIP */}
+        <NavLink
+          to="/admin/tax-wip"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Tax WIP
         </NavLink>
       </nav>
 
@@ -94,3 +102,4 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 };
 
 export default AdminSidebar;
+
