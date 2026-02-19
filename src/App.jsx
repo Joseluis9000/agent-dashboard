@@ -34,10 +34,20 @@ import EnterViolation from './pages/admin/EnterViolation';
 import ManageViolations from './pages/admin/ManageViolations';
 import AgentViolations from './pages/AgentViolations';
 
+// ✅ ADDED: Admin Commission Log page import
+import AdminCommissionLog from './pages/admin/AdminCommissionLog';
+
 // ✅ ADDED: Agent Commission Log page import
-// Make sure this file exists:
-//   src/pages/agent/AgentCommissionLog.jsx
 import AgentCommissionLog from './pages/agent/AgentCommissionLog';
+
+// ✅ ADDED: Commission Uploader page import
+import CommissionUploader from './pages/admin/CommissionUploader';
+
+// ✅ ADDED: Admin Tax WIP page import
+import AdminTaxWip from './pages/admin/AdminTaxWip';
+
+// ✅ ADDED: Supervisor Tax WIP page import
+import SupervisorTaxWip from './pages/supervisor/SupervisorTaxWip';
 
 // Underwriting pages
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
@@ -63,8 +73,8 @@ const LOCKSCREEN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes on lock screen before 
  * Simple lock screen that shows when:
  * - There *is* a user/session
  * - And either:
- *    - The idle timer set a soft lock flag, or
- *    - Their last activity is older than IDLE_TIMEOUT_MS (stale cookies / next day)
+ * - The idle timer set a soft lock flag, or
+ * - Their last activity is older than IDLE_TIMEOUT_MS (stale cookies / next day)
  *
  * This protects you from the “new agent opens browser and sees previous
  * agent’s dashboard immediately” problem, and gives a “still using this?”
@@ -416,6 +426,9 @@ function AppRoutes() {
           <Route index element={<SupervisorDashboard />} />
           <Route path="office-numbers" element={<OfficeNumbers />} />
           <Route path="tickets" element={<SupervisorTickets />} />
+
+          {/* ✅ ADDED: Supervisor Tax WIP Route */}
+          <Route path="tax-wip" element={<SupervisorTaxWip />} />
         </Route>
       </Route>
 
@@ -430,6 +443,15 @@ function AppRoutes() {
           <Route path="enter-violation" element={<EnterViolation />} />
           <Route path="office-eods" element={<OfficeEODs />} />
           <Route path="office-eods/:reportId" element={<OfficeEODs />} />
+
+          {/* ✅ ADDED: Admin Commission Log Route */}
+          <Route path="commission" element={<AdminCommissionLog />} />
+
+          {/* ✅ ADDED: Admin Commission Upload Route */}
+          <Route path="commission-upload" element={<CommissionUploader />} />
+
+          {/* ✅ ADDED: Admin Tax WIP Route */}
+          <Route path="tax-wip" element={<AdminTaxWip />} />
         </Route>
       </Route>
 

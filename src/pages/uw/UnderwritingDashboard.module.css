@@ -815,3 +815,73 @@ details[open] summary {
 .kpiTimeframeBtns button.inactive:hover { background: var(--ui-bg); }
 .printBtn { background: #fff; color: var(--primary); border: 1px solid var(--primary); border-radius: 8px; padding: 0.45rem 0.75rem; font-weight: 700; cursor: pointer; margin-left: auto; }
 .printBtn:hover { background: #f0f6ff; }
+
+.officeTabsWrap {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  margin-bottom: 0.75rem;
+}
+
+.officeTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.officeTab:hover {
+  transform: translateY(-1px);
+  background: #f1f5f9;
+}
+
+.officeTabActive {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+}
+
+.officeBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.officeNewMsgBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+
+  /* “pop up” effect */
+  animation: popPulse 900ms ease-in-out infinite;
+}
+
+@keyframes popPulse {
+  0%   { transform: scale(1);   }
+  50%  { transform: scale(1.12); }
+  100% { transform: scale(1);   }
+}
