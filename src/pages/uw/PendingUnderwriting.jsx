@@ -10,8 +10,6 @@ import { useAuth } from '../../AuthContext';
 import { supabase } from '../../supabaseClient';
 import styles from './UnderwritingDashboard.module.css'; // Reuse dashboard styles
 
-const ACTION_OPTIONS = ['Approved']; // Only action from this view is Approved
-
 // --- CHECKLIST DEFINITIONS ---
 const NB_CHECKLIST_ITEMS = [
   { key: 'nb_app_uploaded', label: 'Main Original Application Uploaded' },
@@ -25,11 +23,11 @@ const NB_CHECKLIST_ITEMS = [
   { key: 'nb_ids', label: 'Driver IDs (DL/Matricula/Etc)' },
   { key: 'nb_vehicle_docs', label: 'Vehicle Docs (Reg/Title/Etc)' },
   { key: 'nb_vehicle_docs_logic', label: 'Vehicle Doc Name Logic (Driver/Excluded)' },
-  { key: 'nb_marriage_cert', label: 'Marriage Certificate (If req\'d)' },
+  { key: 'nb_marriage_cert', label: "Marriage Certificate (If req'd)" },
   { key: 'nb_pos', label: 'Point of Sale (POS) Form' },
   { key: 'nb_esign_cert', label: 'E-Sign Certificate (If Phone)' },
   { key: 'nb_itc_quote', label: 'ITC Quote Breakdown' },
-  { key: 'nb_carrier_upload', label: 'Docs Uploaded to Carrier (If req\'d)' },
+  { key: 'nb_carrier_upload', label: "Docs Uploaded to Carrier (If req'd)" },
   { key: 'nb_matrix_alert', label: 'Matrix Alert Set for Missing Items' },
 ];
 
@@ -60,7 +58,7 @@ const TAX_CHECKLIST_ITEMS = [
   { key: 'tax_w2_match', label: 'W-2 Entry Matches Scan?' },
   { key: 'tax_overtime_match', label: 'Overtime Amount matches YTD on Paystub?' },
   { key: 'tax_tips_match', label: 'Tips Amount matches Paystub?' },
-  { key: 'tax_healthcare', label: 'Healthcare: Did Agent select YES/NO for Covered CA?' }, 
+  { key: 'tax_healthcare', label: 'Healthcare: Did Agent select YES/NO for Covered CA?' },
 
   // --- 3. COMPLIANCE ---
   { key: 'tax_8867_dd', label: 'Form 8867 (Due Diligence) 100% Complete?' },
@@ -102,7 +100,7 @@ const KEYWORD_CATEGORIES = {
       'need signatures', 'need photos',
       // Tax
       'missing 8879', 'missing consent', 'advance rejected', 'missing wet signature',
-    ].map(k => k.toLowerCase()),
+    ].map((k) => k.toLowerCase()),
   },
   BLUE: {
     label: 'Exclusions / Rejections',
@@ -114,7 +112,7 @@ const KEYWORD_CATEGORIES = {
       'need drop proof', 'need proof of upload', 'missing proof of carrier upload',
       'missing proof of intl id upload', 'missing proof of marriage upload', 'missing excluded driver',
       'missing excluded owner',
-    ].map(k => k.toLowerCase()),
+    ].map((k) => k.toLowerCase()),
   },
   CYAN: {
     label: 'Corrections / Mismatches',
@@ -129,7 +127,7 @@ const KEYWORD_CATEGORIES = {
       'does premium match receipt', 'premium mismatch',
       // Tax
       'w2 mismatch', 'refund mismatch', 'bank mismatch', 'matrix receipt',
-    ].map(k => k.toLowerCase()),
+    ].map((k) => k.toLowerCase()),
   },
   PURPLE: {
     label: 'Pending Docs (DL, Reg)',
@@ -145,7 +143,7 @@ const KEYWORD_CATEGORIES = {
       'missing household members', 'need household statement',
       // Tax
       'missing ssn card', 'missing id', 'missing voided check', 'missing 8867',
-    ].map(k => k.toLowerCase()),
+    ].map((k) => k.toLowerCase()),
   },
 };
 
@@ -225,9 +223,6 @@ const CHECKLIST_ITEM_TO_CATEGORY = {
 };
 // --- END KEYWORD/CATEGORY DEFINITIONS ---
 
-// Use last_action_at when present (messages, release) otherwise created_at
-const ageAnchorMs = (r) => new Date(r.last_action_at || r.created_at).getTime();
-
 /* --- Helpers --- */
 const pad = (n) => String(n).padStart(2, '0');
 const yyyymm = (d) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}`;
@@ -237,11 +232,6 @@ const monthEndISO = (monthKey) => {
   const [y, m] = monthKey.split('-').map(Number);
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return `${monthKey}-${pad(lastDay)}T23:59:59.999Z`;
-};
-// Gets YYYY-MM-DD for today in local timezone
-const getTodayKey = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 const diffAge = (iso) => {
@@ -256,6 +246,50 @@ const diffAge = (iso) => {
   if (hrs < 24) return { label: `${hrs}h ${mins}m`, danger };
   const days = Math.floor(hrs / 24);
   return { label: `${days}d`, danger };
+};
+
+// --- NEW: Resolution + Last UW Message helpers ---
+const getFirstResolutionNote = (checklistData) => {
+  const cd = checklistData || {};
+  const history = Array.isArray(cd.history) ? cd.history : [];
+
+  // 1) Earliest note from history that is Fail / Needs Review
+  const sorted = [...history].sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+
+  const earliestBad = sorted.find((h) => {
+    const status = (h.status || '').toLowerCase();
+    const notes = (h.notes || '').trim();
+    return notes && (status === 'fail' || status === 'needs review');
+  });
+  if (earliestBad) return (earliestBad.notes || '').trim();
+
+  // 2) Earliest note from history (any status)
+  const earliestAny = sorted.find((h) => (h.notes || '').trim());
+  if (earliestAny) return (earliestAny.notes || '').trim();
+
+  // 3) Fallback: current checklist item notes (prefer Fail/Needs Review)
+  const skipKeys = new Set(['history', 'payment_method', 'coverage_type', 'tax_return_type']);
+  const entries = Object.entries(cd).filter(([k, v]) => !skipKeys.has(k) && v && typeof v === 'object');
+
+  const badWithNotes = entries.find(([_, v]) => {
+    const status = (v.status || '').toLowerCase();
+    const notes = (v.notes || '').trim();
+    return notes && (status === 'fail' || status === 'needs review');
+  });
+  if (badWithNotes) return (badWithNotes[1].notes || '').trim();
+
+  const anyWithNotes = entries.find(([_, v]) => (v.notes || '').trim());
+  return anyWithNotes ? (anyWithNotes[1].notes || '').trim() : '—';
+};
+
+const getLastUwMessageToAgent = (pendingItems) => {
+  const items = Array.isArray(pendingItems) ? pendingItems : [];
+  // "Last msg the UW sent to the agent" = most recent message FROM UW
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const m = items[i];
+    if (m?.from === 'uw' && (m.text || '').trim()) return (m.text || '').trim();
+  }
+  return '—';
 };
 
 // --- HELPER FUNCTION for Checklist Keyword Matching ---
@@ -300,6 +334,15 @@ const getHighlightClass = (checklistData, uwNotes) => {
   }
   return ''; // No keywords found
 };
+
+/* ------------------- NEW: Office Tab Helpers ------------------- */
+const hasNewAgentMsg = (r) => {
+  const last = (Array.isArray(r.pending_items) ? r.pending_items : []).slice(-1)[0];
+  return last?.from === 'agent';
+};
+
+const getOfficeKey = (r) => r.office || r.office_code || '—';
+/* --------------------------------------------------------------- */
 
 // --- ChatCell COMPONENT DEFINITION ---
 const ChatCell = ({
@@ -477,15 +520,15 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
     const existingHistory = Array.isArray(checklistData.history) ? checklistData.history : [];
     let newHistory = [...existingHistory];
     const newTimestamp = new Date().toISOString();
-    
+
     // Helper to find label
     let currentBaseItems = NB_CHECKLIST_ITEMS;
     if (selectedList === 'EN') currentBaseItems = EN_CHECKLIST_ITEMS;
     if (selectedList === 'TAX') currentBaseItems = TAX_CHECKLIST_ITEMS;
-    
+
     newHistory.push({
       item: key,
-      label: (currentBaseItems.find(i => i.key === key) || {}).label || key,
+      label: (currentBaseItems.find((i) => i.key === key) || {}).label || key,
       status: newStatus,
       notes: existingItemData.notes || '',
       by: uwName,
@@ -507,7 +550,7 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
   // Logic Helpers
   const paymentMethod = (checklistData.payment_method || 'cc').toLowerCase();
   const coverageType = (checklistData.coverage_type || 'full coverage').toLowerCase();
-  
+
   // Tax Return Type Logic: 'standard', 'bank_rt', 'bank_advance'
   const taxReturnType = (checklistData.tax_return_type || 'standard').toLowerCase();
 
@@ -516,22 +559,22 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
   if (selectedList === 'TAX') baseItems = TAX_CHECKLIST_ITEMS;
 
   // --- FILTERING LOGIC ---
-  const itemsToRender = baseItems.filter(item => {
+  const itemsToRender = baseItems.filter((item) => {
     // 1. Insurance Filters
     if (selectedList !== 'TAX') {
-        if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') return paymentMethod !== 'cash';
-        if (item.key === 'nb_photos' || item.key === 'en_photos') return coverageType !== 'liability';
+      if (item.key === 'nb_blue_pay' || item.key === 'en_bluepay_receipt') return paymentMethod !== 'cash';
+      if (item.key === 'nb_photos' || item.key === 'en_photos') return coverageType !== 'liability';
     }
     // 2. Tax Filters
     if (selectedList === 'TAX') {
-        const isAdvance = taxReturnType === 'bank_advance';
-        const isBank = taxReturnType === 'bank_rt' || isAdvance;
+      const isAdvance = taxReturnType === 'bank_advance';
+      const isBank = taxReturnType === 'bank_rt' || isAdvance;
 
-        // If item is strictly for Advance, only show if Advance is selected
-        if (item.isAdvanceCritical && !isAdvance) return false;
+      // If item is strictly for Advance, only show if Advance is selected
+      if (item.isAdvanceCritical && !isAdvance) return false;
 
-        // If item is general Bank (RT or Advance), only show if Bank is selected
-        if (item.isBank && !isBank) return false;
+      // If item is general Bank (RT or Advance), only show if Bank is selected
+      if (item.isBank && !isBank) return false;
     }
     return true;
   });
@@ -546,74 +589,73 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', flexGrow: 1, padding: '0.25rem' }}>
-      
       {/* --- TOP CONTROLS --- */}
       <div style={{ display: 'flex', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
-        <div style={{display:'flex', flexDirection:'column'}}>
-            <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Checklist Type</label>
-            <select
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b' }}>Checklist Type</label>
+          <select
             value={selectedList}
             onChange={(e) => setSelectedList(e.target.value)}
             className={styles.select}
             style={{ minWidth: '150px' }}
-            >
+          >
             <option value="NB">Insurance: NB</option>
             <option value="EN">Insurance: EN</option>
             <option value="TAX">Tax Return</option>
-            </select>
+          </select>
         </div>
 
         {selectedList !== 'TAX' && (
-            <>
-                <div style={{display:'flex', flexDirection:'column'}}>
-                    <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Payment</label>
-                    <select
-                        value={checklistData.payment_method || ''}
-                        onChange={(e) => handleDropdownChange('payment_method', e.target.value)}
-                        className={styles.select}
-                        style={{ minWidth: '140px' }}
-                    >
-                        <option value="">Select...</option>
-                        <option value="cc">Credit Card</option>
-                        <option value="cash">Cash</option>
-                        <option value="ach">ACH</option>
-                    </select>
-                </div>
-                <div style={{display:'flex', flexDirection:'column'}}>
-                    <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Coverage</label>
-                    <select
-                        value={checklistData.coverage_type || ''}
-                        onChange={(e) => handleDropdownChange('coverage_type', e.target.value)}
-                        className={styles.select}
-                        style={{ minWidth: '140px' }}
-                    >
-                        <option value="">Select...</option>
-                        <option value="full coverage">Full Coverage</option>
-                        <option value="liability">Liability</option>
-                    </select>
-                </div>
-            </>
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b' }}>Payment</label>
+              <select
+                value={checklistData.payment_method || ''}
+                onChange={(e) => handleDropdownChange('payment_method', e.target.value)}
+                className={styles.select}
+                style={{ minWidth: '140px' }}
+              >
+                <option value="">Select...</option>
+                <option value="cc">Credit Card</option>
+                <option value="cash">Cash</option>
+                <option value="ach">ACH</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b' }}>Coverage</label>
+              <select
+                value={checklistData.coverage_type || ''}
+                onChange={(e) => handleDropdownChange('coverage_type', e.target.value)}
+                className={styles.select}
+                style={{ minWidth: '140px' }}
+              >
+                <option value="">Select...</option>
+                <option value="full coverage">Full Coverage</option>
+                <option value="liability">Liability</option>
+              </select>
+            </div>
+          </>
         )}
 
         {/* --- UPDATED TAX DROPDOWN --- */}
         {selectedList === 'TAX' && (
-            <div style={{display:'flex', flexDirection:'column'}}>
-                <label style={{fontSize:'0.75rem', fontWeight:'bold', color:'#64748b'}}>Return Type</label>
-                <select
-                    value={checklistData.tax_return_type || 'standard'}
-                    onChange={(e) => handleDropdownChange('tax_return_type', e.target.value)}
-                    className={styles.select}
-                    style={{ 
-                        minWidth: '220px', 
-                        borderColor: checklistData.tax_return_type === 'bank_advance' ? '#ef4444' : '#d1d5db',
-                        borderWidth: checklistData.tax_return_type === 'bank_advance' ? '2px' : '1px'
-                    }}
-                >
-                    <option value="standard">Standard (Direct to IRS)</option>
-                    <option value="bank_rt">Bank Product (RT Only - Check/DD)</option>
-                    <option value="bank_advance">🚨 Bank Product (ADVANCE) 🚨</option>
-                </select>
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b' }}>Return Type</label>
+            <select
+              value={checklistData.tax_return_type || 'standard'}
+              onChange={(e) => handleDropdownChange('tax_return_type', e.target.value)}
+              className={styles.select}
+              style={{
+                minWidth: '220px',
+                borderColor: checklistData.tax_return_type === 'bank_advance' ? '#ef4444' : '#d1d5db',
+                borderWidth: checklistData.tax_return_type === 'bank_advance' ? '2px' : '1px',
+              }}
+            >
+              <option value="standard">Standard (Direct to IRS)</option>
+              <option value="bank_rt">Bank Product (RT Only - Check/DD)</option>
+              <option value="bank_advance">🚨 Bank Product (ADVANCE) 🚨</option>
+            </select>
+          </div>
         )}
       </div>
 
@@ -628,7 +670,7 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
 
         {itemsToRender.map((item) => {
           const itemData = checklistData[item.key] || { status: 'N/A', notes: '', reviewed_by: '', checked_at: null };
-          
+
           // Style Critical Advance Items
           const isCritical = item.isAdvanceCritical;
           const rowStyle = isCritical ? { backgroundColor: '#fef2f2', borderLeft: '4px solid #ef4444', paddingLeft: '5px' } : {};
@@ -637,49 +679,49 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
             <React.Fragment key={item.key}>
               <div style={rowStyle}>
                 <select
-                    value={itemData.status || 'N/A'}
-                    onChange={(e) => handleStatusChange(item.key, e.target.value)}
-                    className={styles.inlineSelect}
-                    style={{ 
-                    width: '100px', 
+                  value={itemData.status || 'N/A'}
+                  onChange={(e) => handleStatusChange(item.key, e.target.value)}
+                  className={styles.inlineSelect}
+                  style={{
+                    width: '100px',
                     fontWeight: isCritical ? 'bold' : 'normal',
-                    backgroundColor: itemData.status === 'Pass' ? '#f0fdf4' : itemData.status === 'Fail' ? '#fef2f2' : '#fff'
-                    }}
+                    backgroundColor: itemData.status === 'Pass' ? '#f0fdf4' : itemData.status === 'Fail' ? '#fef2f2' : '#fff',
+                  }}
                 >
-                    <option value="N/A">N/A</option>
-                    <option value="Pass">Pass</option>
-                    <option value="Fail">Fail</option>
-                    <option value="Needs Review">Needs Review</option>
+                  <option value="N/A">N/A</option>
+                  <option value="Pass">Pass</option>
+                  <option value="Fail">Fail</option>
+                  <option value="Needs Review">Needs Review</option>
                 </select>
               </div>
 
               <div style={rowStyle}>
                 <label htmlFor={`notes-${item.key}`} style={{ fontWeight: isCritical ? 700 : 400, color: isCritical ? '#991b1b' : 'inherit' }}>
-                    {isCritical && '⚠️ '}
-                    {item.label}
+                  {isCritical && '⚠️ '}
+                  {item.label}
                 </label>
               </div>
 
               <div style={rowStyle}>
                 <input
-                    type="text"
-                    id={`notes-${item.key}`}
-                    placeholder="Notes..."
-                    value={itemData.notes || ''}
-                    onChange={(e) => handleNoteChange(item.key, e.target.value)}
-                    className={styles.inlineSelect}
+                  type="text"
+                  id={`notes-${item.key}`}
+                  placeholder="Notes..."
+                  value={itemData.notes || ''}
+                  onChange={(e) => handleNoteChange(item.key, e.target.value)}
+                  className={styles.inlineSelect}
                 />
               </div>
 
               <div style={rowStyle}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                    {itemData.reviewed_by || '—'}
+                  {itemData.reviewed_by || '—'}
                 </span>
               </div>
 
               <div style={rowStyle}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                    {itemData.checked_at ? new Date(itemData.checked_at).toLocaleString() : '—'}
+                  {itemData.checked_at ? new Date(itemData.checked_at).toLocaleString() : '—'}
                 </span>
               </div>
             </React.Fragment>
@@ -689,12 +731,14 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
 
       {/* --- HISTORY LOG --- */}
       <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
-        <button type="button" className={styles.secondaryBtn} onClick={() => setShowHistory(prev => !prev)}>
-          {showHistory ? 'Hide' : 'Show'} Change History ({ history.length })
+        <button type="button" className={styles.secondaryBtn} onClick={() => setShowHistory((prev) => !prev)}>
+          {showHistory ? 'Hide' : 'Show'} Change History ({history.length})
         </button>
         {showHistory && (
           <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto', padding: '0.5rem', background: '#f8fafc', borderRadius: '8px' }}>
-            {history.length === 0 ? <span style={{ color: 'var(--muted)' }}>No history found.</span> : 
+            {history.length === 0 ? (
+              <span style={{ color: 'var(--muted)' }}>No history found.</span>
+            ) : (
               [...history].reverse().map((entry, index) => (
                 <div key={index} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
@@ -703,7 +747,7 @@ const ChecklistTab = ({ row, onSave, user, profile }) => {
                   <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{new Date(entry.at).toLocaleString()}</div>
                 </div>
               ))
-            }
+            )}
           </div>
         )}
       </div>
@@ -876,6 +920,9 @@ const RowBase = ({
       ? r.claimed_by_email.split('@')[0]
       : null;
 
+  const firstResolutionNote = getFirstResolutionNote(r.checklist_data);
+  const lastUwMsg = getLastUwMessageToAgent(r.pending_items);
+
   return (
     <tr key={r.id} className={rowClass}>
       <td>
@@ -890,8 +937,19 @@ const RowBase = ({
       <td>{r.office || r.office_code || '—'}</td>
       <td>{r.transaction_type || '—'}</td>
       <td>{r.policy_number || '—'}</td>
-      <td>{r.premium != null ? `$${Number(r.premium).toFixed(2)}` : '—'}</td>
-      <td>{r.total_bf != null ? `$${Number(r.total_bf).toFixed(2)}` : '—'}</td>
+
+      {/* ✅ Replaced Premium + Total BF */}
+      <td title={firstResolutionNote} style={{ maxWidth: 320 }}>
+        <span style={{ display: 'inline-block', maxWidth: 320, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {firstResolutionNote || '—'}
+        </span>
+      </td>
+      <td title={lastUwMsg} style={{ maxWidth: 320 }}>
+        <span style={{ display: 'inline-block', maxWidth: 320, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {lastUwMsg || '—'}
+        </span>
+      </td>
+
       <td>{r.phone_number || '—'}</td>
       <td>{r.customer_name || '—'}</td>
       <td>
@@ -977,6 +1035,9 @@ export default function PendingUnderwriting() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [errorFilter, setErrorFilter] = useState('ALL'); // Error filter by highlight class
 
+  // NEW: Office Tabs for All Pending
+  const [activeOfficeTab, setActiveOfficeTab] = useState('ALL');
+
   // Chat State
   const [openChatRow, setOpenChatRow] = useState(null);
   const [draft, setDraft] = useState({});
@@ -989,25 +1050,29 @@ export default function PendingUnderwriting() {
     []
   );
 
-  const insertEmoji = (emoji, rowId) => {
-    const ta = composerRef.current;
-    const current = draft[rowId] || '';
-    if (!ta) {
-      setDraft((s) => ({ ...s, [rowId]: current + emoji }));
+  // ✅ ESLint fix: memoize insertEmoji
+  const insertEmoji = useCallback(
+    (emoji, rowId) => {
+      const ta = composerRef.current;
+      const current = draft[rowId] || '';
+      if (!ta) {
+        setDraft((s) => ({ ...s, [rowId]: current + emoji }));
+        setShowEmoji(false);
+        return;
+      }
+      const start = ta.selectionStart ?? current.length;
+      const end = ta.selectionEnd ?? current.length;
+      const next = current.slice(0, start) + emoji + current.slice(end);
+      setDraft((s) => ({ ...s, [rowId]: next }));
+      requestAnimationFrame(() => {
+        ta?.focus?.();
+        const pos = start + emoji.length;
+        ta?.setSelectionRange?.(pos, pos);
+      });
       setShowEmoji(false);
-      return;
-    }
-    const start = ta.selectionStart ?? current.length;
-    const end = ta.selectionEnd ?? current.length;
-    const next = current.slice(0, start) + emoji + current.slice(end);
-    setDraft((s) => ({ ...s, [rowId]: next }));
-    requestAnimationFrame(() => {
-      ta?.focus?.();
-      const pos = start + emoji.length;
-      ta?.setSelectionRange?.(pos, pos);
-    });
-    setShowEmoji(false);
-  };
+    },
+    [draft]
+  );
 
   useEffect(() => {
     if (!showEmoji) return;
@@ -1326,14 +1391,20 @@ export default function PendingUnderwriting() {
     [actions, appendMessage, user?.email, user?.id]
   );
 
+  // ✅ ESLint fix: normalize user metadata fields outside claim()
+  const userMeta = user?.user_metadata || {};
+  const metaFullName = userMeta.full_name || userMeta.name || '';
+  const metaFirstName = userMeta.first_name || '';
+  const metaLastName = userMeta.last_name || '';
+
   const claim = useCallback(
     async (row) => {
       if (!user?.id || !user?.email) return;
 
-      const fullName =
-        profile?.full_name || user?.user_metadata?.full_name || user?.user_metadata?.name || '';
-      let first_name = profile?.first_name || user?.user_metadata?.first_name || '';
-      let last_name = profile?.last_name || user?.user_metadata?.last_name || '';
+      const fullName = profile?.full_name || metaFullName || '';
+      let first_name = profile?.first_name || metaFirstName || '';
+      let last_name = profile?.last_name || metaLastName || '';
+
       if (!first_name && fullName) {
         const parts = fullName.split(' ');
         first_name = parts[0] || '';
@@ -1362,7 +1433,17 @@ export default function PendingUnderwriting() {
       }
       load();
     },
-    [load, profile, user?.email, user?.id]
+    [
+      load,
+      metaFirstName,
+      metaLastName,
+      metaFullName,
+      profile?.first_name,
+      profile?.last_name,
+      profile?.full_name,
+      user?.email,
+      user?.id,
+    ]
   );
 
   const releaseClaim = useCallback(
@@ -1483,6 +1564,44 @@ export default function PendingUnderwriting() {
       return true;
     });
   }, [allFetchedRows, searchQuery, statusFilter, dayFilter, errorFilter]);
+
+  /* ------------------- NEW: Office Tab Grouping ------------------- */
+  const officeTabData = useMemo(() => {
+    const rows = availablePending || [];
+
+    const map = new Map(); // officeKey -> { officeKey, rows, total, newMsg }
+    for (const r of rows) {
+      const officeKey = getOfficeKey(r);
+      if (!map.has(officeKey)) {
+        map.set(officeKey, { officeKey, rows: [], total: 0, newMsg: 0 });
+      }
+      const entry = map.get(officeKey);
+      entry.rows.push(r);
+      entry.total += 1;
+      if (hasNewAgentMsg(r)) entry.newMsg += 1;
+    }
+
+    const list = Array.from(map.values()).sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return String(a.officeKey).localeCompare(String(b.officeKey));
+    });
+
+    const allNewMsg = list.reduce((sum, x) => sum + x.newMsg, 0);
+    return { list, allTotal: rows.length, allNewMsg };
+  }, [availablePending]);
+
+  const tabbedPendingRows = useMemo(() => {
+    if (activeOfficeTab === 'ALL') return availablePending;
+    const found = officeTabData.list.find((x) => x.officeKey === activeOfficeTab);
+    return found ? found.rows : [];
+  }, [activeOfficeTab, availablePending, officeTabData.list]);
+
+  useEffect(() => {
+    if (activeOfficeTab === 'ALL') return;
+    const exists = officeTabData.list.some((x) => x.officeKey === activeOfficeTab);
+    if (!exists) setActiveOfficeTab('ALL');
+  }, [activeOfficeTab, officeTabData.list]);
+  /* --------------------------------------------------------------- */
 
   // --- Other Helpers ---
   const orderNumber = (arr, id) => `#${arr.findIndex((r) => r.id === id) + 1}`;
@@ -1640,8 +1759,11 @@ export default function PendingUnderwriting() {
                 <th>Office</th>
                 <th>Transaction Type</th>
                 <th>Policy #</th>
-                <th>Premium</th>
-                <th>Total BF</th>
+
+                {/* ✅ Replaced Premium + Total BF */}
+                <th>First Resolution Note</th>
+                <th>Last UW Msg</th>
+
                 <th>Phone #</th>
                 <th>Customer Name</th>
                 <th>Assignee</th>
@@ -1681,7 +1803,7 @@ export default function PendingUnderwriting() {
 
       {/* All Pending Underwriting Section */}
       <h2 className={styles.subTitle}>
-        All Pending Underwriting (Any Assignee) ({availablePending.length})
+        All Pending Underwriting (Any Assignee) ({tabbedPendingRows.length})
       </h2>
 
       {/* Filter Bar */}
@@ -1743,6 +1865,36 @@ export default function PendingUnderwriting() {
         </div>
       </div>
 
+      {/* NEW: Office Tabs */}
+      <div className={styles.officeTabsWrap}>
+        <button
+          type="button"
+          className={`${styles.officeTab} ${activeOfficeTab === 'ALL' ? styles.officeTabActive : ''}`}
+          onClick={() => setActiveOfficeTab('ALL')}
+        >
+          <span>ALL</span>
+          <span className={styles.officeBadge}>{officeTabData.allTotal}</span>
+          {officeTabData.allNewMsg > 0 && (
+            <span className={styles.officeNewMsgBadge}>New Msg {officeTabData.allNewMsg}</span>
+          )}
+        </button>
+
+        {officeTabData.list.map((t) => (
+          <button
+            key={t.officeKey}
+            type="button"
+            className={`${styles.officeTab} ${activeOfficeTab === t.officeKey ? styles.officeTabActive : ''}`}
+            onClick={() => setActiveOfficeTab(t.officeKey)}
+          >
+            <span>{t.officeKey}</span>
+            <span className={styles.officeBadge}>{t.total}</span>
+            {t.newMsg > 0 && (
+              <span className={styles.officeNewMsgBadge}>New Msg {t.newMsg}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className={styles.card}>
         <div className={styles.tableWrap}>
           <table>
@@ -1753,8 +1905,11 @@ export default function PendingUnderwriting() {
                 <th>Office</th>
                 <th>Transaction Type</th>
                 <th>Policy #</th>
-                <th>Premium</th>
-                <th>Total BF</th>
+
+                {/* ✅ Replaced Premium + Total BF */}
+                <th>First Resolution Note</th>
+                <th>Last UW Msg</th>
+
                 <th>Phone #</th>
                 <th>Customer Name</th>
                 <th>Assignee</th>
@@ -1768,16 +1923,16 @@ export default function PendingUnderwriting() {
                 <tr>
                   <td colSpan={13}>Loading…</td>
                 </tr>
-              ) : availablePending.length === 0 ? (
+              ) : tabbedPendingRows.length === 0 ? (
                 <tr>
                   <td colSpan={13}>No available pending items match filters.</td>
                 </tr>
               ) : (
-                availablePending.map((r) => (
+                tabbedPendingRows.map((r) => (
                   <RowBase
                     key={r.id}
                     r={r}
-                    arr={availablePending}
+                    arr={tabbedPendingRows}
                     user={user}
                     orderNumber={orderNumber}
                     setManageInfo={setManageInfo}
