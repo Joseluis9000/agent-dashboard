@@ -260,10 +260,24 @@ export default function SupervisorTaxWip() {
   }, [allOfficeOptions, selectedRegion]);
 
   function getOfficeCodeFromRow(r) {
-    const v = r?.office_full ?? "";
-    const base = v.split("-")[0]?.trim();
-    return base || "Unknown";
-  }
+  // ✅ Only trust maxtax_office_code if it looks like CA###
+  const direct = (r?.maxtax_office_code ?? "").toString().trim().toUpperCase();
+  if (/^CA\d{3}$/.test(direct)) return direct;
+
+  // fallback to office_full (handles "CA010- ..." AND "Fiesta Tax Services CA272")
+  const v = (r?.office_full ?? "").toString().trim();
+  if (!v) return "Unknown";
+
+  // 1) try "CA010- something" or "CA010 — something"
+  const base = v.split(/[-–—]/)[0]?.trim().toUpperCase();
+  if (/^CA\d{3}$/.test(base)) return base;
+
+  // 2) try finding CA### anywhere in the string (like "... CA272")
+  const match = v.match(/CA\d{3}/i);
+  return match ? match[0].toUpperCase() : "Unknown";
+}
+
+
 
   function getOfficeLabel(code) {
     const meta = officeMeta.get(code);
@@ -343,7 +357,8 @@ export default function SupervisorTaxWip() {
         const s = safeStr(search);
         if (s) {
           q = q.or(
-            `sync_key.ilike.%${s}%,first.ilike.%${s}%,last.ilike.%${s}%,phone.ilike.%${s}%,office_full.ilike.%${s}%,preparer.ilike.%${s}%,last4.ilike.%${s}%`
+            `sync_key.ilike.%${s}%,first.ilike.%${s}%,last.ilike.%${s}%,phone.ilike.%${s}%,office_full.ilike.%${s}%,maxtax_office_code.ilike.%${s}%,preparer.ilike.%${s}%,last4.ilike.%${s}%`
+
           );
         }
 
