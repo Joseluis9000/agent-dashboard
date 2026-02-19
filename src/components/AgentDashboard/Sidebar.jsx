@@ -9,11 +9,18 @@ const Sidebar = ({ onLogout }) => {
   const location = useLocation();
   const { user, profile } = useAuth();
 
+  // Derive display name safely
+  const displayName =
+    profile?.full_name ||
+    user?.user_metadata?.full_name ||
+    user?.email ||
+    'Agent';
+
   // Active if exact match OR a parent of current path
   const isActive = (path) =>
     location.pathname === path || location.pathname.startsWith(path + '/');
 
-  // role from profiles first, then user_metadata fallback
+  // Role from profiles first, then user_metadata fallback
   const role = profile?.role || user?.user_metadata?.role || 'agent';
   const isUW = ['underwriter', 'uw_manager', 'supervisor', 'admin'].includes(role);
 
@@ -22,7 +29,7 @@ const Sidebar = ({ onLogout }) => {
       { path: '/dashboard', label: 'Dashboard' },
 
       // Agent items
-      { path: '/agent/commission', label: 'Tax Commission Log' }, // ✅ ADDED
+      { path: '/agent/commission', label: 'Tax Commission Log' },
       { path: '/agent/violations', label: 'My Violations' },
 
       // Shared tools
@@ -49,6 +56,12 @@ const Sidebar = ({ onLogout }) => {
         className={styles.logo}
       />
 
+      {/* 🔹 Agent Identity Section */}
+      <div className={styles.sidebarHeader}>
+        <div className={styles.dashboardTitle}>Agent Dashboard</div>
+        <div className={styles.userName}>{displayName}</div>
+      </div>
+
       <nav>
         {menuItems.map((item) => (
           <button
@@ -71,6 +84,3 @@ const Sidebar = ({ onLogout }) => {
 };
 
 export default Sidebar;
-
-
-
