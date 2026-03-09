@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import styles from '../components/AdminDashboard/AdminDashboard.module.css';
 
@@ -8,9 +8,11 @@ const ArrowDown = () => <span style={{ color: '#c0392b', fontWeight: 'bold' }}>�
 
 const formatCurrency = (val) =>
   parseFloat(val || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
 const formatCount = (val) => (val || 0).toLocaleString();
+
 const formatPct = (val) => {
-  if (val === null || val === undefined || val === Infinity || isNaN(val)) return '-';
+  if (val === null || val === undefined || val === Infinity || Number.isNaN(val)) return '-';
   const color = val >= 0 ? '#27ae60' : '#c0392b';
   return (
     <span style={{ color, fontWeight: 'bold' }}>
@@ -19,11 +21,13 @@ const formatPct = (val) => {
     </span>
   );
 };
+
 const safeDivide = (fees, count) => {
   const f = parseFloat(fees || 0);
   const c = parseFloat(count || 0);
   return c ? f / c : 0;
 };
+
 const formatAvg = (fees, count) => safeDivide(fees, count).toFixed(2);
 
 // --- METRIC OPTIONS FOR SUMMARY MODAL ---
@@ -34,6 +38,59 @@ const METRIC_OPTIONS = [
   { label: 'DMV Fees', key: 'dmv_fees', goalKey: 'dmv_fees' },
   { label: 'Renewal Fees', key: 'renewal_fees', goalKey: 'renewal_fees' },
   { label: 'Endorsement Fees', key: 'endorsement_fees', goalKey: 'endorsement_fees' },
+];
+
+// --- CATEGORY REPORT CONFIG ---
+const CATEGORY_GROUPS = [
+  {
+    key: 'new_business',
+    label: 'New Business',
+    countKey: 'new_business_count',
+    feesKey: 'new_business_fees',
+    avgLabel: 'NB Avg',
+  },
+  {
+    key: 'endorsement',
+    label: 'Endorsement',
+    countKey: 'endorsement_count',
+    feesKey: 'endorsement_fees',
+    avgLabel: 'Endorsement Avg',
+  },
+  {
+    key: 'installment',
+    label: 'Installment',
+    countKey: 'installment_count',
+    feesKey: 'installment_fees',
+    avgLabel: 'Installment Avg',
+  },
+  {
+    key: 'dmv',
+    label: 'DMV',
+    countKey: 'dmv_count',
+    feesKey: 'dmv_fees',
+    avgLabel: 'DMV Avg',
+  },
+  {
+    key: 'reissue',
+    label: 'Reissue',
+    countKey: 'reissue_count',
+    feesKey: 'reissue_fees',
+    avgLabel: 'Reissue Avg',
+  },
+  {
+    key: 'renewal',
+    label: 'Renewal',
+    countKey: 'renewal_count',
+    feesKey: 'renewal_fees',
+    avgLabel: 'Renewal Avg',
+  },
+  {
+    key: 'taxes',
+    label: 'Taxes',
+    countKey: 'taxes_count',
+    feesKey: 'tax_fees',
+    avgLabel: 'Tax Avg',
+  },
 ];
 
 const OfficeNumbers = () => {
@@ -49,41 +106,42 @@ const OfficeNumbers = () => {
 
   // Drill-down State
   const [selectedOfficeData, setSelectedOfficeData] = useState(null);
-  const [modalMetric, setModalMetric] = useState(METRIC_OPTIONS[0]); // Default to NB Fees
+  const [modalMetric, setModalMetric] = useState(METRIC_OPTIONS[0]);
 
   // --- CUSTOM REPORTS STATE ---
-  const [customReportType, setCustomReportType] = useState('rollup'); // rollup | comparison | movers | mix
+  const [customReportType, setCustomReportType] = useState('rollup'); // rollup | comparison | movers | mix | category
   const [rangeStartMonth, setRangeStartMonth] = useState('');
   const [rangeEndMonth, setRangeEndMonth] = useState('');
   const [compareStartMonth, setCompareStartMonth] = useState('');
   const [compareEndMonth, setCompareEndMonth] = useState('');
   const [selectedRegions, setSelectedRegions] = useState([]);
   const [selectedOffices, setSelectedOffices] = useState([]);
-  const [moversMetric, setMoversMetric] = useState('total_fees'); // total_fees | new_business_fees | new_business_count | renewal_fees | dmv_fees
+  const [moversMetric, setMoversMetric] = useState('total_fees');
+  const [selectedCategoryGroups, setSelectedCategoryGroups] = useState(CATEGORY_GROUPS.map((g) => g.key));
 
   useEffect(() => {
     const fetchSalesData = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        const { data, error: fetchError } = await supabase
           .from('monthly_sales')
           .select('*')
           .order('month_start_date', { ascending: false });
 
-        if (error) throw error;
+        if (fetchError) throw fetchError;
+
         setSalesData(data || []);
+
         if (data && data.length > 0) {
           const uniqueMonths = [...new Set(data.map((item) => item.month_start_date))];
           setMonthOptions(uniqueMonths);
           setSelectedMonth(uniqueMonths[0]);
 
-          // Init custom report defaults (newest as end)
           const end = uniqueMonths[0];
           const start = uniqueMonths[Math.min(5, uniqueMonths.length - 1)];
           setRangeEndMonth(end);
           setRangeStartMonth(start);
 
-          // Comparison defaults (previous window)
           const cmpEnd = uniqueMonths[Math.min(6, uniqueMonths.length - 1)];
           const cmpStart = uniqueMonths[Math.min(11, uniqueMonths.length - 1)];
           setCompareEndMonth(cmpEnd);
@@ -95,6 +153,7 @@ const OfficeNumbers = () => {
         setLoading(false);
       }
     };
+
     fetchSalesData();
   }, []);
 
@@ -103,7 +162,7 @@ const OfficeNumbers = () => {
     const agg = {
       office: label,
       region: 'ALL',
-      isGrandTotal: true, // Flag to identify this as a rollup
+      isGrandTotal: true,
       month_start_date: rows[0]?.month_start_date || '',
       new_business_count: 0,
       new_business_fees: 0,
@@ -139,7 +198,15 @@ const OfficeNumbers = () => {
       agg.tax_fees += parseFloat(r.tax_fees || 0);
     });
 
-    agg.total_fees = agg.new_business_fees + agg.endorsement_fees + agg.dmv_fees + agg.renewal_fees;
+    agg.total_fees =
+      agg.new_business_fees +
+      agg.endorsement_fees +
+      agg.installment_fees +
+      agg.dmv_fees +
+      agg.reissue_fees +
+      agg.renewal_fees +
+      agg.tax_fees;
+
     return agg;
   };
 
@@ -152,6 +219,15 @@ const OfficeNumbers = () => {
     return `${year}-${month}-01`;
   };
 
+  const calcTotalFees = (row) =>
+    parseFloat(row.new_business_fees || 0) +
+    parseFloat(row.endorsement_fees || 0) +
+    parseFloat(row.installment_fees || 0) +
+    parseFloat(row.dmv_fees || 0) +
+    parseFloat(row.reissue_fees || 0) +
+    parseFloat(row.renewal_fees || 0) +
+    parseFloat(row.tax_fees || 0);
+
   const processedData = useMemo(() => {
     if (!selectedMonth) return { grouped: {}, grandTotal: null, flatList: [] };
 
@@ -159,28 +235,22 @@ const OfficeNumbers = () => {
     const lastMonthStr = getComparisonData(selectedMonth, 1);
     const lastYearStr = getComparisonData(selectedMonth, 12);
 
-    // Prepare Comparison Lookup Maps for Speed
     const lastMonthData = salesData.filter((d) => d.month_start_date === lastMonthStr);
     const lastYearData = salesData.filter((d) => d.month_start_date === lastYearStr);
 
     const grouped = {};
-    const flatList = []; // For Leaderboard
+    const flatList = [];
 
     currentMonthData.forEach((row) => {
       const region = row.region || 'Unknown';
       if (!grouped[region]) grouped[region] = [];
 
-      // Find comparison rows
       const prevMonthRow = lastMonthData.find((d) => d.office === row.office);
       const prevYearRow = lastYearData.find((d) => d.office === row.office);
 
       const calcChange = (curr, past) => (past ? ((curr - past) / past) * 100 : 0);
 
-      const totalFees =
-        parseFloat(row.new_business_fees || 0) +
-        parseFloat(row.endorsement_fees || 0) +
-        parseFloat(row.dmv_fees || 0) +
-        parseFloat(row.renewal_fees || 0);
+      const totalFees = calcTotalFees(row);
 
       const enhancedRow = {
         ...row,
@@ -195,17 +265,13 @@ const OfficeNumbers = () => {
       flatList.push(enhancedRow);
     });
 
-    // --- GRAND TOTAL CALCULATION ---
     const grandTotal = aggregateRows(currentMonthData, 'COMPANY TOTAL');
-
-    // Calculate Grand Total Comparisons
     const prevMonthTotal = aggregateRows(lastMonthData);
     const prevYearTotal = aggregateRows(lastYearData);
 
     grandTotal.prevMonthRow = prevMonthTotal;
     grandTotal.prevYearRow = prevYearTotal;
 
-    // Add Comparison %s to Grand Total
     const calcGtChange = (curr, past) => (past ? ((curr - past) / past) * 100 : 0);
     grandTotal.nb_mom_pct = calcGtChange(grandTotal.new_business_fees, prevMonthTotal.new_business_fees);
     grandTotal.nb_yoy_pct = calcGtChange(grandTotal.new_business_fees, prevYearTotal.new_business_fees);
@@ -217,11 +283,7 @@ const OfficeNumbers = () => {
   // --- COMPANY HISTORY CALCULATOR (For Grand Total Modal) ---
   const getCompanyHistory = () => {
     const uniqueMonths = [
-      ...new Set(
-        salesData
-          .filter((d) => d.month_start_date <= selectedMonth)
-          .map((d) => d.month_start_date)
-      ),
+      ...new Set(salesData.filter((d) => d.month_start_date <= selectedMonth).map((d) => d.month_start_date)),
     ];
 
     uniqueMonths.sort((a, b) => new Date(b) - new Date(a));
@@ -246,9 +308,7 @@ const OfficeNumbers = () => {
       rank = 1;
       totalPeers = 1;
     } else {
-      const regionPeers = salesData.filter(
-        (d) => d.region === row.region && d.month_start_date === row.month_start_date
-      );
+      const regionPeers = salesData.filter((d) => d.region === row.region && d.month_start_date === row.month_start_date);
       regionPeers.sort((a, b) => parseFloat(b.new_business_fees || 0) - parseFloat(a.new_business_fees || 0));
       rank = regionPeers.findIndex((p) => p.office === row.office) + 1;
       totalPeers = regionPeers.length;
@@ -261,8 +321,7 @@ const OfficeNumbers = () => {
 
     const officeHistory = row.isGrandTotal ? salesData : salesData.filter((d) => d.office === row.office);
 
-    const sumSubset = (rows) =>
-      rows.reduce((sum, d) => sum + parseFloat(d.new_business_fees || 0), 0);
+    const sumSubset = (rows) => rows.reduce((sum, d) => sum + parseFloat(d.new_business_fees || 0), 0);
 
     const calcYTD = (year) => {
       const relevantRows = officeHistory.filter((d) => {
@@ -324,13 +383,13 @@ const OfficeNumbers = () => {
       if (d.office) map[region].add(d.office);
     });
     const out = {};
-    Object.keys(map).forEach((k) => (out[k] = [...map[k]].sort()));
+    Object.keys(map).forEach((k) => {
+      out[k] = [...map[k]].sort();
+    });
     return out;
   }, [salesData]);
 
-  const allOffices = useMemo(() => {
-    return [...new Set(salesData.map((d) => d.office).filter(Boolean))].sort();
-  }, [salesData]);
+  const allOffices = useMemo(() => [...new Set(salesData.map((d) => d.office).filter(Boolean))].sort(), [salesData]);
 
   const isMonthInRange = (m, start, end) => {
     if (!m || !start || !end) return false;
@@ -339,49 +398,48 @@ const OfficeNumbers = () => {
     return m >= min && m <= max;
   };
 
-  const calcTotalFees = (row) =>
-    parseFloat(row.new_business_fees || 0) +
-    parseFloat(row.endorsement_fees || 0) +
-    parseFloat(row.dmv_fees || 0) +
-    parseFloat(row.renewal_fees || 0);
-
-  const normalizeRow = (row) => ({
+  const normalizeRow = useCallback((row) => ({
     ...row,
     total_fees: calcTotalFees(row),
-  });
+  }), []);
 
-  const filterRowsByScope = (rows) => {
+  const filterRowsByScope = useCallback((rows) => {
     let scoped = rows;
 
     if (selectedRegions.length > 0) {
       scoped = scoped.filter((r) => selectedRegions.includes(r.region || 'Unknown'));
     }
+
     if (selectedOffices.length > 0) {
       scoped = scoped.filter((r) => selectedOffices.includes(r.office));
     }
+
     return scoped;
-  };
+  }, [selectedRegions, selectedOffices]);
 
   const rangeRows = useMemo(() => {
     const base = salesData.filter((d) => isMonthInRange(d.month_start_date, rangeStartMonth, rangeEndMonth));
     return filterRowsByScope(base).map(normalizeRow);
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices]);
+  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, filterRowsByScope, normalizeRow]);
 
   const compareRows = useMemo(() => {
     const base = salesData.filter((d) => isMonthInRange(d.month_start_date, compareStartMonth, compareEndMonth));
     return filterRowsByScope(base).map(normalizeRow);
-  }, [salesData, compareStartMonth, compareEndMonth, selectedRegions, selectedOffices]);
+  }, [salesData, compareStartMonth, compareEndMonth, selectedRegions, selectedOffices, filterRowsByScope, normalizeRow]);
 
   const rollupData = useMemo(() => {
     if (!rangeRows.length) return { total: null, perOffice: [] };
+
     const byOffice = {};
     rangeRows.forEach((r) => {
       if (!byOffice[r.office]) byOffice[r.office] = [];
       byOffice[r.office].push(r);
     });
+
     const perOffice = Object.keys(byOffice)
       .sort()
       .map((office) => aggregateRows(byOffice[office], office));
+
     const total = aggregateRows(rangeRows, 'SELECTED TOTAL');
     return { total, perOffice };
   }, [rangeRows]);
@@ -394,14 +452,10 @@ const OfficeNumbers = () => {
   }, [rangeRows, compareRows]);
 
   const moversData = useMemo(() => {
-    // Movers compares START month vs END month for each office in scope (simple & intuitive)
     if (!rangeStartMonth || !rangeEndMonth) return [];
-    const startRows = filterRowsByScope(
-      salesData.filter((d) => d.month_start_date === rangeStartMonth).map(normalizeRow)
-    );
-    const endRows = filterRowsByScope(
-      salesData.filter((d) => d.month_start_date === rangeEndMonth).map(normalizeRow)
-    );
+
+    const startRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeStartMonth).map(normalizeRow));
+    const endRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeEndMonth).map(normalizeRow));
 
     const getVal = (row) => {
       if (!row) return 0;
@@ -419,16 +473,23 @@ const OfficeNumbers = () => {
       const startVal = getVal(s);
       const endVal = getVal(e);
       const diff = endVal - startVal;
-      const pct = startVal ? (diff / startVal) * 100 : (endVal ? 100 : 0);
-      return { office, region: e?.region || s?.region || 'Unknown', startVal, endVal, diff, pct };
+      const pct = startVal ? (diff / startVal) * 100 : endVal ? 100 : 0;
+
+      return {
+        office,
+        region: e?.region || s?.region || 'Unknown',
+        startVal,
+        endVal,
+        diff,
+        pct,
+      };
     });
 
     results.sort((a, b) => b.diff - a.diff);
     return results;
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, moversMetric]);
+  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, moversMetric, filterRowsByScope, normalizeRow]);
 
   const mixShiftData = useMemo(() => {
-    // Mix shift compares revenue composition at START month vs END month (per office)
     if (!rangeStartMonth || !rangeEndMonth) return { rows: [], totalStart: null, totalEnd: null };
 
     const startRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeStartMonth));
@@ -449,6 +510,7 @@ const OfficeNumbers = () => {
       const en = parseFloat(r?.endorsement_fees || 0);
       const dmv = parseFloat(r?.dmv_fees || 0);
       const total = nb + rn + en + dmv;
+
       return {
         total,
         nbPct: total ? (nb / total) * 100 : 0,
@@ -463,6 +525,7 @@ const OfficeNumbers = () => {
       const e = endRows.find((r) => r.office === office);
       const sMix = calcMix(s);
       const eMix = calcMix(e);
+
       return {
         office,
         region: e?.region || s?.region || 'Unknown',
@@ -478,14 +541,30 @@ const OfficeNumbers = () => {
     });
 
     return { rows, totalStart, totalEnd };
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices]);
+  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, filterRowsByScope]);
 
-  // Auto-sync offices list when regions chosen (nice UX)
+  const categoryReportData = useMemo(() => {
+    if (!rangeRows.length) {
+      return { total: null, rows: [] };
+    }
+
+    // Sort rows alphabetically by office, then chronologically by month
+    const sortedRows = [...rangeRows].sort((a, b) => {
+      if (a.office < b.office) return -1;
+      if (a.office > b.office) return 1;
+      // If same office, sort by month chronologically
+      return new Date(a.month_start_date) - new Date(b.month_start_date);
+    });
+
+    const total = aggregateRows(rangeRows, 'SELECTED TOTAL');
+
+    return { total, rows: sortedRows };
+  }, [rangeRows]);
+
+  // Auto-sync offices list when regions chosen
   useEffect(() => {
-    // If no region selected, don't force offices.
     if (selectedRegions.length === 0) return;
 
-    // If user already selected offices, keep them (but remove offices not in region)
     const allowed = new Set();
     selectedRegions.forEach((r) => (officesByRegion[r] || []).forEach((o) => allowed.add(o)));
 
@@ -591,20 +670,13 @@ const OfficeNumbers = () => {
 
     const getVal = (row, key) => {
       if (!row) return 0;
-      if (key === 'total_fees') {
-        return (
-          parseFloat(row.new_business_fees || 0) +
-          parseFloat(row.endorsement_fees || 0) +
-          parseFloat(row.dmv_fees || 0) +
-          parseFloat(row.renewal_fees || 0)
-        );
-      }
+      if (key === 'total_fees') return calcTotalFees(row);
       return parseFloat(row[key] || 0);
     };
 
     const metricKey = modalMetric.key;
     const isCount = modalMetric.isCount || false;
-    const maxVal = Math.max(...history.map((h) => getVal(h, metricKey)));
+    const maxVal = Math.max(...history.map((h) => getVal(h, metricKey)), 0);
     const currentVal = getVal(curr, metricKey);
     const targetVal = getVal(yoy, metricKey);
     const progressPct = targetVal > 0 ? Math.min((currentVal / targetVal) * 100, 100) : currentVal > 0 ? 100 : 0;
@@ -653,7 +725,9 @@ const OfficeNumbers = () => {
                 <h4>{modalMetric.label}</h4>
                 <div className={styles.badgeNeutral}>Vs Last Year</div>
               </div>
+
               <div className={styles.heroNumber}>{isCount ? formatCount(currentVal) : formatCurrency(currentVal)}</div>
+
               <div style={{ marginTop: '15px' }}>
                 <div
                   style={{
@@ -666,6 +740,7 @@ const OfficeNumbers = () => {
                   <span>Progress to beat Last Year</span>
                   <span>Target: {isCount ? formatCount(targetVal) : formatCurrency(targetVal)}</span>
                 </div>
+
                 <div className={styles.progressBarBg}>
                   <div
                     className={styles.progressBarFill}
@@ -673,9 +748,10 @@ const OfficeNumbers = () => {
                       width: `${progressPct}%`,
                       backgroundColor: progressPct >= 100 ? '#27ae60' : '#3498db',
                     }}
-                  ></div>
+                  />
                 </div>
               </div>
+
               <div style={{ marginTop: '25px' }}>
                 <span style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase' }}>6-Month Trend</span>
                 <div className={styles.trendContainer}>
@@ -684,14 +760,18 @@ const OfficeNumbers = () => {
                     const heightPct = maxVal ? (val / maxVal) * 100 : 0;
                     const isCurrent = i === history.length - 1;
                     const monthShort = new Date(h.month_start_date).toLocaleDateString('default', { month: 'short' });
+
                     return (
                       <div key={i} className={styles.trendBarWrapper}>
                         <div
                           className={styles.trendBar}
-                          style={{ height: `${heightPct}%`, backgroundColor: isCurrent ? '#c0392b' : '#bdc3c7' }}
-                        ></div>
+                          style={{
+                            height: `${heightPct}%`,
+                            backgroundColor: isCurrent ? '#c0392b' : '#bdc3c7',
+                          }}
+                        />
                         <div className={styles.trendLabelVal}>
-                          {isCount ? val : val > 999 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(0)}
+                          {isCount ? val : val > 999 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
                         </div>
                         <div className={styles.trendLabelMonth}>{monthShort}</div>
                       </div>
@@ -710,20 +790,22 @@ const OfficeNumbers = () => {
                     Total Fees
                   </span>
                 </div>
+
                 <div className={styles.mixBarContainer}>
-                  <div className={styles.mixSegment} style={{ width: `${nbPct}%`, backgroundColor: '#c0392b' }}></div>
-                  <div className={styles.mixSegment} style={{ width: `${renewPct}%`, backgroundColor: '#f1c40f' }}></div>
-                  <div className={styles.mixSegment} style={{ width: `${endorsePct}%`, backgroundColor: '#3498db' }}></div>
+                  <div className={styles.mixSegment} style={{ width: `${nbPct}%`, backgroundColor: '#c0392b' }} />
+                  <div className={styles.mixSegment} style={{ width: `${renewPct}%`, backgroundColor: '#f1c40f' }} />
+                  <div className={styles.mixSegment} style={{ width: `${endorsePct}%`, backgroundColor: '#3498db' }} />
                 </div>
+
                 <div className={styles.mixLegend}>
                   <span>
-                    <span className={styles.dot} style={{ background: '#c0392b' }}></span> New Biz
+                    <span className={styles.dot} style={{ background: '#c0392b' }} /> New Biz
                   </span>
                   <span>
-                    <span className={styles.dot} style={{ background: '#f1c40f' }}></span> Renewal
+                    <span className={styles.dot} style={{ background: '#f1c40f' }} /> Renewal
                   </span>
                   <span>
-                    <span className={styles.dot} style={{ background: '#3498db' }}></span> Endorse
+                    <span className={styles.dot} style={{ background: '#3498db' }} /> Endorse
                   </span>
                 </div>
               </div>
@@ -750,6 +832,7 @@ const OfficeNumbers = () => {
                 {curr.region} • {curr.month_start_date}
               </span>
             </div>
+
             {!curr.isGrandTotal && (
               <div className={styles.rankBadge}>
                 <div style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Region Rank</div>
@@ -768,14 +851,16 @@ const OfficeNumbers = () => {
                   {kpi.ytdPct > 0 ? '▲ Ahead of' : '▼ Behind'} Last Year by {Math.abs(kpi.ytdPct).toFixed(1)}%
                 </div>
               </div>
+
               <div className={styles.ytdContainer}>
                 <div className={styles.ytdRow}>
                   <div style={{ width: '80px', fontWeight: 'bold' }}>2025 YTD</div>
                   <div className={styles.ytdBarBg}>
-                    <div className={styles.ytdBarFill} style={{ width: '100%', background: '#2c3e50' }}></div>
+                    <div className={styles.ytdBarFill} style={{ width: '100%', background: '#2c3e50' }} />
                   </div>
                   <div style={{ width: '80px', textAlign: 'right', fontWeight: 'bold' }}>{formatCurrency(kpi.currentYTD)}</div>
                 </div>
+
                 <div className={styles.ytdRow}>
                   <div style={{ width: '80px', color: '#7f8c8d' }}>2024 YTD</div>
                   <div className={styles.ytdBarBg}>
@@ -785,13 +870,18 @@ const OfficeNumbers = () => {
                         width: `${Math.min((kpi.prevYTD / (kpi.currentYTD || 1)) * 100, 100)}%`,
                         background: '#95a5a6',
                       }}
-                    ></div>
+                    />
                   </div>
                   <div style={{ width: '80px', textAlign: 'right', color: '#7f8c8d' }}>{formatCurrency(kpi.prevYTD)}</div>
                 </div>
               </div>
+
               <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '10px', textAlign: 'center' }}>
-                {curr.office} has generated <b>{formatCurrency(kpi.ytdDiff)} {kpi.ytdDiff >= 0 ? 'more' : 'less'}</b> in fees than at this point last year.
+                {curr.office} has generated{' '}
+                <b>
+                  {formatCurrency(kpi.ytdDiff)} {kpi.ytdDiff >= 0 ? 'more' : 'less'}
+                </b>{' '}
+                in fees than at this point last year.
               </div>
             </div>
 
@@ -921,7 +1011,6 @@ const OfficeNumbers = () => {
     </table>
   );
 
-  // --- NEW: RANKINGS TABLE ---
   const renderRankingsTable = (rows) => {
     const sortedRows = [...rows].sort((a, b) => {
       const valA = parseFloat(a[sortConfig.key] || 0);
@@ -929,7 +1018,7 @@ const OfficeNumbers = () => {
       return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
     });
 
-    const maxVal = Math.max(...sortedRows.map((r) => parseFloat(r[sortConfig.key] || 0)));
+    const maxVal = Math.max(...sortedRows.map((r) => parseFloat(r[sortConfig.key] || 0)), 0);
 
     const handleSort = (key) => {
       let direction = 'desc';
@@ -982,16 +1071,11 @@ const OfficeNumbers = () => {
                   }}
                   className={styles.clickableRow}
                 >
-                  <td style={{ fontSize: '1.2rem', textAlign: 'center', fontWeight: isTop3 ? 'bold' : 'normal' }}>
-                    {rankIcon}
-                  </td>
+                  <td style={{ fontSize: '1.2rem', textAlign: 'center', fontWeight: isTop3 ? 'bold' : 'normal' }}>{rankIcon}</td>
                   <td style={{ fontWeight: 'bold' }}>{row.office}</td>
                   <td>
-                    <span style={{ fontSize: '0.75rem', background: '#eee', padding: '2px 6px', borderRadius: '4px' }}>
-                      {row.region}
-                    </span>
+                    <span style={{ fontSize: '0.75rem', background: '#eee', padding: '2px 6px', borderRadius: '4px' }}>{row.region}</span>
                   </td>
-
                   <td style={{ position: 'relative' }}>
                     <div
                       style={{
@@ -1003,12 +1087,11 @@ const OfficeNumbers = () => {
                         background: '#fef9e7',
                         zIndex: 0,
                       }}
-                    ></div>
+                    />
                     <span style={{ position: 'relative', zIndex: 1, fontWeight: 'bold', color: '#d35400' }}>
                       {formatCurrency(row.new_business_fees)}
                     </span>
                   </td>
-
                   <td>{formatCount(row.new_business_count)}</td>
                   <td>{formatCurrency(row.total_fees)}</td>
                   <td>
@@ -1023,7 +1106,6 @@ const OfficeNumbers = () => {
     );
   };
 
-  // --- FULL DETAILED TABLE (ALL COLUMNS) ---
   const renderDetailedTable = (rows) => (
     <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
       <table className={styles.ticketsTable}>
@@ -1125,7 +1207,6 @@ const OfficeNumbers = () => {
     const renderScopeControls = () => (
       <div style={{ background: 'white', borderRadius: 10, padding: 12, marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          {/* Range controls */}
           <div>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Range (Start → End)</div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -1136,6 +1217,7 @@ const OfficeNumbers = () => {
                   </option>
                 ))}
               </select>
+
               <select className={styles.monthSelector} value={rangeEndMonth} onChange={(e) => setRangeEndMonth(e.target.value)}>
                 {monthOptions.map((m) => (
                   <option key={m} value={m}>
@@ -1146,7 +1228,6 @@ const OfficeNumbers = () => {
             </div>
           </div>
 
-          {/* Comparison controls (only for comparison) */}
           {customReportType === 'comparison' && (
             <div>
               <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Compare Against (Period B)</div>
@@ -1158,6 +1239,7 @@ const OfficeNumbers = () => {
                     </option>
                   ))}
                 </select>
+
                 <select className={styles.monthSelector} value={compareEndMonth} onChange={(e) => setCompareEndMonth(e.target.value)}>
                   {monthOptions.map((m) => (
                     <option key={m} value={m}>
@@ -1169,7 +1251,6 @@ const OfficeNumbers = () => {
             </div>
           )}
 
-          {/* Region multi-select */}
           <div style={{ minWidth: 220 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Regions</div>
             <select
@@ -1187,17 +1268,17 @@ const OfficeNumbers = () => {
                 </option>
               ))}
             </select>
+
             <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-              <button className={styles.viewBtn} onClick={() => setSelectedRegions(uniqueRegions)}>
+              <button type="button" className={styles.viewBtn} onClick={() => setSelectedRegions(uniqueRegions)}>
                 Select All
               </button>
-              <button className={styles.viewBtn} onClick={() => setSelectedRegions([])}>
+              <button type="button" className={styles.viewBtn} onClick={() => setSelectedRegions([])}>
                 Clear
               </button>
             </div>
           </div>
 
-          {/* Office multi-select */}
           <div style={{ minWidth: 220 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Offices</div>
             <select
@@ -1209,10 +1290,7 @@ const OfficeNumbers = () => {
               }}
               style={{ width: '100%', minHeight: 90, padding: 8, borderRadius: 8, border: '1px solid #ddd' }}
             >
-              {(selectedRegions.length
-                ? selectedRegions.flatMap((r) => officesByRegion[r] || [])
-                : allOffices
-              )
+              {(selectedRegions.length ? selectedRegions.flatMap((r) => officesByRegion[r] || []) : allOffices)
                 .filter(Boolean)
                 .filter((v, i, arr) => arr.indexOf(v) === i)
                 .sort()
@@ -1222,25 +1300,24 @@ const OfficeNumbers = () => {
                   </option>
                 ))}
             </select>
+
             <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
               <button
+                type="button"
                 className={styles.viewBtn}
                 onClick={() => {
-                  const pool = selectedRegions.length
-                    ? selectedRegions.flatMap((r) => officesByRegion[r] || [])
-                    : allOffices;
+                  const pool = selectedRegions.length ? selectedRegions.flatMap((r) => officesByRegion[r] || []) : allOffices;
                   setSelectedOffices([...new Set(pool)].sort());
                 }}
               >
                 Select All
               </button>
-              <button className={styles.viewBtn} onClick={() => setSelectedOffices([])}>
+              <button type="button" className={styles.viewBtn} onClick={() => setSelectedOffices([])}>
                 Clear
               </button>
             </div>
           </div>
 
-          {/* Movers metric */}
           {customReportType === 'movers' && (
             <div>
               <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Movers Metric</div>
@@ -1251,6 +1328,64 @@ const OfficeNumbers = () => {
                 <option value="renewal_fees">Renewal Fees</option>
                 <option value="dmv_fees">DMV Fees</option>
               </select>
+            </div>
+          )}
+
+          {customReportType === 'category' && (
+            <div style={{ minWidth: 320 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Category Columns</div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  marginTop: 8,
+                  background: '#fff',
+                  border: '1px solid #ddd',
+                  borderRadius: 8,
+                  padding: 8,
+                }}
+              >
+                {CATEGORY_GROUPS.map((group) => {
+                  const active = selectedCategoryGroups.includes(group.key);
+
+                  return (
+                    <button
+                      key={group.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategoryGroups((prev) =>
+                          prev.includes(group.key) ? prev.filter((k) => k !== group.key) : [...prev, group.key]
+                        );
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: 999,
+                        border: active ? '2px solid #c0392b' : '1px solid #ccc',
+                        background: active ? '#fff5f5' : '#fff',
+                        fontWeight: active ? 800 : 600,
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      {group.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups(CATEGORY_GROUPS.map((g) => g.key))}>
+                  Select All
+                </button>
+                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups(['new_business'])}>
+                  NB Only
+                </button>
+                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups([])}>
+                  Clear
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1271,18 +1406,27 @@ const OfficeNumbers = () => {
                 {rangeStartMonth} → {rangeEndMonth}
               </span>
             </div>
+
             <div className={styles.gtGridSummary}>
-              <div><span>Total Fees:</span> {formatCurrency(rollupData.total.total_fees)}</div>
-              <div><span>New Biz #:</span> {formatCount(rollupData.total.new_business_count)}</div>
-              <div><span>New Biz $:</span> {formatCurrency(rollupData.total.new_business_fees)}</div>
-              <div><span>Renewals:</span> {formatCount(rollupData.total.renewal_count)}</div>
-              <div><span>DMV $:</span> {formatCurrency(rollupData.total.dmv_fees)}</div>
+              <div>
+                <span>Total Fees:</span> {formatCurrency(rollupData.total.total_fees)}
+              </div>
+              <div>
+                <span>New Biz #:</span> {formatCount(rollupData.total.new_business_count)}
+              </div>
+              <div>
+                <span>New Biz $:</span> {formatCurrency(rollupData.total.new_business_fees)}
+              </div>
+              <div>
+                <span>Renewals:</span> {formatCount(rollupData.total.renewal_count)}
+              </div>
+              <div>
+                <span>DMV $:</span> {formatCurrency(rollupData.total.dmv_fees)}
+              </div>
             </div>
           </div>
         ) : (
-          <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>
-            No data for that selection.
-          </div>
+          <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>No data for that selection.</div>
         )}
 
         {rollupData.perOffice.length > 0 && (
@@ -1321,10 +1465,12 @@ const OfficeNumbers = () => {
       const a = comparisonData.aTotal;
       const b = comparisonData.bTotal;
 
-      const diffPct = (curr, past) => (past ? ((curr - past) / past) * 100 : (curr ? 100 : 0));
+      const diffPct = (curr, past) => (past ? ((curr - past) / past) * 100 : curr ? 100 : 0);
+
       const row = (label, aVal, bVal, isCount = false) => {
         const diff = aVal - bVal;
         const pct = diffPct(aVal, bVal);
+
         return (
           <tr key={label}>
             <td style={{ fontWeight: 800 }}>{label}</td>
@@ -1349,6 +1495,7 @@ const OfficeNumbers = () => {
             <b>Period A:</b> {rangeStartMonth} → {rangeEndMonth} &nbsp; | &nbsp;
             <b>Period B:</b> {compareStartMonth} → {compareEndMonth}
           </div>
+
           <table className={styles.ticketsTable}>
             <thead>
               <tr>
@@ -1482,9 +1629,7 @@ const OfficeNumbers = () => {
         return <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>Select start/end months that contain data.</div>;
       }
 
-      const seg = (pct, color) => (
-        <div style={{ width: `${Math.max(0, pct)}%`, background: color, height: 10, borderRadius: 6 }} />
-      );
+      const seg = (pct, color) => <div style={{ width: `${Math.max(0, pct)}%`, background: color, height: 10, borderRadius: 6 }} />;
 
       return (
         <div style={{ background: 'white', borderRadius: 10, padding: 10 }}>
@@ -1533,19 +1678,23 @@ const OfficeNumbers = () => {
 
                   <td style={{ fontSize: 12 }}>
                     <span style={{ color: r.shift.nb >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      NB {r.shift.nb >= 0 ? '+' : ''}{r.shift.nb.toFixed(1)}%
-                    </span>
-                    {'  '}|{'  '}
+                      NB {r.shift.nb >= 0 ? '+' : ''}
+                      {r.shift.nb.toFixed(1)}%
+                    </span>{' '}
+                    |{' '}
                     <span style={{ color: r.shift.rn >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      Ren {r.shift.rn >= 0 ? '+' : ''}{r.shift.rn.toFixed(1)}%
-                    </span>
-                    {'  '}|{'  '}
+                      Ren {r.shift.rn >= 0 ? '+' : ''}
+                      {r.shift.rn.toFixed(1)}%
+                    </span>{' '}
+                    |{' '}
                     <span style={{ color: r.shift.en >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      End {r.shift.en >= 0 ? '+' : ''}{r.shift.en.toFixed(1)}%
-                    </span>
-                    {'  '}|{'  '}
+                      End {r.shift.en >= 0 ? '+' : ''}
+                      {r.shift.en.toFixed(1)}%
+                    </span>{' '}
+                    |{' '}
                     <span style={{ color: r.shift.dmv >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      DMV {r.shift.dmv >= 0 ? '+' : ''}{r.shift.dmv.toFixed(1)}%
+                      DMV {r.shift.dmv >= 0 ? '+' : ''}
+                      {r.shift.dmv.toFixed(1)}%
                     </span>
                   </td>
                 </tr>
@@ -1561,9 +1710,127 @@ const OfficeNumbers = () => {
       );
     };
 
+    const renderCategoryReport = () => {
+      const { total, rows } = categoryReportData;
+
+      if (!rows.length) {
+        return (
+          <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>
+            No data for that selection.
+          </div>
+        );
+      }
+
+      const selectedGroups = CATEGORY_GROUPS.filter((g) => selectedCategoryGroups.includes(g.key));
+
+      return (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {total && (
+            <div className={styles.grandTotalContainer} style={{ cursor: 'default' }}>
+              <div className={styles.grandTotalLabel}>
+                MULTI-MONTH PRODUCTION TOTAL
+                <span style={{ fontSize: '0.7rem', display: 'block', color: '#bdc3c7', fontWeight: 'normal' }}>
+                  {rangeStartMonth} → {rangeEndMonth}
+                </span>
+              </div>
+
+              <div className={styles.gtGridSummary}>
+                <div>
+                  <span>Total Fees:</span> {formatCurrency(total.total_fees)}
+                </div>
+                <div>
+                  <span>New Biz #:</span> {formatCount(total.new_business_count)}
+                </div>
+                <div>
+                  <span>Renewal #:</span> {formatCount(total.renewal_count)}
+                </div>
+                <div>
+                  <span>DMV #:</span> {formatCount(total.dmv_count)}
+                </div>
+                <div>
+                  <span>Tax #:</span> {formatCount(total.taxes_count)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ background: 'white', borderRadius: 10, padding: 10, overflowX: 'auto' }}>
+            <h3 style={{ margin: '6px 0 10px 0' }}>Multi-Month Production Report</h3>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
+              <b>Range:</b> {rangeStartMonth} → {rangeEndMonth}
+            </div>
+
+            <table className={styles.ticketsTable}>
+              <thead>
+                <tr>
+                  <th className={styles.stickyCol}>Office</th>
+                  <th>Region</th>
+                  <th>Month</th> {/* <-- Added Month Column */}
+                  {selectedGroups.map((group) => (
+                    <React.Fragment key={group.key}>
+                      <th>{group.label} #</th>
+                      <th>{group.label} Fees</th>
+                      <th>{group.avgLabel}</th>
+                    </React.Fragment>
+                  ))}
+                  <th>Total Fees</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={`${row.office}-${row.month_start_date}-${index}`}>
+                    <td className={styles.stickyCol} style={{ fontWeight: 800 }}>
+                      {row.office}
+                    </td>
+                    <td>{row.region}</td>
+                    <td>
+                      {/* Render the formatted month */}
+                      {new Date(row.month_start_date).toLocaleString('default', { 
+                        month: 'short', 
+                        year: 'numeric', 
+                        timeZone: 'UTC' 
+                      })}
+                    </td>
+
+                    {selectedGroups.map((group) => (
+                      <React.Fragment key={group.key}>
+                        <td>{formatCount(row[group.countKey])}</td>
+                        <td>{formatCurrency(row[group.feesKey])}</td>
+                        <td>{formatAvg(row[group.feesKey], row[group.countKey])}</td>
+                      </React.Fragment>
+                    ))}
+
+                    <td style={{ fontWeight: 800 }}>{formatCurrency(row.total_fees)}</td>
+                  </tr>
+                ))}
+
+                {total && (
+                  <tr style={{ background: '#f8f9fa', fontWeight: 800 }}>
+                    <td className={styles.stickyCol}>TOTAL</td>
+                    <td>—</td>
+                    <td>—</td> {/* <-- Empty cell for the total row's month column */}
+
+                    {selectedGroups.map((group) => (
+                      <React.Fragment key={group.key}>
+                        <td>{formatCount(total[group.countKey])}</td>
+                        <td>{formatCurrency(total[group.feesKey])}</td>
+                        <td>{formatAvg(total[group.feesKey], total[group.countKey])}</td>
+                      </React.Fragment>
+                    ))}
+
+                    <td>{formatCurrency(total.total_fees)}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div>
-        {/* Report-type pills */}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
           <div style={pillStyle(customReportType === 'rollup')} onClick={() => setCustomReportType('rollup')}>
             📊 Multi-Office Rollup
@@ -1577,16 +1844,24 @@ const OfficeNumbers = () => {
           <div style={pillStyle(customReportType === 'mix')} onClick={() => setCustomReportType('mix')}>
             🧠 Revenue Mix Shift
           </div>
+          <div style={pillStyle(customReportType === 'category')} onClick={() => setCustomReportType('category')}>
+            📋 Multi-Month Production Report
+          </div>
         </div>
 
         {renderScopeControls()}
 
-        {/* Optional small chips to guide user */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-          <div style={chipStyle(true)}><b>Scope:</b> {scopeLabel()}</div>
-          <div style={chipStyle(true)}><b>Range:</b> {rangeStartMonth} → {rangeEndMonth}</div>
+          <div style={chipStyle(true)}>
+            <b>Scope:</b> {scopeLabel()}
+          </div>
+          <div style={chipStyle(true)}>
+            <b>Range:</b> {rangeStartMonth} → {rangeEndMonth}
+          </div>
           {customReportType === 'comparison' && (
-            <div style={chipStyle(true)}><b>Compare:</b> {compareStartMonth} → {compareEndMonth}</div>
+            <div style={chipStyle(true)}>
+              <b>Compare:</b> {compareStartMonth} → {compareEndMonth}
+            </div>
           )}
         </div>
 
@@ -1594,6 +1869,7 @@ const OfficeNumbers = () => {
         {customReportType === 'comparison' && renderComparison()}
         {customReportType === 'movers' && renderMovers()}
         {customReportType === 'mix' && renderMixShift()}
+        {customReportType === 'category' && renderCategoryReport()}
       </div>
     );
   };
@@ -1617,7 +1893,6 @@ const OfficeNumbers = () => {
         </select>
       </div>
 
-      {/* PRIMARY TABS (yellow-highlight location) */}
       <div className={styles.tabContainer}>
         <button onClick={() => setActiveView('summary')} className={activeView === 'summary' ? styles.activeTab : styles.inactiveTab}>
           📊 Summary
@@ -1636,18 +1911,12 @@ const OfficeNumbers = () => {
         </button>
       </div>
 
-      {/* Company total stays for native views; hide it for custom so it doesn't confuse the scope */}
       {activeView !== 'custom' && renderGrandTotalRow()}
 
-      {/* RENDER CONTENT BASED ON VIEW */}
-
-      {/* 1. CUSTOM REPORTS */}
       {activeView === 'custom' && renderCustomReports()}
 
-      {/* 2. RANKING VIEW (No Regions, Just List) */}
       {activeView === 'ranking' && renderRankingsTable(processedData.flatList)}
 
-      {/* 3. REGIONAL VIEWS (Summary, Trends, Detail) */}
       {activeView !== 'ranking' &&
         activeView !== 'custom' &&
         Object.keys(processedData.grouped)
