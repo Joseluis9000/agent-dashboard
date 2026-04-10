@@ -176,8 +176,23 @@ const EODReport = () => {
     const errorRowIndices = new Set(bad); // Initialize with structurally bad rows
 
     if (bad.length > 0) {
-      alerts.push(`You pasted ${bad.length} line(s) that look like totals/labels. Remove these rows before continuing.`);
+      const rowNumbers = bad.map(i => i + 1); // Get 1-based row numbers
+      let badRowMessage = '';
+
+      if (bad.length === 1) {
+        badRowMessage = `Row ${rowNumbers[0]} looks`;
+      } else if (bad.length > 1 && bad.length <= 5) {
+        // List rows if there are 5 or fewer
+        const lastRow = rowNumbers.pop();
+        badRowMessage = `Rows ${rowNumbers.join(', ')} and ${lastRow} look`;
+      } else {
+        // Give a summary if there are many
+        badRowMessage = `${bad.length} lines (starting with row ${rowNumbers[0]}) look`;
+      }
+      
+      alerts.push(`Data Error: ${badRowMessage} like summary totals, not transactions. Please remove the highlighted row(s) before continuing.`);
     }
+    
     if (realOffices.length > 1) {
       alerts.push(
         `Multiple offices detected: ${realOffices.join(
@@ -186,16 +201,20 @@ const EODReport = () => {
       );
     }
 
-    // Pre-calculate net fees per receipt to handle voids correctly
+    // --- START OF MODIFIED PRE-CALCULATION BLOCK ---
+    // Pre-calculate net fees AND unique reference numbers per receipt
     const receiptFeeTotals = {};
+    const receiptRefTotals = {}; // <-- NEW: To track unique refs
+
     transactions.forEach(t => {
       const receipt = t.Receipt;
       if (!receipt) return;
+
+      // --- Fee Totals (existing) ---
       if (!receiptFeeTotals[receipt]) {
         receiptFeeTotals[receipt] = {
           paymentFee: 0,
           convenienceFee: 0,
-          // NEW: Specifically track convenience fees charged to cash
           cashConvenienceFee: 0,
         };
       }
@@ -212,7 +231,20 @@ const EODReport = () => {
           receiptFeeTotals[receipt].cashConvenienceFee += fee;
         }
       }
+      
+      // --- NEW: Reference # Totals ---
+      // We only care about unique refs from Credit Card transactions
+      const reference = (t['Reference #'] || '').trim();
+      const isCC = (t.Method || '').includes('Credit Card');
+
+      if (!receiptRefTotals[receipt]) {
+        receiptRefTotals[receipt] = new Set(); // Use a Set to store unique refs
+      }
+      if (reference && isCC) { // Only add non-empty refs from CC payments
+        receiptRefTotals[receipt].add(reference);
+      }
     });
+    // --- END OF MODIFIED PRE-CALCULATION BLOCK ---
 
     // New validation alerts for payment rules
     transactions.forEach((t, index) => {
@@ -234,11 +266,26 @@ const EODReport = () => {
         const isMonetaryVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
         const isCashErrorVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.cashConvenienceFee) < 0.01;
 
-        // 2. Alert for CC fee > $7, only if not fully voided
+        // --- START OF MODIFIED ALERT LOGIC ---
+        // 2. Alert for CC fee > $7, with new exemption for $14
         if (fee > 7 && !isMonetaryVoided) {
-          alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
-          errorRowIndices.add(index);
+          let isExempt = false;
+          
+          // Check for the $14 exemption
+          if (fee === 14) {
+            const uniqueRefs = receiptRefTotals[receipt] ? receiptRefTotals[receipt].size : 0;
+            if (uniqueRefs > 1) {
+              isExempt = true; // $14 is allowed if there are 2+ unique card refs
+            }
+          }
+
+          // Only push the alert if the transaction is not exempt
+          if (!isExempt) {
+            alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
+            errorRowIndices.add(index);
+          }
         }
+        // --- END OF MODIFIED ALERT LOGIC ---
 
         // 3. Alert for CC fee with Cash payment, only if not fully voided
         if (method.includes('Cash') && !isCashErrorVoided) {
@@ -329,14 +376,16 @@ const EODReport = () => {
     const filteredTrans = trans.filter(t => !receiptsToExclude.has(t.Receipt));
 
     // Initialize the summary object
-    const summary = {
-      nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
-      credit_premium: 0, credit_fee: 0, nb_rw_fee: 0, en_fee: 0,
-      reissue_fee: 0, renewal_fee: 0, pys_fee: 0, tax_prep_fee: 0,
-      registration_fee: 0, convenience_fee: 0, dmv_premium: 0,
-    };
+    const summary = {
+      nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
+      credit_premium: 0, credit_fee: 0, nb_rw_fee: 0, en_fee: 0,
+      reissue_fee: 0, renewal_fee: 0, pys_fee: 0, tax_prep_fee: 0,
+      registration_fee: 0, convenience_fee: 0, dmv_premium: 0,
+    };
 
-    // STEP 2: Calculate the summary from the filtered list of transactions.
+    let netNbRwForMath = 0; // <--- YOU ADD THIS NEW LINE HERE
+
+    // STEP 2: Calculate the summary from the filtered list of transactions.
     for (const t of filteredTrans) {
       const total = parseFloat(t.Total) || 0;
       const premium = parseFloat(t.Premium) || 0;
@@ -345,39 +394,52 @@ const EODReport = () => {
       const company = t.Company || '';
       const method = t.Method || '';
 
-      // *** THIS IS THE KEY CHANGE FOR THE COUNT ***
-      // Only add to the count if the transaction is a NEW/RWR and has a positive total.
-      if ((type.includes('NEW') || type.includes('RWR')) && total > 0) {
-        summary.nb_rw_count += 1;
-      }
-      
-      // All other financial calculations still include negative values to keep the money totals correct.
-      if (company.includes('Registration Fee')) summary.dmv_count += Math.sign(total);
-      if (method.includes('Cash')) {
-        summary.cash_premium += premium;
-        summary.cash_fee += fee;
-      } else if (method.includes('Credit Card')) {
-        summary.credit_premium += premium;
-        summary.credit_fee += fee;
-      }
-      if (company.includes('Broker Fee')) summary.nb_rw_fee += fee;
-      if (company.includes('Endorsement Fee')) summary.en_fee += fee;
-      if (company.includes('Reinstatement Fee')) summary.reissue_fee += fee;
-      if (company.includes('Renewal Fee')) summary.renewal_fee += fee;
-      if (company.includes('Payment Fee')) summary.pys_fee += fee;
-      if (company.includes('Registration Fee')) summary.registration_fee += fee;
-      if (company.includes('Convenience Fee (c')) summary.convenience_fee += fee;
-      if (company.includes('Dmv - Registration S')) summary.dmv_premium += premium;
-      if (company.includes('Tax Prep Fee') && !method.includes('Wire')) summary.tax_prep_fee += fee;
-    }
+      // --- START OF COUNT LOGIC ---
 
-    // ... (the rest of the function remains the same)
-    const totalPremium = summary.cash_premium + summary.credit_premium;
-    const totalFee = summary.cash_fee + summary.credit_fee;
-    const totalCreditPayment = summary.credit_premium + summary.credit_fee;
-    const nbRwCorpFee = summary.nb_rw_count * 20;
-    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
-    const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
+      // 1. This is for DISPLAY. Only count positive policies.
+      if ((type.includes('NEW') || type.includes('RWR')) && total > 0) {
+        summary.nb_rw_count += 1;
+      }
+
+      // 2. This is for MATH. Count both positive and negative.
+      if (type.includes('NEW') || type.includes('RWR')) {
+        if (total > 0) {
+          netNbRwForMath += 1;
+        } else if (total < 0) {
+          netNbRwForMath -= 1; // This catches the -1 corp void
+        }
+      }
+
+      // --- END OF COUNT LOGIC ---
+      
+      // All other financial calculations still include negative values to keep the money totals correct.
+      if (company.includes('Registration Fee')) summary.dmv_count += Math.sign(total);
+      if (method.includes('Cash')) {
+        summary.cash_premium += premium;
+        summary.cash_fee += fee;
+      } else if (method.includes('Credit Card')) {
+        summary.credit_premium += premium;
+        summary.credit_fee += fee;
+      }
+      if (company.includes('Broker Fee')) summary.nb_rw_fee += fee;
+      if (company.includes('Endorsement Fee')) summary.en_fee += fee;
+      if (company.includes('Reinstatement Fee')) summary.reissue_fee += fee;
+      if (company.includes('Renewal Fee')) summary.renewal_fee += fee;
+      if (company.includes('Payment Fee')) summary.pys_fee += fee;
+      if (company.includes('Registration Fee')) summary.registration_fee += fee;
+      if (company.includes('Convenience Fee (cc)')) summary.convenience_fee += fee; // Typo fix is here
+      if (company.includes('Dmv - Registration S')) summary.dmv_premium += premium;
+      if (company.includes('Tax Prep Fee') && !method.includes('Wire')) summary.tax_prep_fee += fee;
+    }
+
+    // ... (the rest of the function remains the same)
+    const totalPremium = summary.cash_premium + summary.credit_premium;
+    const totalFee = summary.cash_fee + summary.credit_fee;
+    const totalCreditPayment = summary.credit_premium + summary.credit_fee;
+    const nbRwCorpFee = netNbRwForMath * 20; // <--- This line is now fixed
+    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
+    const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
+   
 
     summary.trust_deposit =
       (totalPremium + summary.convenience_fee + nbRwCorpFee + feeRoyalty) -

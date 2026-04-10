@@ -1,17 +1,17 @@
+// src/layouts/AdminLayout.jsx
 import React from 'react';
-import { Outlet, Navigate, useNavigate } from 'react-router-dom';
+import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { supabase } from '../supabaseClient';
 import AdminSidebar from '../components/AdminDashboard/AdminSidebar';
 import styles from './AdminLayout.module.css';
 
 const AdminLayout = () => {
-  const navigate = useNavigate();
-  const { user, loading } = useAuth();
+  // ✅ Use signOut from context to keep app state in sync
+  const { user, loading, signOut } = useAuth();
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate('/login', { replace: true });
+    await signOut();
+    // No need to manually navigate; App.jsx will detect !user and redirect to /login
   };
 
   if (loading) {
@@ -33,7 +33,8 @@ const AdminLayout = () => {
     <div className={styles.layoutContainer}>
       <AdminSidebar onLogout={handleLogout} />
       <main className={styles.content}>
-        <Outlet /> {/* Admin pages (OfficeNumbers, ManageUsers, etc.) render here */}
+        {/* Admin pages (OfficeNumbers, ManageUsers, Commission Log) render here */}
+        <Outlet />
       </main>
     </div>
   );

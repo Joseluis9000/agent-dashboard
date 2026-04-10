@@ -1,29 +1,42 @@
 /* =======================
-   Tokens / base
-   ======================= */
+  Tokens / base
+  ======================= */
 :root {
   --ui-bg: #f7f9fb;
   --card-bg: #ffffff;
   --text: #111827;
   --muted: #6b7280;
 
+  /* Borders */
   --border: #e5e7eb;
   --border-strong: #d1d5db;
 
+  /* Brand & states */
   --primary: #0d6efd;
   --primary-600: #0b5ed7;
+  --primary-light-bg: #e0f2fe; /* Agent chat bubbles */
   --success: #198754;
+  --success-light-bg: #f0fdf4; /* Accepted rows/pass status */
+  --success-dark-text: #166534; /* Pass status text */
+  --success-border: #bbf7d0; /* Pass status border */
   --warning: #f59e0b;
-  --danger-bg: #fff5f5;
-  --danger-border: #fecaca;
+  --warning-light-bg: #fffbeb; /* Urgent rows/needs review */
+  --warning-dark-text: #854d0e; /* Needs review text */
+  --warning-border: #fef08a; /* Needs review border */
+  --danger: #dc3545;
+  --danger-light-bg: #fef2f2; /* Fail bg */
+  --danger-dark-text: #991b1b; /* Fail text */
+  --danger-border: #fecaca; /* Fail border */
+  --neutral-light-bg: #f3f4f6; /* UW chat bubbles */
 
+  /* Shadows */
   --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.08);
 }
 
 /* =======================
-   Page / headings
-   ======================= */
+  Page / headings
+  ======================= */
 .container {
   padding: 1.5rem 2rem;
   background: var(--ui-bg);
@@ -32,56 +45,89 @@
 }
 
 .title {
-  margin: 0 0 1.1rem;
+  margin: 0 0 1.5rem; /* Increased bottom margin */
   font-size: 1.9rem;
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 
+.subTitle {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 1.75rem 0 0.75rem; /* Adjusted margins */
+  color: #374151; /* (Tweaked from #374155) */
+}
+
 /* =======================
-   Card
-   ======================= */
+  Card
+  ======================= */
 .card {
   background: var(--card-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #e5e7eb);
   border-radius: 14px;
-  padding: 1rem;
-  margin-bottom: 1.25rem;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
   box-shadow: var(--shadow-sm);
 }
 
 /* =======================
-   Form grid
-   ======================= */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: 10px;
+  Form grid
+  ======================= */
+.card > form { /* Target form inside card if needed */
+  display: block; /* Ensure no weird flex issues */
 }
 
-.grid input,
-.grid select,
+/* Grid inside card */
+.card .grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem; /* Space below grid inputs */
+  align-items: center; /* Vertically align items */
+}
+
+/* General input/select styles */
+input[type='text'],
+input[type='number'],
+input[type='date'],
+input[type='search'],
+select,
 textarea {
   width: 100%;
-  padding: 0.65rem 0.7rem;
-  border: 1px solid var(--border-strong);
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-strong, #d1d5db);
   border-radius: 10px;
   background: #fff;
   outline: none;
   font-size: 0.95rem;
   transition: border-color 120ms ease, box-shadow 120ms ease;
+  box-sizing: border-box;
 }
 
-.grid input::placeholder,
+input::placeholder,
 textarea::placeholder {
   color: var(--muted);
 }
 
-.grid input:focus,
-.grid select:focus,
+input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+}
+
+/* Inline select for filters */
+.inlineSelect {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, #d1d5db);
+  background-color: #fff;
+  font-size: 0.9rem;
+}
+.inlineSelect:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  outline: none;
 }
 
 /* Office selector + "remember" */
@@ -90,7 +136,6 @@ textarea:focus {
   align-items: center;
   gap: 10px;
 }
-
 .rememberOffice {
   display: inline-flex;
   align-items: center;
@@ -98,88 +143,128 @@ textarea:focus {
   font-size: 0.9rem;
   color: var(--muted);
   user-select: none;
+  white-space: nowrap;
 }
 
-/* =======================
-   Message-to-Underwriter input
-   ======================= */
-input[type='text'][placeholder*='Underwriter'] {
+/* Message input */
+.card > input[placeholder*='Message to Underwriter'] {
+  display: block;
   width: 100%;
-  margin-top: 0.8rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  font-size: 0.95rem;
-  background: #fff;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-
-input[type='text'][placeholder*='Underwriter']:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  margin-top: 1rem;
+  box-sizing: border-box;
 }
 
 /* =======================
-   Buttons
-   ======================= */
-.submit {
-  margin-top: 0.9rem;
+  Buttons
+  ======================= */
+button {
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease, border-color 120ms ease;
+}
+button:active {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Submit button */
+.card > .submit {
+  display: block;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
   background: var(--primary);
   color: #fff;
   border: none;
   border-radius: 10px;
-  padding: 0.65rem 1rem;
-  font-weight: 700;
-  cursor: pointer;
+  padding: 0.75rem 1.5rem;
+  font-weight: 600;
   box-shadow: var(--shadow-sm);
-  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
+  width: auto;
 }
-
 .submit:hover {
   background: var(--primary-600);
 }
-.submit:active {
-  transform: translateY(1px);
-}
 
-/* Week navigation */
-.refreshBtn {
+/* Send button (in modal/chat) */
+.sendBtn {
   background: var(--primary);
   color: #fff;
   border: none;
   border-radius: 10px;
-  padding: 0.45rem 0.7rem;
-  font-weight: 700;
-  cursor: pointer;
+  padding: 0.65rem 1.1rem;
+  font-weight: 600;
   box-shadow: var(--shadow-sm);
-  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
 }
-.refreshBtn:hover {
+.sendBtn:hover {
   background: var(--primary-600);
 }
-.refreshBtn:active {
-  transform: translateY(1px);
+
+/* Secondary button (View Details, Show History) */
+.secondaryBtn {
+  background: #fff;
+  color: #374155;
+  border: 1px solid var(--border-strong, #d1d5db);
+  border-radius: 10px;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+.secondaryBtn:hover {
+  background: #f8fafc;
+  border-color: #9ca3af;
+}
+
+/* Day navigation / Refresh / Icon buttons */
+.dayBtn, .refreshBtn, .iconBtn {
+  background: #fff;
+  color: var(--primary);
+  border: 1px solid var(--border-strong, #d1d5db);
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+.dayBtn:hover, .refreshBtn:hover, .iconBtn:hover {
+  background: #f8fafc;
+  border-color: #9ca3af;
+}
+.iconBtn {
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.4rem 0.6rem;
 }
 
 /* =======================
-   Messages / alerts
-   ======================= */
+  Messages / alerts
+  ======================= */
 .message {
-  margin-top: 0.6rem;
-  color: var(--success);
-  font-weight: 700;
+  margin-top: 0.8rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  background-color: var(--success-light-bg);
+  color: var(--success-dark-text);
+  border: 1px solid var(--success-border);
+}
+.message.error {
+  background-color: var(--danger-light-bg);
+  color: var(--danger-dark-text);
+  border: 1px solid var(--danger-border);
 }
 
 /* =======================
-   Tables
-   ======================= */
+  Tables
+  ======================= */
 .tableWrap {
   overflow: auto;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #e5e7eb);
   border-radius: 12px;
   box-shadow: var(--shadow-sm);
-  margin-top: 0.5rem;
+  margin-top: 0.75rem;
 }
 
 table {
@@ -187,41 +272,62 @@ table {
   border-collapse: collapse;
   min-width: 980px;
   font-variant-numeric: tabular-nums;
+  background: var(--card-bg);
 }
 
 thead th {
   position: sticky;
   top: 0;
   background: #f8fafc;
-  color: #334155;
-  font-weight: 700;
-  border-bottom: 1px solid var(--border);
+  color: #4b5563;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-strong, #d1d5db);
   z-index: 1;
+  white-space: nowrap;
+  padding: 0.8rem 1rem;
+  text-align: left;
 }
 
 th,
 td {
-  padding: 0.7rem 0.75rem;
-  border-bottom: 1px solid #eef2f7;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
   text-align: left;
-  vertical-align: top;
-  font-size: 0.95rem;
+  vertical-align: middle;
+  font-size: 0.9rem;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
 }
 
 tbody tr:hover {
-  background: #fbfdff;
+  background: #f9fafb;
 }
 
-/* Highlight pending rows */
-tr.pendingRow {
-  background: var(--danger-bg);
-  border-left: 4px solid var(--danger-border);
+/* Row highlighting based on inline style added by React */
+tbody tr[style*="rgb(254, 242, 242)"] { /* Pending: #fef2f2 */
+  border-left: 3px solid var(--danger);
+}
+tbody tr[style*="rgb(240, 253, 244)"] { /* Accepted: #f0fdf4 */
+  border-left: 3px solid var(--success);
+}
+tbody tr[style*="rgb(255, 251, 235)"] { /* Urgent: #fffbeb */
+  border-left: 3px solid var(--warning);
 }
 
 /* Note/long text cells */
 .notesCell {
   max-width: 420px;
   white-space: pre-wrap;
+  vertical-align: top;
+}
+
+/* Align Details button to the right */
+td:last-child {
+  text-align: right;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 /* Collapsible Accepted Section */
@@ -237,31 +343,29 @@ details[open] summary {
 }
 
 /* =======================
-   Chat composer
-   ======================= */
+  Chat composer & bubbles
+  ======================= */
 .composerRow {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   position: relative;
-  margin-top: 8px;
 }
-
 .composerRow textarea {
   flex: 1;
-  min-height: 90px;
+  min-height: 70px;
+  max-height: 150px;
+  resize: vertical;
 }
-
 .composerActions {
   display: flex;
   gap: 8px;
   align-items: center;
-  position: relative; /* positioning context for emoji panel */
+  position: relative;
 }
-
 .emojiBtn {
   background: #fff;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #e5e7eb);
   border-radius: 10px;
   padding: 0.45rem 0.55rem;
   cursor: pointer;
@@ -270,18 +374,16 @@ details[open] summary {
 .emojiBtn:hover {
   background: #f8fafc;
 }
-
 .emojiIcon {
   font-size: 18px;
   line-height: 1;
 }
-
 .emojiPanel {
   position: absolute;
   bottom: 52px;
   right: 0;
   background: #fff;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #e5e7eb);
   border-radius: 12px;
   box-shadow: var(--shadow-md);
   padding: 8px;
@@ -290,7 +392,6 @@ details[open] summary {
   gap: 6px;
   z-index: 50;
 }
-
 .emojiPick {
   background: transparent;
   border: none;
@@ -298,25 +399,10 @@ details[open] summary {
   line-height: 1;
   cursor: pointer;
 }
-
-.sendBtn {
-  background: var(--primary);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  padding: 0.55rem 0.9rem;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-}
-.sendBtn:hover {
-  background: var(--primary-600);
-}
-
 .closeBtn {
   background: #fff;
   color: #374151;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #e5e7eb);
   border-radius: 10px;
   padding: 0.55rem 0.9rem;
   font-weight: 700;
@@ -326,19 +412,332 @@ details[open] summary {
 .closeBtn:hover {
   background: #f8fafc;
 }
+.chatBubble {
+  max-width: 85%;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+.chatBubbleMine {
+  align-self: flex-end;
+  background: var(--primary-light-bg);
+}
+.chatBubbleTheirs {
+  align-self: flex-start;
+  background: var(--neutral-light-bg);
+}
+.chatMeta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.chatText {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* =======================
-   Responsive
-   ======================= */
+  Modal Styles
+  ======================= */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 40;
+}
+
+.modalContent {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--card-bg);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  width: 90vw;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  border: 1px solid var(--border, #e5e7eb);
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+}
+
+.modalHeader h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.modalCloseBtn {
+  background: none;
+  border: none;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0.25rem;
+}
+.modalCloseBtn:hover {
+  color: var(--text);
+}
+
+.modalTabs {
+  display: flex;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  padding: 0 1.5rem;
+  flex-shrink: 0;
+}
+
+.tabButton {
+  padding: 0.75rem 1rem;
+  border: none;
+  background: none;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tabButton:hover {
+  color: var(--text);
+}
+
+.tabActive {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.modalBody {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.modalSection {
+  margin-bottom: 1.5rem;
+}
+.modalSection:last-child {
+  margin-bottom: 0;
+}
+
+.modalSubTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  color: #374151;
+}
+
+/* =======================
+  Responsive
+  ======================= */
+@media (max-width: 1200px) {
+  .card .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .card .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .container { padding: 1rem; }
+  .card .grid { grid-template-columns: 1fr; }
+  .title { font-size: 1.6rem; }
+  .subTitle { font-size: 1.1rem; }
+  .modalContent { width: 95vw; }
+
+  /* Stack week selector items */
+  .card > div[style*="border-bottom"] {
+      flex-direction: column;
+      align-items: flex-start;
+  }
+  .card > div[style*="border-bottom"] > button[title*="current week"],
+  .card > div[style*="border-bottom"] > .refreshBtn {
+    margin-left: 0;
+    margin-top: 0.5rem;
+  }
+}
+
+/* ================
+   Base / tokens (Add these if they don't exist)
+   ================ */
+:root {
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --text: #111827;
+  --muted: #6b7280;
+  --primary: #0d6efd;
+  --primary-600: #0b5ed7;
+  --card-bg: #ffffff;
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+/* ================
+   Card Style (Add or update)
+   ================ */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ================
+   Form Grid & Inputs (Add or update)
+   ================ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)); /* 4 columns */
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+
+/* --- Style ALL inputs/selects inside the grid --- */
+.grid input,
+.grid select {
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-strong); /* The border! */
+  border-radius: 10px;
+  background: #fff;                      /* The background! */
+  outline: none;
+  font-size: 0.95rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  box-sizing: border-box;
+}
+
+/* --- Style inputs/textarea OUTSIDE the grid (like the message) --- */
+form > input[type='text'], /* Target direct children */
+form > textarea {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
+  box-sizing: border-box;
+  /* Apply common styles */
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #fff;
+  outline: none;
+  font-size: 0.95rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* Placeholder text color */
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+/* Focus styles */
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+}
+
+/* Office Group styling */
+.officeGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rememberOffice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* ================
+   Buttons (Add or update)
+   ================ */
+.submit {
+  display: inline-block;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 0.75rem 1.75rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  width: auto;
+  cursor: pointer;
+  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
+}
+.submit:hover {
+  background: var(--primary-600);
+}
+.submit:active {
+  transform: translateY(1px);
+}
+
+/* --- Add other button styles if needed (e.g., .secondaryBtn, .refreshBtn) --- */
+/* Example: */
+.secondaryBtn {
+  background: #fff;
+  color: #374155;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 40ms ease, box-shadow 150ms ease, background 120ms ease;
+}
+.secondaryBtn:hover {
+  background: #f8fafc;
+  border-color: #9ca3af;
+}
+.secondaryBtn:active {
+  transform: translateY(1px);
+}
+
+/* ================
+   Responsive (Add or update)
+   ================ */
 @media (max-width: 1200px) {
   .grid {
-    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
   .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .grid {
     grid-template-columns: 1fr;
   }
 }
 
+/* Add any other specific styles from the old UnderwritingSubmit.module.css
+   that you still need, like table styles if they were defined there. */

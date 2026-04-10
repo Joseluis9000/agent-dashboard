@@ -267,3 +267,22 @@
 .deductionList li {
   margin-bottom: 5px;
 }
+
+.sidebarHeader {
+  text-align: center;
+  margin: 12px 0 20px 0;
+}
+
+.dashboardTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.userName {
+  font-size: 16px;
+  font-weight: 500;
+  margin-top: 4px;
+  color: #ffeb3b; /* Fiesta yellow accent */
+  word-break: break-word;
+}
