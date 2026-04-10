@@ -1,0 +1,2 @@
+[dotenv@17.2.3] injecting env (7) from .env.server -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+Email notification server listening on http://localhost:4000
