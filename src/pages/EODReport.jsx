@@ -15,6 +15,109 @@ const FEE_TYPES = [
   'Payment Fee', 'Tax Prep Fee', 'Registration Fee'
 ];
 
+const NB_RW_ROYALTY_EFFECTIVE_DATES = {
+  CA010: '2026-05-01',
+  CA011: '2026-05-01',
+  CA012: '2026-05-01',
+  CA022: '2026-05-01',
+  CA031: '2026-05-01',
+  CA103: '2026-05-01',
+  CA104: '2026-05-01',
+  CA114: '2026-05-01',
+  CA117: '2026-05-01',
+  CA118: '2026-05-01',
+  CA119: '2026-05-01',
+  CA131: '2026-05-01',
+  CA132: '2026-05-01',
+  CA133: '2026-05-01',
+  CA149: '2026-05-01',
+  CA150: '2026-05-01',
+  CA166: '2026-05-01',
+  CA183: '2026-05-01',
+  CA216: '2026-05-01',
+  CA229: '2026-05-01',
+  CA230: '2026-05-01',
+  CA231: '2026-05-01',
+  CA238: '2026-05-01',
+  CA239: '2026-05-01',
+  CA240: '2026-05-01',
+  CA243: '2026-05-01',
+  CA248: '2026-05-01',
+  CA249: '2026-05-01',
+  CA250: '2026-05-01',
+  CA269: '2026-05-01',
+  CA270: '2026-05-01',
+  CA271: '2026-05-01',
+  CA272: '2026-05-01',
+  CA273: '2026-05-01',
+  CA274: '2026-05-01',
+  CA276: '2026-05-01',
+  CA045: '2026-07-07',
+  CA046: '2026-07-07',
+  CA016: '2026-08-17',
+  CA047: '2026-09-28',
+  CA048: '2026-09-28',
+  CA049: '2026-09-28',
+  CA172: '2027-06-28',
+  CA030: '2027-07-07',
+  CA025: '2027-07-18',
+  CA065: '2027-07-18',
+  CA236: '2027-09-19',
+  CA069: '2027-10-15',
+  CA074: '2027-12-20',
+  CA075: '2027-12-20',
+  CA076: '2027-12-20',
+  CA095: '2028-07-31',
+};
+
+const getOfficeCode = (office = '') => {
+  const match = String(office).match(/CA\d{3}/i);
+  return match ? match[0].toUpperCase() : '';
+};
+
+const normalizeDateOnly = (value = '') => {
+  const rawDate = String(value).trim().split(' ')[0];
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    return rawDate;
+  }
+
+  const slashMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (slashMatch) {
+    const [, month, day, yearValue] = slashMatch;
+    const year = yearValue.length === 2 ? `20${yearValue}` : yearValue;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  return '';
+};
+
+const isNbRwRoyaltyActive = (office = '', reportDate = '') => {
+  const officeCode = getOfficeCode(office);
+  const normalizedReportDate = normalizeDateOnly(reportDate);
+
+  // If the office is not on the transition list, it automatically uses the new 20% NB/RW royalty.
+  if (!NB_RW_ROYALTY_EFFECTIVE_DATES[officeCode]) {
+    return true;
+  }
+
+  // If the date cannot be read, keep the old $20 policy for listed transition offices.
+  // This prevents accidentally overcharging a listed office before the effective date.
+  if (!normalizedReportDate) {
+    return false;
+  }
+
+  return normalizedReportDate >= NB_RW_ROYALTY_EFFECTIVE_DATES[officeCode];
+};
+
 const findFeeType = (companyName = '') =>
   FEE_TYPES.find(fee => companyName.includes(fee)) || '';
 
@@ -436,8 +539,12 @@ const EODReport = () => {
     const totalPremium = summary.cash_premium + summary.credit_premium;
     const totalFee = summary.cash_fee + summary.credit_fee;
     const totalCreditPayment = summary.credit_premium + summary.credit_fee;
-    const nbRwCorpFee = netNbRwForMath * 20; // <--- This line is now fixed
-    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
+    const reportDate = normalizeDateOnly(filteredTrans[0]?.['Date / Time'] || trans[0]?.['Date / Time'] || '');
+    const currentOffice = filteredTrans[0]?.Office || trans[0]?.Office || '';
+    const nbRwCorpFee = isNbRwRoyaltyActive(currentOffice, reportDate)
+      ? summary.nb_rw_fee * 0.20
+      : netNbRwForMath * 20;
+    const feeRoyalty = (summary.pys_fee + summary.reissue_fee + summary.renewal_fee + summary.en_fee) * 0.20;
     const totalReferralsPaid = referralList.reduce((sum, ref) => sum + (parseFloat(ref.amount) || 0), 0);
    
 
