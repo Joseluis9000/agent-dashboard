@@ -2,12 +2,223 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../AuthContext";
 import {
-  calculateCommissionStats,
   formatMoney,
   formatDateTime,
   getStatusBadgeClass,
   normStatus
 } from "../../lib/commissionEngine";
+
+/**
+ * Admin-local commission engine.
+ * Mirrors the agent view:
+ * - prep_fee_difference / unfunded / refunded reduce only when negative
+ * - pre_ack_fee and ar_violation reduce whether stored positive or negative
+ * - referrals reduce commissionable revenue
+ * - shadow credits are included as extra rows and use the original tax status
+ */
+const ADMIN_COMMISSION_TIERS = [
+  { min: 0, max: 49, label: "Tier A (0-49)", corpRate: 0.3, baseRate: 0.075, highRate: 0.1 },
+  { min: 50, max: 99, label: "Tier B (50-99)", corpRate: 0.3, baseRate: 0.075, highRate: 0.1 },
+  { min: 100, max: 199, label: "Tier C (100-199)", corpRate: 0.25, baseRate: 0.1, highRate: 0.125 },
+  { min: 200, max: 349, label: "Tier D (200-349)", corpRate: 0.2, baseRate: 0.125, highRate: 0.15 },
+  { min: 350, max: 9999, label: "Tier E (350+)", corpRate: 0.2, baseRate: 0.2, highRate: 0.2 },
+];
+
+const ADMIN_BLOCKED_STATUSES = new Set([
+  "NO STATUS FOUND",
+  "REJECTED",
+  "COMPLETE",
+  "REVIEW",
+  "IN PROGRESS",
+]);
+
+function adminMoneyNumber(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = Number(String(v).replace(/[$,]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function adminNegativeDeductionOnly(v) {
+  const n = adminMoneyNumber(v);
+  return n < 0 ? Math.abs(n) : 0;
+}
+
+function adminDeductionAmount(v) {
+  const n = adminMoneyNumber(v);
+  return n !== 0 ? Math.abs(n) : 0;
+}
+
+function adminReceiptAdjustments(r) {
+  return (
+    adminNegativeDeductionOnly(r.prep_fee_difference) +
+    adminNegativeDeductionOnly(r.unfunded) +
+    adminNegativeDeductionOnly(r.refunded)
+  );
+}
+
+function adminPreAckDeduction(r) {
+  return adminDeductionAmount(r.pre_ack_fee);
+}
+
+function adminArViolationDeduction(r) {
+  return adminDeductionAmount(r.ar_violation);
+}
+
+function adminReferralDeduction(r) {
+  return adminDeductionAmount(r.referral_paid_out);
+}
+
+function adminCommissionableFee(r) {
+  const rawFee = adminMoneyNumber(r.prep_fee ?? r.charged);
+  return Math.max(
+    0,
+    rawFee -
+      adminReceiptAdjustments(r) -
+      adminPreAckDeduction(r) -
+      adminArViolationDeduction(r) -
+      adminReferralDeduction(r)
+  );
+}
+
+function adminCountsTowardCommission(r) {
+  return !ADMIN_BLOCKED_STATUSES.has(normStatus(r.status));
+}
+
+function calculateCommissionStats(rows = []) {
+  const eligible = [];
+  let blockedCount = 0;
+  let blockedRevenue = 0;
+  let grossPrepFees = 0;
+  let totalRevenue = 0;
+  let totalReceiptAdjustments = 0;
+  let totalPrepFeeDifferenceAdjustments = 0;
+  let totalUnfundedAdjustments = 0;
+  let totalRefundedAdjustments = 0;
+  let totalPreAckFees = 0;
+  let totalArViolationFees = 0;
+  let totalReferralFees = 0;
+  let shadowCreditCount = 0;
+  let shadowCreditRevenue = 0;
+
+  for (const r of rows || []) {
+    const rawFee = adminMoneyNumber(r.prep_fee ?? r.charged);
+    const netFee = adminCommissionableFee(r);
+
+    if (adminCountsTowardCommission(r)) {
+      eligible.push(r);
+      const prepFeeDifferenceAdjustment = adminNegativeDeductionOnly(r.prep_fee_difference);
+      const unfundedAdjustment = adminNegativeDeductionOnly(r.unfunded);
+      const refundedAdjustment = adminNegativeDeductionOnly(r.refunded);
+
+      grossPrepFees += rawFee;
+      totalRevenue += netFee;
+      totalReceiptAdjustments += adminReceiptAdjustments(r);
+      totalPrepFeeDifferenceAdjustments += prepFeeDifferenceAdjustment;
+      totalUnfundedAdjustments += unfundedAdjustment;
+      totalRefundedAdjustments += refundedAdjustment;
+      totalPreAckFees += adminPreAckDeduction(r);
+      totalArViolationFees += adminArViolationDeduction(r);
+      totalReferralFees += adminReferralDeduction(r);
+
+      if (r.is_shadow_credit) {
+        shadowCreditCount += 1;
+        shadowCreditRevenue += netFee;
+      }
+    } else {
+      blockedCount += 1;
+      blockedRevenue += netFee;
+    }
+  }
+
+  const taxesFiled = eligible.length;
+  const avgFee = taxesFiled > 0 ? totalRevenue / taxesFiled : 0;
+
+  const activeTier =
+    ADMIN_COMMISSION_TIERS.find((t) => taxesFiled >= t.min && taxesFiled <= t.max) ||
+    ADMIN_COMMISSION_TIERS[0];
+
+  const corporateFee = totalRevenue * activeTier.corpRate;
+  const commissionBase = totalRevenue - corporateFee;
+  const commissionRate = avgFee >= 250 ? activeTier.highRate : activeTier.baseRate;
+  const isCommissionEligible = taxesFiled >= 50;
+  const earnedCommission = isCommissionEligible ? commissionBase * commissionRate : 0;
+  const volumeBonus = isCommissionEligible && taxesFiled >= 300 ? 1000 : 0;
+  const totalCommission = isCommissionEligible ? earnedCommission + volumeBonus : 0;
+
+  return {
+    taxesFiled,
+    blockedCount,
+    blockedRevenue,
+    grossPrepFees,
+    totalRevenue,
+    avgFee,
+    totalReceiptAdjustments,
+    totalPrepFeeDifferenceAdjustments,
+    totalUnfundedAdjustments,
+    totalRefundedAdjustments,
+    totalPreAckFees,
+    totalArViolationFees,
+    totalReferralFees,
+    shadowCreditCount,
+    shadowCreditRevenue,
+    tierLabel: activeTier.label,
+    isCommissionEligible,
+    corpFeeRate: activeTier.corpRate,
+    corporateFee,
+    commissionBase,
+    commissionRate,
+    earnedCommission,
+    volumeBonus,
+    totalCommission,
+  };
+}
+
+function calculateAgentStyleBreakdown(rows = []) {
+  const stats = calculateCommissionStats(rows);
+  return {
+    ...stats,
+    netRevenueAfterDeductions: stats.totalRevenue,
+    grossRevenueBeforeDeductions: stats.grossPrepFees,
+    totalDeductions:
+      stats.totalReceiptAdjustments +
+      stats.totalPreAckFees +
+      stats.totalArViolationFees +
+      stats.totalReferralFees,
+  };
+}
+
+function calculateAdminPortfolioStats(rows = []) {
+  const base = calculateAgentStyleBreakdown(rows);
+
+  const groups = {};
+  (rows || []).forEach((row) => {
+    const agent = (row.agent_email || "unknown").toLowerCase();
+    if (!groups[agent]) groups[agent] = [];
+    groups[agent].push(row);
+  });
+
+  const agentStats = Object.entries(groups).map(([agentEmail, agentRows]) => {
+    const stats = calculateCommissionStats(agentRows);
+    return {
+      agentEmail,
+      ...stats,
+    };
+  });
+
+  const totalCommission = agentStats.reduce((sum, s) => sum + (Number(s.totalCommission) || 0), 0);
+  const eligibleCommissionAgents = agentStats.filter((s) => s.taxesFiled >= 50).length;
+  const notEligibleCommissionAgents = agentStats.filter((s) => s.taxesFiled < 50).length;
+
+  return {
+    ...base,
+    totalCommission,
+    eligibleCommissionAgents,
+    notEligibleCommissionAgents,
+    agentStats,
+  };
+}
+
+
 
 // --- ICONS & ASSETS ---
 const IconFilter = () => <span className="text-gray-400 text-lg">🔍</span>;
@@ -19,11 +230,11 @@ const IconClock = () => <span className="text-gray-400">⏱️</span>;
 // --- CONFIGURATION ---
 const CURRENT_SEASON_YEAR = 2026;
 const SEASON_START = new Date(`${CURRENT_SEASON_YEAR}-01-01`);
-const SEASON_END = new Date(`${CURRENT_SEASON_YEAR}-04-15`);
+const SEASON_END = new Date(`${CURRENT_SEASON_YEAR}-12-31`);
 
 // Season ISO (used for DB filtering)
 const SEASON_START_ISO = `${CURRENT_SEASON_YEAR}-01-01T00:00:00`;
-const SEASON_END_ISO = `${CURRENT_SEASON_YEAR}-04-15T23:59:59`;
+const SEASON_END_ISO = `${CURRENT_SEASON_YEAR}-12-31T23:59:59`;
 
 const PRIOR_YEAR = 2025;
 const PRIOR_SEASON_START_ISO = `${PRIOR_YEAR}-01-01T00:00:00`;
@@ -83,11 +294,15 @@ const LOG_SELECT = [
   "preparer",
   "record_number",
   "receipt",
-  // ✅ force Admin to use receipt fields as the primary ones
+  "policy_number",
+  "prep_fee_difference",
+  "unfunded",
+  "refunded",
+  "pre_ack_fee",
+  "ar_violation",
   "status:receipt_maxtax_status",
   "tax_year:receipt_maxtax_year",
   "prep_fee:charged",
-  // keep raw fields too (optional auditing)
   "receipt_maxtax_status",
   "receipt_maxtax_year",
   "charged"
@@ -172,8 +387,8 @@ function calculateProfessionalKPIs({
   curScope.forEach(r => {
     curAttempts++;
     const s = normStatus(r.status);
-    const fee = Number(r.prep_fee) || Number(r.charged) || 0;
-    if (!["REJECTED", "NO STATUS FOUND", "VOID", "DELETED"].includes(s)) {
+    const fee = adminCommissionableFee(r);
+    if (!["REJECTED", "NO STATUS FOUND", "VOID", "DELETED", "IN PROGRESS", "COMPLETE", "REVIEW"].includes(s)) {
       curAccepted++;
       curRevenue += fee;
     }
@@ -429,7 +644,72 @@ export default function AdminCommissionLog() {
 
         console.log("[ADMIN] baseRows fetched (season):", logData.length);
 
-        setBaseRows(logData || []);
+        let shadowCreditRows = [];
+        try {
+          const shadowCredits = await fetchAllRowsPaged({
+            supabase,
+            table: "tax_shadow_credits",
+            pageSize: 1000,
+            buildQuery: (q) =>
+              q
+                .select("shadow_agent_email, original_sync_key, created_at")
+                .order("created_at", { ascending: false })
+          });
+
+          const shadowKeys = [
+            ...new Set((shadowCredits || []).map((s) => s.original_sync_key).filter(Boolean))
+          ];
+
+          if (shadowKeys.length) {
+            const originalRows = await fetchAllRowsPaged({
+              supabase,
+              table: "agent_tax_commission_log",
+              pageSize: 1000,
+              buildQuery: (q) =>
+                q
+                  .select(LOG_SELECT)
+                  .in("sync_key", shadowKeys)
+            });
+
+            const originalMap = Object.fromEntries(
+              (originalRows || []).map((r) => [r.sync_key, r])
+            );
+
+            shadowCreditRows = (shadowCredits || [])
+              .map((credit) => {
+                const original = originalMap[credit.original_sync_key];
+                if (!original) return null;
+
+                return {
+                  ...original,
+                  agent_email: credit.shadow_agent_email,
+                  agent_name: `${credit.shadow_agent_email} (Shadow Credit)`,
+                  original_agent_email: original.agent_email,
+                  original_agent_name: original.agent_name,
+                  is_shadow_credit: true,
+                  shadow_credit_created_at: credit.created_at,
+                  display_key: `shadow-${credit.shadow_agent_email}-${credit.original_sync_key}`,
+                };
+              })
+              .filter(Boolean);
+          }
+        } catch (e) {
+          console.error("Shadow credits load error", e);
+        }
+
+        const combinedLogData = [
+          ...(logData || []).map((r) => ({
+            ...r,
+            is_shadow_credit: false,
+            display_key: `own-${r.sync_key}`,
+          })),
+          ...shadowCreditRows,
+        ];
+
+        console.log("[ADMIN] shadow credit rows:", shadowCreditRows.length);
+        console.log("[ADMIN] combined rows:", combinedLogData.length);
+
+        setBaseRows(combinedLogData || []);
         setFixRequests(fixData || []);
         setPacingCurve(curveData || []);
         setLatestLogDateTime(latestRow?.date_time || null);
@@ -479,8 +759,9 @@ export default function AdminCommissionLog() {
       if (!finalRow.tax_year) finalRow.tax_year = "";
       if (finalRow.prep_fee === undefined || finalRow.prep_fee === null) finalRow.prep_fee = 0;
 
-      if (ann.pre_ack_advance !== undefined) finalRow.pre_ack_advance = ann.pre_ack_advance;
       if (ann.referral_paid_out !== undefined) finalRow.referral_paid_out = ann.referral_paid_out;
+      if (ann.notes !== undefined) finalRow.notes = ann.notes;
+      if (ann.ar_violation_disputed !== undefined) finalRow.ar_violation_disputed = ann.ar_violation_disputed;
 
       if (fix) {
         finalRow.is_fixed_by_admin = true;
@@ -568,26 +849,39 @@ export default function AdminCommissionLog() {
         countTotal: totalCount,
         countEligible: stats0.taxesFiled,
         countExcluded: stats0.blockedCount,
-        revenueTotal: stats0.totalRevenue + stats0.blockedRevenue,
+        revenueTotal: stats0.grossPrepFees + stats0.blockedRevenue,
         revenueEligible: stats0.totalRevenue,
+        shadowCreditCount: stats0.shadowCreditCount || 0,
         commission: stats0.totalCommission,
+        isCommissionEligible: stats0.isCommissionEligible,
         tier: stats0.tierLabel,
-        rate: stats0.commissionRate
+        rate: stats0.commissionRate,
+        avgFee: stats0.avgFee
       };
     });
 
     return leaderboard.sort((a, b) => b.commission - a.commission);
   }, [mergedData, filterOffice]);
 
-  // 5. GLOBAL STATS
+  // 5. GLOBAL / DETAIL STATS
   const stats = useMemo(() => {
-    const calculated = calculateCommissionStats(filteredRows);
+    const calculated = calculateAdminPortfolioStats(filteredRows);
     return {
       ...calculated,
-      grossRevenue: calculated.totalRevenue + calculated.blockedRevenue,
+      grossRevenue: calculated.grossPrepFees + calculated.blockedRevenue,
       grossCount: calculated.taxesFiled + calculated.blockedCount
     };
   }, [filteredRows]);
+
+  const selectedAgentStats = useMemo(() => {
+    if (!selectedAgent) return null;
+    return calculateAgentStyleBreakdown(filteredRows);
+  }, [selectedAgent, filteredRows]);
+
+  const allLoadedRowsCount = mergedData.length;
+  const isOfficeOnlyView = !selectedAgent && filterOffice !== "all";
+  const isIndividualView = !!selectedAgent;
+  const shouldShowCommissionPayout = !isOfficeOnlyView;
 
   // 6. OFFICE KPI LOGIC
   const officeKpiData = useMemo(() => {
@@ -772,7 +1066,7 @@ export default function AdminCommissionLog() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 animate-in fade-in">
             <div>
               <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Commission Admin</h1>
-              <p className="text-gray-500 mt-1 font-medium">Tax Season Manager • 2026</p>
+              <p className="text-gray-500 mt-1 font-medium">Tax Season Manager • 2026 Full Year</p>
             </div>
             <div className="bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm inline-flex">
               <button
@@ -807,8 +1101,18 @@ export default function AdminCommissionLog() {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-gray-200 pb-6">
               <div>
                 <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">{currentAgentName}</h1>
-                <div className="flex items-center gap-3 mt-2">
+                <div className="flex flex-wrap items-center gap-3 mt-2">
                   <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide border border-blue-200">{selectedAgent}</span>
+                  {selectedAgentStats && (
+                    <>
+                      <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-bold border">
+                        Avg Net Fee: {formatMoney(selectedAgentStats.avgFee)}
+                      </span>
+                      <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-bold border">
+                        {selectedAgentStats.tierLabel}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -844,11 +1148,56 @@ export default function AdminCommissionLog() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <StatCard label="Total Rev" value={formatMoney(stats.grossRevenue)} sub="Gross Generated" color="bg-white border-gray-200" />
-            <StatCard label="Total Taxes" value={stats.grossCount} sub={`${stats.taxesFiled} Eligible`} color="bg-white border-gray-200" />
-            <StatCard label="Commission Payout" value={formatMoney(stats.totalCommission)} color="bg-emerald-50/50 border-emerald-100 text-emerald-900" bold />
-            <StatCard label="Blocked / Excluded" value={stats.blockedCount} sub={`Lost: ${formatMoney(stats.blockedRevenue)}`} color="bg-amber-50/50 border-amber-100 text-amber-900" />
+            <StatCard
+              label="Gross Prep Fees"
+              value={formatMoney(stats.grossRevenueBeforeDeductions)}
+              sub={`${allLoadedRowsCount} rows loaded`}
+              color="bg-white border-gray-200"
+            />
+            <StatCard
+              label="Net Revenue"
+              value={formatMoney(stats.netRevenueAfterDeductions)}
+              sub={`${stats.taxesFiled} Eligible / ${stats.grossCount} Total`}
+              color="bg-white border-gray-200"
+            />
+            {shouldShowCommissionPayout ? (
+              <StatCard
+                label="Commission Payout"
+                value={formatMoney(stats.totalCommission)}
+                sub={`${stats.eligibleCommissionAgents || 0} eligible agents • ${stats.notEligibleCommissionAgents || 0} not eligible • Avg ${formatMoney(stats.avgFee)}`}
+                color="bg-emerald-50/50 border-emerald-100 text-emerald-900"
+                bold
+              />
+            ) : (
+              <StatCard
+                label="Average Net Fee"
+                value={formatMoney(stats.avgFee)}
+                sub="Office view hides commission payout"
+                color="bg-blue-50/50 border-blue-100 text-blue-900"
+                bold
+              />
+            )}
+            <StatCard
+              label="Blocked / Excluded"
+              value={stats.blockedCount}
+              sub={`Lost: ${formatMoney(stats.blockedRevenue)}`}
+              color="bg-amber-50/50 border-amber-100 text-amber-900"
+            />
           </div>
+
+          <CommissionBreakdownPanel
+            stats={stats}
+            title={
+              selectedAgent
+                ? "Agent Commission Breakdown"
+                : isOfficeOnlyView
+                  ? "Office Revenue Breakdown"
+                  : "All Visible Taxes Commission Breakdown"
+            }
+            showCommission={shouldShowCommissionPayout}
+            isOfficeOnlyView={isOfficeOnlyView}
+            isIndividualView={isIndividualView}
+          />
 
           {!selectedAgent && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -865,6 +1214,7 @@ export default function AdminCommissionLog() {
                       <th className="px-6 py-4 text-right text-emerald-600">Eligible</th>
                       <th className="px-6 py-4 text-right text-red-500">Excluded</th>
                       <th className="px-6 py-4 text-right">Total Rev</th>
+                      <th className="px-6 py-4 text-right">Avg Net Fee</th>
                       <th className="px-6 py-4 text-right">Commission</th>
                       <th className="px-6 py-4 text-center">Action</th>
                     </tr>
@@ -877,13 +1227,27 @@ export default function AdminCommissionLog() {
                           <div className="flex gap-2 text-[10px] mt-0.5 items-center">
                             <span className="text-gray-400">{agent.office}</span>
                             <span className="bg-gray-100 px-1.5 rounded border">{agent.tier}</span>
+                            {agent.shadowCreditCount > 0 && (
+                              <span className="bg-indigo-100 text-indigo-700 px-1.5 rounded border border-indigo-200">
+                                {agent.shadowCreditCount} shadow
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 text-right font-mono text-gray-400">{agent.countTotal}</td>
                         <td className="px-6 py-4 text-right font-mono font-bold text-gray-900">{agent.countEligible}</td>
                         <td className="px-6 py-4 text-right font-mono font-bold text-red-400">{agent.countExcluded}</td>
                         <td className="px-6 py-4 text-right font-mono text-xs">{formatMoney(agent.revenueTotal)}</td>
-                        <td className="px-6 py-4 text-right font-mono font-bold text-emerald-600">{formatMoney(agent.commission)}</td>
+                        <td className="px-6 py-4 text-right font-mono text-xs font-bold">{formatMoney(agent.avgFee)}</td>
+                        <td className="px-6 py-4 text-right font-mono font-bold">
+                          {agent.isCommissionEligible ? (
+                            <span className="text-emerald-600">{formatMoney(agent.commission)}</span>
+                          ) : (
+                            <span className="rounded bg-gray-100 px-2 py-1 text-[10px] font-bold uppercase text-gray-500">
+                              Not Eligible
+                            </span>
+                          )}
+                        </td>
                         <td className="px-6 py-4 text-center"><button className="text-xs font-bold text-blue-600">View Log</button></td>
                       </tr>
                     ))}
@@ -895,26 +1259,110 @@ export default function AdminCommissionLog() {
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col">
             <div className="px-6 py-5 border-b border-gray-200 bg-gray-50/30">
-              <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wide">Transaction Log</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-bold text-gray-800 text-sm uppercase tracking-wide">Transaction Log</h3>
+                <span className="rounded bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">
+                  {filteredRows.length} visible
+                </span>
+              </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
+              <table className="min-w-[1700px] w-full text-sm text-left">
+                <thead className="bg-white sticky top-0 z-10 border-b border-gray-100 text-[10px] uppercase text-gray-400 font-bold tracking-wider">
+                  <tr>
+                    <th className="px-6 py-3">Date/Time</th>
+                    <th className="px-6 py-3">Agent</th>
+                    <th className="px-6 py-3">Office</th>
+                    <th className="px-6 py-3">Cust ID</th>
+                    <th className="px-6 py-3">Customer</th>
+                    <th className="px-6 py-3">Policy #</th>
+                    <th className="px-6 py-3 text-right">Gross Prep</th>
+                    <th className="px-6 py-3 text-right">Receipt Adj.</th>
+                    <th className="px-6 py-3 text-right">Pre-Ack</th>
+                    <th className="px-6 py-3 text-right">AR Violation</th>
+                    <th className="px-6 py-3 text-right">Referral</th>
+                    <th className="px-6 py-3 text-right">Net Fee</th>
+                    <th className="px-6 py-3">Payment</th>
+                    <th className="px-6 py-3">Return Year</th>
+                    <th className="px-6 py-3 text-center">Counts?</th>
+                    <th className="px-6 py-3 text-center">Status</th>
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-gray-50">
                   {filteredRows.map(r => {
                     const norm = normStatus(r.status);
                     const isBlocked = ["REJECTED", "NO STATUS FOUND", "VOID", "DELETED", "IN PROGRESS", "COMPLETE", "REVIEW"].includes(norm);
+                    const grossFee = adminMoneyNumber(r.prep_fee);
+                    const receiptAdj = adminReceiptAdjustments(r);
+                    const preAck = adminPreAckDeduction(r);
+                    const arViolation = adminArViolationDeduction(r);
+                    const referral = adminReferralDeduction(r);
+                    const netFee = adminCommissionableFee(r);
 
                     return (
                       <tr
-                        key={r.sync_key}
-                        className={isBlocked ? "bg-amber-50/80 hover:bg-amber-100/80 transition-colors" : "hover:bg-gray-50/80 transition-colors"}
+                        key={r.display_key || r.sync_key}
+                        className={
+                          r.is_shadow_credit
+                            ? "bg-indigo-50/90 hover:bg-indigo-100/80 transition-colors"
+                            : isBlocked
+                              ? "bg-amber-50/80 hover:bg-amber-100/80 transition-colors"
+                              : "hover:bg-gray-50/80 transition-colors"
+                        }
                       >
                         <td className="px-6 py-4 text-gray-500 font-mono text-xs">{formatDateTime(r.date_time)}</td>
-                        <td className="px-6 py-4"><div className="font-bold text-gray-900">{r.agent_name}</div></td>
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-gray-900">{r.agent_name}</div>
+                          <div className="text-[10px] text-gray-400">{r.agent_email}</div>
+                          {r.is_shadow_credit && (
+                            <div className="mt-1 w-fit rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-700">
+                              Shadow Credit
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs">{r.office_code}</td>
+                        <td className="px-6 py-4 font-mono text-xs">{r.cust_id}</td>
                         <td className="px-6 py-4"><div className="font-medium text-gray-900">{r.customer}</div></td>
-                        <td className="px-6 py-4 text-right font-mono font-medium">{formatMoney(r.prep_fee)}</td>
+                        <td className="px-6 py-4 font-mono text-xs">{r.policy_number || "—"}</td>
+                        <td className="px-6 py-4 text-right font-mono">{formatMoney(grossFee)}</td>
+                        <td className="px-6 py-4 text-right font-mono text-red-500">
+                          {receiptAdj > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="font-bold">-{formatMoney(receiptAdj)}</div>
+                              {adminNegativeDeductionOnly(r.prep_fee_difference) > 0 && (
+                                <div className="text-[10px] text-red-400">
+                                  Diff: -{formatMoney(adminNegativeDeductionOnly(r.prep_fee_difference))}
+                                </div>
+                              )}
+                              {adminNegativeDeductionOnly(r.unfunded) > 0 && (
+                                <div className="text-[10px] text-red-400">
+                                  Unfunded: -{formatMoney(adminNegativeDeductionOnly(r.unfunded))}
+                                </div>
+                              )}
+                              {adminNegativeDeductionOnly(r.refunded) > 0 && (
+                                <div className="text-[10px] text-red-400">
+                                  Refunded: -{formatMoney(adminNegativeDeductionOnly(r.refunded))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono text-red-500">{preAck > 0 ? `-${formatMoney(preAck)}` : "—"}</td>
+                        <td className="px-6 py-4 text-right font-mono text-red-500">{arViolation > 0 ? `-${formatMoney(arViolation)}` : "—"}</td>
+                        <td className="px-6 py-4 text-right font-mono text-red-500">{referral > 0 ? `-${formatMoney(referral)}` : "—"}</td>
+                        <td className="px-6 py-4 text-right font-mono font-bold text-emerald-700">{isBlocked ? "$0.00" : formatMoney(netFee)}</td>
+                        <td className="px-6 py-4">{r.payment_method || "—"}</td>
+                        <td className="px-6 py-4">{r.tax_year || "—"}</td>
+                        <td className="px-6 py-4 text-center">
+                          {isBlocked ? (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">No</span>
+                          ) : (
+                            <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-800">Yes</span>
+                          )}
+                        </td>
                         <td className="px-6 py-4 text-center"><span className={`px-2 py-1 rounded text-[10px] font-bold border ${getStatusBadgeClass(r.status)}`}>{r.status}</span></td>
-                        <td className="px-6 py-4 text-center">{r.is_fixed_by_admin ? "✨ Fixed" : "-"}</td>
                       </tr>
                     );
                   })}
@@ -1770,6 +2218,155 @@ function KpiMini({ label, value, sub, mono }) {
     </div>
   );
 }
+
+
+function CommissionBreakdownPanel({ stats, title, showCommission = true, isOfficeOnlyView = false, isIndividualView = false }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="border-b bg-gray-50/60 px-6 py-4">
+        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide">{title}</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Same calculation view agents see: gross prep fees minus deductions. Average net fee is shown so tier/rate decisions are easier to explain.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-3">
+        <div className="rounded-xl border bg-gray-50 p-4">
+          <p className="text-[10px] font-bold uppercase text-gray-400">Gross to Net Revenue</p>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span>Gross Prep Fees</span>
+              <span className="font-mono font-bold">{formatMoney(stats.grossRevenueBeforeDeductions)}</span>
+            </div>
+            <div className="flex justify-between text-red-600">
+              <span>Receipt Adjustments</span>
+              <span className="font-mono">-{formatMoney(stats.totalReceiptAdjustments)}</span>
+            </div>
+
+            {stats.totalReceiptAdjustments > 0 && (
+              <div className="ml-3 space-y-1 rounded-lg border border-red-100 bg-red-50/50 p-2 text-xs">
+                <div className="flex justify-between text-red-700">
+                  <span>Prep Fee Difference</span>
+                  <span className="font-mono">
+                    -{formatMoney(stats.totalPrepFeeDifferenceAdjustments || 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-red-700">
+                  <span>Unfunded</span>
+                  <span className="font-mono">
+                    -{formatMoney(stats.totalUnfundedAdjustments || 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-red-700">
+                  <span>Refunded</span>
+                  <span className="font-mono">
+                    -{formatMoney(stats.totalRefundedAdjustments || 0)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-between text-red-600">
+              <span>Pre-Ack Fees</span>
+              <span className="font-mono">-{formatMoney(stats.totalPreAckFees)}</span>
+            </div>
+            <div className="flex justify-between text-red-600">
+              <span>AR Violations</span>
+              <span className="font-mono">-{formatMoney(stats.totalArViolationFees)}</span>
+            </div>
+            <div className="flex justify-between text-red-600">
+              <span>Referrals</span>
+              <span className="font-mono">-{formatMoney(stats.totalReferralFees)}</span>
+            </div>
+            <div className="flex justify-between border-t pt-2 font-bold">
+              <span>Net Revenue</span>
+              <span className="font-mono">{formatMoney(stats.netRevenueAfterDeductions)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Avg Net Fee</span>
+              <span className="font-mono font-bold">{formatMoney(stats.avgFee)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-gray-50 p-4">
+          <p className="text-[10px] font-bold uppercase text-gray-400">Commission Base</p>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span>Net Revenue</span>
+              <span className="font-mono font-bold">{formatMoney(stats.netRevenueAfterDeductions)}</span>
+            </div>
+            <div className="flex justify-between text-red-600">
+              <span>Corp Fee ({(stats.corpFeeRate * 100).toFixed(0)}%)</span>
+              <span className="font-mono">-{formatMoney(stats.corporateFee)}</span>
+            </div>
+            <div className="flex justify-between border-t pt-2 font-bold">
+              <span>Commission Base</span>
+              <span className="font-mono">{formatMoney(stats.commissionBase)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Commission Rate</span>
+              <span className="font-mono">{(stats.commissionRate * 100).toFixed(2)}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div className={isOfficeOnlyView ? "rounded-xl border border-blue-100 bg-blue-50/70 p-4" : "rounded-xl border border-emerald-100 bg-emerald-50/70 p-4"}>
+          <p className={isOfficeOnlyView ? "text-[10px] font-bold uppercase text-blue-700" : "text-[10px] font-bold uppercase text-emerald-700"}>
+            {isOfficeOnlyView ? "Office Summary" : "Payout Summary"}
+          </p>
+          <div className="mt-3 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span>Eligible Taxes</span>
+              <span className="font-mono font-bold">{stats.taxesFiled}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Blocked Taxes</span>
+              <span className="font-mono font-bold">{stats.blockedCount}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Avg Net Fee</span>
+              <span className="font-mono font-bold">{formatMoney(stats.avgFee)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Shadow Credits</span>
+              <span className="font-mono font-bold">{stats.shadowCreditCount || 0}</span>
+            </div>
+            {stats.agentStats ? (
+              <>
+                <div className="flex justify-between">
+                  <span>Eligible Agents</span>
+                  <span className="font-mono font-bold">{stats.eligibleCommissionAgents || 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Not Eligible Agents</span>
+                  <span className="font-mono font-bold">{stats.notEligibleCommissionAgents || 0}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between">
+                <span>Tier</span>
+                <span className="font-mono font-bold">{stats.tierLabel}</span>
+              </div>
+            )}
+
+            {showCommission ? (
+              <div className="flex justify-between border-t border-emerald-200 pt-2 text-lg font-black text-emerald-700">
+                <span>Commission</span>
+                <span className="font-mono">{formatMoney(stats.totalCommission)}</span>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-blue-200 bg-white/70 p-2 text-xs font-semibold text-blue-800">
+                Commission payout is hidden in office view. Open an individual agent to see their payout.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function StatCard({ label, value, sub, color, bold }) {
   return (
