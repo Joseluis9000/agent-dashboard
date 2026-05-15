@@ -8,8 +8,6 @@ import { useAuth } from "../../AuthContext";
  * ==========================================
  */
 
-const PRE_ACK_FEE = 79.9; // Deduction per Pre-Ack return
-
 const COMMISSION_TIERS = [
   { min: 0, max: 49, label: "Tier A (0-49)", corpRate: 0.3, baseRate: 0.075, highRate: 0.1 },
   { min: 50, max: 99, label: "Tier B (50-99)", corpRate: 0.3, baseRate: 0.075, highRate: 0.1 },
@@ -31,6 +29,7 @@ const MODAL_STATUS_OPTIONS = [
 
 const TAX_YEAR_OPTIONS_MODAL = ["2025", "2024", "2023", "2022", "2021", "2020"];
 const REFERRAL_OPTIONS = ["20", "25", "50"];
+const SHADOW_LIMIT_PER_ORIGINAL_PREPARER = 10;
 
 const BLOCKED_STATUSES = new Set([
   "NO STATUS FOUND",
@@ -46,9 +45,7 @@ function cx(...classes) {
 
 function formatMoney(n) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return "$0.00";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    Number(n)
-  );
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n));
 }
 
 function formatDateTime(iso) {
@@ -58,13 +55,52 @@ function formatDateTime(iso) {
   return d.toLocaleString();
 }
 
-function normalizeBoolSelect(v) {
-  if (v === "") return null;
-  if (v === "yes") return true;
-  if (v === "no") return false;
-  if (v === true) return true;
-  if (v === false) return false;
-  return null;
+function moneyNumber(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = Number(String(v).replace(/[$,]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function negativeDeductionOnly(v) {
+  const n = moneyNumber(v);
+  return n < 0 ? Math.abs(n) : 0;
+}
+
+function getImportedReceiptAdjustments(r) {
+  return (
+    negativeDeductionOnly(r.prep_fee_difference) +
+    negativeDeductionOnly(r.unfunded) +
+    negativeDeductionOnly(r.refunded)
+  );
+}
+
+function importedDeductionAmount(v) {
+  const n = moneyNumber(v);
+  return n !== 0 ? Math.abs(n) : 0;
+}
+
+function getImportedPreAckDeduction(r) {
+  return importedDeductionAmount(r.pre_ack_fee);
+}
+
+function getImportedArViolationDeduction(r) {
+  return importedDeductionAmount(r.ar_violation);
+}
+
+function getTotalImportedDeductions(r) {
+  return (
+    getImportedReceiptAdjustments(r) +
+    getImportedPreAckDeduction(r) +
+    getImportedArViolationDeduction(r)
+  );
+}
+
+function getCommissionableFee(r, getRowValue) {
+  const rawFee = moneyNumber(r.prep_fee);
+  const importedDeductions = getTotalImportedDeductions(r);
+  const referralAmount = moneyNumber(getRowValue(r, "referral_paid_out"));
+
+  return Math.max(0, rawFee - importedDeductions - referralAmount);
 }
 
 function normStatus(s) {
@@ -104,7 +140,7 @@ function getStatusBadgeClass(status) {
 }
 
 function Field({ label, value, onChange, placeholder, type = "text", options = [] }) {
-  return (
+return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-gray-600">{label}</label>
       {type === "select" ? (
@@ -150,7 +186,7 @@ export default function AgentCommissionLog() {
 
   const [draft, setDraft] = useState({});
   const [saveState, setSaveState] = useState({
-    type: "idle", // idle | unsaved | saving | saved | error
+    type: "idle",
     message: "",
   });
 
@@ -169,6 +205,24 @@ export default function AgentCommissionLog() {
     preparer: "",
     status: "",
     office: "",
+  });
+
+  const [arDisputeOpen, setArDisputeOpen] = useState(false);
+  const [arDisputeRow, setArDisputeRow] = useState(null);
+  const [arDisputeText, setArDisputeText] = useState("");
+  const [arDisputeError, setArDisputeError] = useState("");
+  const [arDisputeSubmitting, setArDisputeSubmitting] = useState(false);
+
+  const [shadowOpen, setShadowOpen] = useState(false);
+  const [shadowSubmitting, setShadowSubmitting] = useState(false);
+  const [shadowError, setShadowError] = useState("");
+  const [shadowSuccess, setShadowSuccess] = useState("");
+  const [shadowForm, setShadowForm] = useState({
+    policy_number: "",
+    cust_id: "",
+    payment_method: "",
+    receipt: "",
+    charged: "",
   });
 
   const didInitDefaultFilters = useRef(false);
@@ -206,18 +260,6 @@ export default function AgentCommissionLog() {
     });
   }
 
-  function getIsWire(r) {
-    const pm = String(getRowValue(r, "payment_method") ?? "").toLowerCase();
-    return pm.includes("wire");
-  }
-
-  function getWireRequired(r) {
-    const isWire = getIsWire(r);
-    if (!isWire) return false;
-    const wireFunded = getRowValue(r, "wire_rac_funded");
-    return wireFunded === null || wireFunded === undefined;
-  }
-
   async function fetchProfileStatus() {
     if (!supabase || !userEmail) return;
 
@@ -225,7 +267,7 @@ export default function AgentCommissionLog() {
       const { data, error } = await supabase
         .from("profiles")
         .select("tax_vet")
-        .eq("email", userEmail) // change this if your profiles table uses a different key
+        .eq("email", userEmail)
         .maybeSingle();
 
       if (error) {
@@ -272,30 +314,37 @@ export default function AgentCommissionLog() {
     setLoading(true);
     setFixError("");
 
+    const receiptSelect = [
+      "sync_key",
+      "agent_email",
+      "agent_name",
+      "date_time",
+      "office_code",
+      "cust_id",
+      "customer",
+      "payment_method",
+      "tax_year:receipt_maxtax_year",
+      "status:receipt_maxtax_status",
+      "prep_fee:charged",
+      "prep_fee_difference",
+      "unfunded",
+      "refunded",
+      "policy_number",
+      "pre_ack_fee",
+      "ar_violation",
+      "last4",
+      "first",
+      "last",
+      "phone",
+      "preparer",
+      "office_full",
+      "record_number",
+      "receipt",
+    ].join(",");
+
     let q = supabase
       .from("agent_tax_commission_log")
-      .select(
-        [
-          "sync_key",
-          "agent_email",
-          "date_time",
-          "office_code",
-          "cust_id",
-          "customer",
-          "payment_method",
-          "tax_year:receipt_maxtax_year",
-          "status:receipt_maxtax_status",
-          "prep_fee:charged",
-          "last4",
-          "first",
-          "last",
-          "phone",
-          "preparer",
-          "office_full",
-          "record_number",
-          "receipt",
-        ].join(",")
-      )
+      .select(receiptSelect)
       .eq("agent_email", userEmail)
       .order("date_time", { ascending: false })
       .limit(750);
@@ -314,14 +363,63 @@ export default function AgentCommissionLog() {
       return;
     }
 
-    const list = baseRows ?? [];
-    const keys = list.map((r) => r.sync_key).filter(Boolean);
+    const ownRows = (baseRows ?? []).map((r) => ({
+      ...r,
+      is_shadow_credit: false,
+      display_key: `own-${r.sync_key}`,
+    }));
+
+    let shadowRows = [];
+    const { data: shadowCredits, error: shadowErr } = await supabase
+      .from("tax_shadow_credits")
+      .select("original_sync_key, created_at")
+      .eq("shadow_agent_email", userEmail);
+
+    if (!shadowErr && shadowCredits?.length) {
+      const shadowKeys = [...new Set(shadowCredits.map((s) => s.original_sync_key).filter(Boolean))];
+
+      if (shadowKeys.length) {
+        const { data: matchedShadowRows, error: shadowRowsErr } = await supabase
+          .from("agent_tax_commission_log")
+          .select(receiptSelect)
+          .in("sync_key", shadowKeys);
+
+        if (!shadowRowsErr) {
+          const creditMap = Object.fromEntries(
+            shadowCredits.map((s) => [s.original_sync_key, s])
+          );
+
+          shadowRows = (matchedShadowRows ?? []).map((r) => ({
+            ...r,
+            original_agent_email: r.agent_email,
+            original_agent_name: r.agent_name,
+            agent_email: userEmail,
+            is_shadow_credit: true,
+            shadow_credit_created_at: creditMap[r.sync_key]?.created_at ?? null,
+            display_key: `shadow-${r.sync_key}`,
+          }));
+        }
+      }
+    }
+
+    const list = [...ownRows, ...shadowRows];
+    const keys = [...new Set(list.map((r) => r.sync_key).filter(Boolean))];
 
     let annMap = {};
     if (keys.length) {
       const { data: anns, error: annErr } = await supabase
         .from("tax_commission_annotations")
-        .select("sync_key, pre_ack_advance, referral_paid_out, wire_rac_funded, notes, updated_at")
+        .select(
+          [
+            "sync_key",
+            "referral_paid_out",
+            "notes",
+            "ar_violation_disputed",
+            "ar_violation_dispute_explanation",
+            "ar_violation_disputed_at",
+            "updated_at",
+          ].join(",")
+        )
         .in("sync_key", keys);
 
       if (!annErr) {
@@ -366,6 +464,7 @@ export default function AgentCommissionLog() {
         String(r.customer ?? "").toLowerCase().includes(s) ||
         String(r.office_code ?? "").toLowerCase().includes(s) ||
         String(r.cust_id ?? "").toLowerCase().includes(s) ||
+        String(r.policy_number ?? "").toLowerCase().includes(s) ||
         String(r.sync_key ?? "").toLowerCase().includes(s)
       );
     });
@@ -383,6 +482,18 @@ export default function AgentCommissionLog() {
 
   const paymentOptions = ["all", "Wire", "Credit Card", "Cash", "RAC"];
 
+  const shadowPaymentOptions = useMemo(() => {
+    const set = new Set(
+      rows
+        .map((r) => String(r.payment_method ?? "").trim())
+        .filter(Boolean)
+    );
+
+    ["Cash", "Credit Card", "Wire", "RAC"].forEach((p) => set.add(p));
+
+    return Array.from(set).sort();
+  }, [rows]);
+
   const stats = useMemo(() => {
     const eligible = [];
     let blockedCount = 0;
@@ -390,7 +501,7 @@ export default function AgentCommissionLog() {
     const blockedReasonCounts = {};
 
     for (const r of visibleRows) {
-      const fee = Number(r.prep_fee) || 0;
+      const fee = getCommissionableFee(r, getRowValue);
 
       if (isCountsTowardCommission(r)) {
         eligible.push(r);
@@ -402,30 +513,52 @@ export default function AgentCommissionLog() {
       }
     }
 
+    let grossPrepFees = 0;
     let totalRevenue = 0;
-    let preAckCount = 0;
+    let totalReceiptAdjustments = 0;
+    let totalPrepFeeDifferenceAdjustments = 0;
+    let totalUnfundedAdjustments = 0;
+    let totalRefundedAdjustments = 0;
+    let totalPreAckFees = 0;
+    let totalArViolationFees = 0;
     let totalReferralFees = 0;
+    let shadowCreditCount = 0;
+    let shadowCreditRevenue = 0;
 
     eligible.forEach((r) => {
-      const fee = Number(r.prep_fee) || 0;
-      totalRevenue += fee;
+      const rawFee = moneyNumber(r.prep_fee);
+      const prepFeeDifferenceAdjustment = negativeDeductionOnly(r.prep_fee_difference);
+      const unfundedAdjustment = negativeDeductionOnly(r.unfunded);
+      const refundedAdjustment = negativeDeductionOnly(r.refunded);
+      const receiptAdjustments =
+        prepFeeDifferenceAdjustment + unfundedAdjustment + refundedAdjustment;
+      const preAckAmount = getImportedPreAckDeduction(r);
+      const arViolationAmount = getImportedArViolationDeduction(r);
+      const referralAmount = moneyNumber(getRowValue(r, "referral_paid_out"));
 
-      const isPreAck = normalizeBoolSelect(getRowValue(r, "pre_ack_advance"));
-      if (isPreAck) preAckCount++;
+      const commissionableFee = Math.max(
+        0,
+        rawFee - receiptAdjustments - preAckAmount - arViolationAmount - referralAmount
+      );
 
-      const refVal = getRowValue(r, "referral_paid_out");
-      const refAmount = Number(refVal);
-      if (!Number.isNaN(refAmount) && refAmount > 0) {
-        totalReferralFees += refAmount;
+      grossPrepFees += rawFee;
+      totalRevenue += commissionableFee;
+      totalReceiptAdjustments += receiptAdjustments;
+      totalPrepFeeDifferenceAdjustments += prepFeeDifferenceAdjustment;
+      totalUnfundedAdjustments += unfundedAdjustment;
+      totalRefundedAdjustments += refundedAdjustment;
+      totalPreAckFees += preAckAmount;
+      totalArViolationFees += arViolationAmount;
+      totalReferralFees += referralAmount;
+
+      if (r.is_shadow_credit) {
+        shadowCreditCount++;
+        shadowCreditRevenue += commissionableFee;
       }
     });
 
     const taxesFiled = eligible.length;
     const avgFee = taxesFiled > 0 ? totalRevenue / taxesFiled : 0;
-
-    // ==========================================
-    // ROOKIE MILESTONE (LOCK AT 150 RETURNS)
-    // ==========================================
 
     const eligibleSortedAsc = [...eligible].sort((a, b) => {
       const aTime = new Date(a.date_time).getTime();
@@ -439,18 +572,14 @@ export default function AgentCommissionLog() {
     let totalRevenueAt150 = 0;
 
     first150Eligible.forEach((r) => {
-      const fee = Number(r.prep_fee) || 0;
-      totalRevenueAt150 += fee;
+      totalRevenueAt150 += getCommissionableFee(r, getRowValue);
     });
 
     const avgFeeAt150 = reached150 ? totalRevenueAt150 / 150 : 0;
-
     const qualifiedAt150 = !isTaxVet && reached150 && avgFeeAt150 >= 225;
-
     const milestone150Date = reached150 ? first150Eligible[149]?.date_time ?? null : null;
 
-    const totalPreAckFees = preAckCount * PRE_ACK_FEE;
-    const revenueAfterDeductions = totalRevenue - totalPreAckFees - totalReferralFees;
+    const revenueAfterDeductions = totalRevenue;
 
     const activeTier =
       COMMISSION_TIERS.find((t) => taxesFiled >= t.min && taxesFiled <= t.max) || COMMISSION_TIERS[0];
@@ -497,8 +626,8 @@ export default function AgentCommissionLog() {
 
     const commissionRateReason =
       avgFee >= 250
-        ? `Higher commission rate applied because average prep fee is ${formatMoney(avgFee)}, which meets or exceeds the ${formatMoney(250)} threshold.`
-        : `Base commission rate applied because average prep fee is ${formatMoney(avgFee)}, which is below the ${formatMoney(250)} threshold.`;
+        ? `Higher commission rate applied because average net prep fee is ${formatMoney(avgFee)}, which meets or exceeds the ${formatMoney(250)} threshold.`
+        : `Base commission rate applied because average net prep fee is ${formatMoney(avgFee)}, which is below the ${formatMoney(250)} threshold.`;
 
     const rookieReasonParts = [];
 
@@ -512,13 +641,13 @@ export default function AgentCommissionLog() {
 
     if (reached150 && avgFeeAt150 < 225) {
       rookieReasonParts.push(
-        `At the time the agent reached 150 returns, their average fee was ${formatMoney(avgFeeAt150)}, which is below the ${formatMoney(225)} rookie threshold.`
+        `At the time the agent reached 150 returns, their average net fee was ${formatMoney(avgFeeAt150)}, which is below the ${formatMoney(225)} rookie threshold.`
       );
     }
 
     if (qualifiedAt150) {
       rookieReasonParts.push(
-        `Agent qualified at 150 returns with an average fee of ${formatMoney(avgFeeAt150)}.`
+        `Agent qualified at 150 returns with an average net fee of ${formatMoney(avgFeeAt150)}.`
       );
     }
 
@@ -536,11 +665,18 @@ export default function AgentCommissionLog() {
       blockedReasons: Object.entries(blockedReasonCounts)
         .map(([k, v]) => `${k}: ${v}`)
         .join(", "),
+      grossPrepFees,
       totalRevenue,
       avgFee,
-      preAckCount,
+      totalReceiptAdjustments,
+      totalPrepFeeDifferenceAdjustments,
+      totalUnfundedAdjustments,
+      totalRefundedAdjustments,
       totalPreAckFees,
+      totalArViolationFees,
       totalReferralFees,
+      shadowCreditCount,
+      shadowCreditRevenue,
       revenueAfterDeductions,
       tierLabel: activeTier.label,
       nextTierLabel: nextTier?.label ?? null,
@@ -576,26 +712,18 @@ export default function AgentCommissionLog() {
     const base = rows.find((x) => x.sync_key === sync_key);
     const d = draft[sync_key] ?? {};
 
-    const payment_method = String(d.payment_method ?? base?.payment_method ?? "");
-    const isWire = payment_method.toLowerCase().includes("wire");
-    const wire_rac_funded = d.wire_rac_funded ?? base?.wire_rac_funded ?? null;
-
-    if (isWire && (wire_rac_funded === null || wire_rac_funded === undefined)) {
-      return {
-        ok: false,
-        reason: "Wire/RAC Funded? is required for wire payments before saving.",
-      };
-    }
-
     const { data: sessionData } = await supabase.auth.getSession();
     const email = sessionData?.session?.user?.email ?? userEmail ?? null;
 
     const payload = {
       sync_key,
-      pre_ack_advance: d.pre_ack_advance ?? base?.pre_ack_advance ?? null,
       referral_paid_out: d.referral_paid_out ?? base?.referral_paid_out ?? null,
-      wire_rac_funded,
       notes: d.notes ?? base?.notes ?? null,
+      ar_violation_disputed: d.ar_violation_disputed ?? base?.ar_violation_disputed ?? false,
+      ar_violation_dispute_explanation:
+        d.ar_violation_dispute_explanation ?? base?.ar_violation_dispute_explanation ?? null,
+      ar_violation_disputed_at:
+        d.ar_violation_disputed_at ?? base?.ar_violation_disputed_at ?? null,
       updated_by: email,
       updated_at: new Date().toISOString(),
     };
@@ -616,10 +744,7 @@ export default function AgentCommissionLog() {
   async function saveAllChanges() {
     const keys = Object.keys(draft);
     if (!keys.length) {
-      setSaveState({
-        type: "saved",
-        message: "There are no new changes to save.",
-      });
+      setSaveState({ type: "saved", message: "There are no new changes to save." });
       return;
     }
 
@@ -743,6 +868,234 @@ export default function AgentCommissionLog() {
     }
   }
 
+  function openArDisputeModal(row) {
+    setArDisputeError("");
+    setArDisputeRow(row);
+    setArDisputeText(
+      row?.ar_violation_dispute_explanation ||
+        "My Return ID for the tax is...."
+    );
+    setArDisputeOpen(true);
+  }
+
+  function closeArDisputeModal() {
+    setArDisputeOpen(false);
+    setArDisputeRow(null);
+    setArDisputeText("");
+    setArDisputeError("");
+    setArDisputeSubmitting(false);
+  }
+
+  async function submitArDispute() {
+    if (!arDisputeRow?.sync_key) return;
+
+    const explanation = String(arDisputeText ?? "").trim();
+
+    if (explanation.length < 20) {
+      setArDisputeError("Please enter a short explanation along with your Return ID before submitting the dispute.");
+      return;
+    }
+
+    setArDisputeSubmitting(true);
+    setArDisputeError("");
+
+    const patch = {
+      ar_violation_disputed: true,
+      ar_violation_dispute_explanation: explanation,
+      ar_violation_disputed_at: new Date().toISOString(),
+    };
+
+    setRowDraft(arDisputeRow.sync_key, patch);
+    setArDisputeSubmitting(false);
+    closeArDisputeModal();
+  }
+
+  function openShadowModal() {
+    setShadowError("");
+    setShadowSuccess("");
+    setShadowForm({
+      policy_number: "",
+      cust_id: "",
+      payment_method: "",
+      receipt: "",
+      charged: "",
+    });
+    setShadowOpen(true);
+  }
+
+  function closeShadowModal() {
+    setShadowOpen(false);
+    setShadowSubmitting(false);
+    setShadowError("");
+    setShadowSuccess("");
+  }
+
+  async function submitShadowCredit() {
+    if (!supabase || !userEmail) return;
+
+    const clean = {
+      policy_number: String(shadowForm.policy_number ?? "").trim(),
+      cust_id: String(shadowForm.cust_id ?? "").trim(),
+      payment_method: String(shadowForm.payment_method ?? "").trim(),
+      receipt: String(shadowForm.receipt ?? "").trim(),
+      charged: moneyNumber(shadowForm.charged),
+    };
+
+    if (
+      !clean.policy_number ||
+      !clean.cust_id ||
+      !clean.payment_method ||
+      !clean.receipt ||
+      clean.charged <= 0
+    ) {
+      setShadowError("Please enter Policy #, Cust ID, Payment Method, Receipt, and Charged amount.");
+      return;
+    }
+
+    setShadowSubmitting(true);
+    setShadowError("");
+    setShadowSuccess("");
+
+    try {
+      const { data: matches, error: matchErr } = await supabase
+        .from("agent_tax_commission_log")
+        .select(
+          "sync_key, policy_number, cust_id, payment_method, receipt, charged, agent_email, agent_name, customer"
+        )
+        .eq("policy_number", clean.policy_number)
+        .eq("cust_id", clean.cust_id)
+        .eq("receipt", clean.receipt)
+        .limit(10);
+
+      if (matchErr) throw matchErr;
+
+      const filteredMatches = (matches ?? []).filter((row) => {
+        const rowCharged = moneyNumber(row.charged);
+        const enteredCharged = moneyNumber(clean.charged);
+        const chargedMatches = Math.abs(rowCharged - enteredCharged) < 0.01;
+
+        const rowPayment = String(row.payment_method ?? "").trim().toLowerCase();
+        const enteredPayment = String(clean.payment_method ?? "").trim().toLowerCase();
+
+        const paymentMatches =
+          rowPayment === enteredPayment ||
+          rowPayment.includes(enteredPayment) ||
+          enteredPayment.includes(rowPayment);
+
+        return chargedMatches && paymentMatches;
+      });
+
+      if (!filteredMatches.length) {
+        const closePolicyMatch = matches?.length
+          ? "A tax matched the Policy #, Cust ID, and Receipt, but the payment method or charged amount did not match."
+          : "No tax matched the Policy #, Cust ID, and Receipt.";
+
+        setShadowError(
+          `${closePolicyMatch} Please verify Payment Method and Charged amount.`
+        );
+        setShadowSubmitting(false);
+        return;
+      }
+
+      if (filteredMatches.length > 1) {
+        setShadowError("More than one matching tax was found. Please ask a manager to review this shadow credit.");
+        setShadowSubmitting(false);
+        return;
+      }
+
+      const matched = filteredMatches[0];
+
+      if (matched.agent_email === userEmail) {
+        setShadowError("This tax is already under your own email, so it cannot be added as a shadow credit.");
+        setShadowSubmitting(false);
+        return;
+      }
+
+      const originalPreparerName = String(matched.agent_name ?? "").trim();
+
+      if (!originalPreparerName) {
+        setShadowError("The matched tax is missing the original preparer name, so this shadow credit cannot be verified.");
+        setShadowSubmitting(false);
+        return;
+      }
+
+      const { data: existingCredits, error: existingCreditsErr } = await supabase
+        .from("tax_shadow_credits")
+        .select("original_sync_key")
+        .eq("shadow_agent_email", userEmail);
+
+      if (existingCreditsErr) throw existingCreditsErr;
+
+      const existingShadowKeys = [
+        ...new Set((existingCredits ?? []).map((c) => c.original_sync_key).filter(Boolean)),
+      ];
+
+      let claimedForThisOriginalPreparer = 0;
+
+      if (existingShadowKeys.length) {
+        const { data: existingOriginalRows, error: existingOriginalRowsErr } = await supabase
+          .from("agent_tax_commission_log")
+          .select("sync_key, agent_name")
+          .in("sync_key", existingShadowKeys);
+
+        if (existingOriginalRowsErr) throw existingOriginalRowsErr;
+
+        claimedForThisOriginalPreparer = (existingOriginalRows ?? []).filter((row) => {
+          return (
+            String(row.agent_name ?? "").trim().toLowerCase() ===
+            originalPreparerName.toLowerCase()
+          );
+        }).length;
+      }
+
+      if (claimedForThisOriginalPreparer >= SHADOW_LIMIT_PER_ORIGINAL_PREPARER) {
+        setShadowError(
+          `Shadow credit limit reached for ${originalPreparerName}. You can only claim the first ${SHADOW_LIMIT_PER_ORIGINAL_PREPARER} shadowed taxes for the same original preparer.`
+        );
+        setShadowSubmitting(false);
+        return;
+      }
+
+      const payload = {
+        shadow_agent_email: userEmail,
+        original_sync_key: matched.sync_key,
+        policy_number: clean.policy_number,
+        cust_id: clean.cust_id,
+        payment_method: clean.payment_method,
+        receipt: clean.receipt,
+        charged: clean.charged,
+      };
+
+      const { error: insertErr } = await supabase
+        .from("tax_shadow_credits")
+        .insert(payload);
+
+      if (insertErr) {
+        if (String(insertErr.message || "").toLowerCase().includes("duplicate")) {
+          setShadowError("This shadow credit has already been added to your commission log.");
+        } else {
+          setShadowError(insertErr.message || "Could not add shadow credit.");
+        }
+        setShadowSubmitting(false);
+        return;
+      }
+
+      setShadowSuccess(
+        `Shadow credit added successfully for ${originalPreparerName}. Claimed ${claimedForThisOriginalPreparer + 1}/${SHADOW_LIMIT_PER_ORIGINAL_PREPARER} for this original preparer.`
+      );
+      setShadowSubmitting(false);
+      await fetchRows();
+
+      setTimeout(() => {
+        closeShadowModal();
+      }, 800);
+    } catch (e) {
+      console.error(e);
+      setShadowError(e.message || "Unexpected error adding shadow credit.");
+      setShadowSubmitting(false);
+    }
+  }
+
   return (
     <div className="p-6">
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -753,12 +1106,21 @@ export default function AgentCommissionLog() {
           </p>
         </div>
 
-        <button
-          onClick={fetchRows}
-          className="rounded-xl border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
-        >
-          Refresh Data
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={openShadowModal}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700"
+          >
+            Add Shadowed Tax
+          </button>
+
+          <button
+            onClick={fetchRows}
+            className="rounded-xl border bg-white px-4 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+          >
+            Refresh Data
+          </button>
+        </div>
       </div>
 
       <div className="mb-4 overflow-hidden rounded-2xl border bg-gray-900 text-white shadow-md">
@@ -795,15 +1157,6 @@ export default function AgentCommissionLog() {
               </span>
             )}
 
-            {!stats.isRookieEligible &&
-              stats.reached150 &&
-              !stats.isTaxVet &&
-              stats.avgFeeAt150 < 225 && (
-                <span className="rounded bg-amber-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                  Rookie Blocked by Avg Fee
-                </span>
-              )}
-
             <div className="rounded bg-gray-700 px-2 py-1 text-xs text-gray-300">
               Tier: <span className="font-bold text-white">{stats.tierLabel}</span>
             </div>
@@ -814,28 +1167,63 @@ export default function AgentCommissionLog() {
 
         <div className="grid grid-cols-1 gap-8 p-6 md:grid-cols-2 lg:grid-cols-4">
           <div>
-            <p className="text-xs uppercase text-gray-400">1. Eligible Revenue</p>
+            <p className="text-xs uppercase text-gray-400">1. Net Revenue After Deductions</p>
             <p className="text-2xl font-bold">{formatMoney(stats.totalRevenue)}</p>
             <div className="mt-2 text-xs text-gray-500">
+              Gross Prep Fees: {formatMoney(stats.grossPrepFees)} <br />
               {stats.taxesFiled} Taxes Filed <br />
-              Avg Fee: {formatMoney(stats.avgFee)}
+              Avg Net Fee: {formatMoney(stats.avgFee)}
+              {stats.shadowCreditCount > 0 && (
+                <>
+                  <br />
+                  Shadow Credits: {stats.shadowCreditCount} / {formatMoney(stats.shadowCreditRevenue)}
+                </>
+              )}
             </div>
           </div>
 
           <div>
-            <p className="text-xs uppercase text-gray-400">2. Deductions</p>
+            <p className="text-xs uppercase text-gray-400">2. Deductions Included</p>
             <div className="mt-1 space-y-1 text-xs text-gray-300">
               <div className="flex justify-between">
-                <span>Pre-Ack ({stats.preAckCount} x {PRE_ACK_FEE}):</span>
+                <span>Receipt Adj:</span>
+                <span className="text-red-400">-{formatMoney(stats.totalReceiptAdjustments)}</span>
+              </div>
+
+              {stats.totalReceiptAdjustments > 0 && (
+                <div className="ml-3 space-y-0.5 rounded border border-gray-700 bg-gray-950/40 p-2 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Prep Fee Difference:</span>
+                    <span className="text-red-300">
+                      -{formatMoney(stats.totalPrepFeeDifferenceAdjustments || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Unfunded:</span>
+                    <span className="text-red-300">
+                      -{formatMoney(stats.totalUnfundedAdjustments || 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Refunded:</span>
+                    <span className="text-red-300">
+                      -{formatMoney(stats.totalRefundedAdjustments || 0)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <span>Pre-Ack Fees:</span>
                 <span className="text-red-400">-{formatMoney(stats.totalPreAckFees)}</span>
               </div>
               <div className="flex justify-between">
-                <span>Referrals (Var):</span>
-                <span className="text-red-400">-{formatMoney(stats.totalReferralFees)}</span>
+                <span>AR Violations:</span>
+                <span className="text-red-400">-{formatMoney(stats.totalArViolationFees)}</span>
               </div>
-              <div className="flex justify-between border-t border-gray-700 pt-1 font-semibold">
-                <span>Adj. Rev:</span>
-                <span>{formatMoney(stats.revenueAfterDeductions)}</span>
+              <div className="flex justify-between">
+                <span>Referrals:</span>
+                <span className="text-red-400">-{formatMoney(stats.totalReferralFees)}</span>
               </div>
             </div>
           </div>
@@ -869,23 +1257,6 @@ export default function AgentCommissionLog() {
                 <p>Returns 0-49 do not qualify for commission. Amount shown is potential only.</p>
               </div>
             )}
-
-            {(stats.volumeBonus > 0 || stats.guaranteeAdjustment > 0) && (
-              <div className="mt-3 space-y-1 border-t border-emerald-800/30 pt-3 text-[10px] text-emerald-100">
-                {stats.volumeBonus > 0 && (
-                  <div className="flex justify-between">
-                    <span>Performance Bonus (300+):</span>
-                    <span>+{formatMoney(stats.volumeBonus)}</span>
-                  </div>
-                )}
-                {stats.guaranteeAdjustment > 0 && (
-                  <div className="flex justify-between">
-                    <span>Rookie Guarantee Top-Up:</span>
-                    <span>+{formatMoney(stats.guaranteeAdjustment)}</span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -896,22 +1267,53 @@ export default function AgentCommissionLog() {
                 <h3 className="mb-3 text-sm font-semibold text-white">Step-by-Step Formula</h3>
                 <div className="space-y-2 text-sm text-gray-300">
                   <div className="flex justify-between">
-                    <span>Eligible Gross Revenue</span>
-                    <span>{formatMoney(stats.totalRevenue)}</span>
+                    <span>Gross Prep Fees</span>
+                    <span>{formatMoney(stats.grossPrepFees)}</span>
                   </div>
+                  <div className="flex justify-between">
+                    <span>Less Receipt Adjustments</span>
+                    <span className="text-red-400">-{formatMoney(stats.totalReceiptAdjustments)}</span>
+                  </div>
+
+                  {stats.totalReceiptAdjustments > 0 && (
+                    <div className="ml-4 space-y-1 rounded-lg border border-gray-800 bg-gray-950/60 p-2 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Prep Fee Difference</span>
+                        <span className="text-red-300">
+                          -{formatMoney(stats.totalPrepFeeDifferenceAdjustments || 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Unfunded</span>
+                        <span className="text-red-300">
+                          -{formatMoney(stats.totalUnfundedAdjustments || 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Refunded</span>
+                        <span className="text-red-300">
+                          -{formatMoney(stats.totalRefundedAdjustments || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between">
                     <span>Less Pre-Ack Fees</span>
                     <span className="text-red-400">-{formatMoney(stats.totalPreAckFees)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Less AR Violations</span>
+                    <span className="text-red-400">-{formatMoney(stats.totalArViolationFees)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Less Referral Payouts</span>
                     <span className="text-red-400">-{formatMoney(stats.totalReferralFees)}</span>
                   </div>
                   <div className="flex justify-between border-t border-gray-800 pt-2 font-medium">
-                    <span>Adjusted Revenue</span>
-                    <span>{formatMoney(stats.revenueAfterDeductions)}</span>
+                    <span>Net Revenue After Deductions</span>
+                    <span>{formatMoney(stats.totalRevenue)}</span>
                   </div>
-
                   <div className="flex justify-between">
                     <span>Less Corporate Fee ({(stats.corpFeeRate * 100).toFixed(0)}%)</span>
                     <span className="text-red-400">-{formatMoney(stats.corporateFee)}</span>
@@ -920,7 +1322,6 @@ export default function AgentCommissionLog() {
                     <span>Commission Base</span>
                     <span>{formatMoney(stats.commissionBase)}</span>
                   </div>
-
                   <div className="flex justify-between">
                     <span>Commission Rate</span>
                     <span>{(stats.commissionRate * 100).toFixed(2)}%</span>
@@ -930,35 +1331,10 @@ export default function AgentCommissionLog() {
                     <span>{formatMoney(stats.earnedCommission)}</span>
                   </div>
                 </div>
-
-                <div className="mt-4 rounded-xl bg-black/30 p-4 font-mono text-xs text-gray-300">
-                  {formatMoney(stats.totalRevenue)}
-                  {" - "}
-                  {formatMoney(stats.totalPreAckFees)}
-                  {" - "}
-                  {formatMoney(stats.totalReferralFees)}
-                  {" = "}
-                  {formatMoney(stats.revenueAfterDeductions)}
-                  {"; then - "}
-                  {formatMoney(stats.corporateFee)}
-                  {" = "}
-                  {formatMoney(stats.commissionBase)}
-                  {"; × "}
-                  {(stats.commissionRate * 100).toFixed(2)}
-                  {"% = "}
-                  {formatMoney(stats.earnedCommission)}
-                  {"; + "}
-                  {formatMoney(stats.volumeBonus)}
-                  {" + "}
-                  {formatMoney(stats.guaranteeAdjustment)}
-                  {" = "}
-                  {formatMoney(stats.totalCommission)}
-                </div>
               </div>
 
               <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
                 <h3 className="mb-3 text-sm font-semibold text-white">Eligibility / Why</h3>
-
                 <div className="space-y-3 text-sm text-gray-300">
                   <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-3">
                     <div className="flex justify-between">
@@ -982,67 +1358,7 @@ export default function AgentCommissionLog() {
                       <span className="font-medium text-white">Rookie Guarantee</span>
                       <span>{stats.isRookieEligible ? "Eligible" : "Not Eligible"}</span>
                     </div>
-
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      <div className="flex justify-between rounded bg-black/20 px-2 py-1">
-                        <span>Tax Vet</span>
-                        <span>{stats.isTaxVet ? "Yes" : "No"}</span>
-                      </div>
-                      <div className="flex justify-between rounded bg-black/20 px-2 py-1">
-                        <span>150 Reached</span>
-                        <span>{stats.reached150 ? "Yes" : "No"}</span>
-                      </div>
-                      <div className="flex justify-between rounded bg-black/20 px-2 py-1">
-                        <span>Milestone Avg ≥ $225</span>
-                        <span>{stats.avgFeeAt150 >= 225 ? "Yes" : "No"}</span>
-                      </div>
-                      <div className="flex justify-between rounded bg-black/20 px-2 py-1">
-                        <span>Milestone Avg</span>
-                        <span>{formatMoney(stats.avgFeeAt150)}</span>
-                      </div>
-                    </div>
-
                     <p className="mt-2 text-xs text-gray-400">{stats.rookieReason}</p>
-
-                    <div className="mt-3 space-y-1 border-t border-gray-800 pt-3 text-xs">
-                      <div className="flex justify-between">
-                        <span>150-Return Milestone Avg</span>
-                        <span>{formatMoney(stats.avgFeeAt150)}</span>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span>Qualified at 150</span>
-                        <span>{stats.qualifiedAt150 ? "Yes" : "No"}</span>
-                      </div>
-
-                      {stats.milestone150Date && (
-                        <div className="flex justify-between">
-                          <span>150th Return Date</span>
-                          <span>{formatDateTime(stats.milestone150Date)}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {stats.isRookieEligible && (
-                      <div className="mt-3 space-y-1 border-t border-gray-800 pt-3 text-xs">
-                        <div className="flex justify-between">
-                          <span>Avg Commission Per Return</span>
-                          <span>{formatMoney(stats.avgCommissionPerReturn)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Value of First 150 Returns</span>
-                          <span>{formatMoney(stats.valueOfFirst150)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Rookie Guarantee Top-Up</span>
-                          <span>
-                            {stats.guaranteeAdjustment > 0
-                              ? `+${formatMoney(stats.guaranteeAdjustment)}`
-                              : "$0.00"}
-                          </span>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-3">
@@ -1051,15 +1367,6 @@ export default function AgentCommissionLog() {
                       <span>{stats.volumeBonus > 0 ? `+${formatMoney(stats.volumeBonus)}` : "$0.00"}</span>
                     </div>
                     <p className="mt-2 text-xs text-gray-400">{stats.volumeBonusReason}</p>
-                  </div>
-
-                  <div className="rounded-lg border border-gray-800 bg-gray-950/60 p-3">
-                    <div className="flex justify-between">
-                      <span className="font-medium text-white">Total Estimated Commission</span>
-                      <span className="font-bold text-emerald-400">
-                        {formatMoney(stats.totalCommission)}
-                      </span>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1070,19 +1377,13 @@ export default function AgentCommissionLog() {
 
       {stats.blockedCount > 0 && (
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 text-lg">⚠️</div>
-            <div>
-              <p className="text-sm font-semibold">
-                {stats.blockedCount} tax returns are NOT counted toward commission.
-              </p>
-              <p className="mt-1 text-xs opacity-90">
-                These rows are excluded from the totals above. <br />
-                <b>Excluded Revenue: {formatMoney(stats.blockedRevenue)}</b> <br />
-                Reason: Status is {stats.blockedReasons}.
-              </p>
-            </div>
-          </div>
+          <p className="text-sm font-semibold">
+            {stats.blockedCount} tax returns are NOT counted toward commission.
+          </p>
+          <p className="mt-1 text-xs opacity-90">
+            <b>Excluded Net Revenue: {formatMoney(stats.blockedRevenue)}</b> <br />
+            Reason: Status is {stats.blockedReasons}.
+          </p>
         </div>
       )}
 
@@ -1092,7 +1393,7 @@ export default function AgentCommissionLog() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Customer, office, cust id..."
+            placeholder="Customer, office, cust id, policy #..."
             className="h-10 rounded-xl border px-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
           />
         </div>
@@ -1197,22 +1498,24 @@ export default function AgentCommissionLog() {
 
       <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-[1500px] w-full text-left text-sm">
+          <table className="min-w-[1800px] w-full text-left text-sm">
             <thead className="sticky top-0 z-10 bg-white shadow-sm">
               <tr className="border-b text-xs text-gray-600">
                 <th className="px-4 py-3 font-semibold">Date/Time</th>
                 <th className="px-4 py-3 font-semibold">Office</th>
                 <th className="px-4 py-3 font-semibold">Cust ID</th>
                 <th className="px-4 py-3 font-semibold">Customer</th>
+                <th className="px-4 py-3 font-semibold">Policy #</th>
                 <th className="px-4 py-3 font-semibold">Prep Fee</th>
+                <th className="px-4 py-3 font-semibold">Receipt Adj.</th>
+                <th className="px-4 py-3 font-semibold">Pre-Ack Fee</th>
+                <th className="px-4 py-3 font-semibold">AR Violation</th>
                 <th className="px-4 py-3 font-semibold">Payment</th>
                 <th className="px-4 py-3 font-semibold">Return Year</th>
                 <th className="px-4 py-3 font-semibold">Counts?</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Fix</th>
-                <th className="px-4 py-3 font-semibold">Pre-Ack Advance?</th>
                 <th className="px-4 py-3 font-semibold">Referral Paid Out?</th>
-                <th className="px-4 py-3 font-semibold">Wire/RAC Funded?</th>
                 <th className="px-4 py-3 font-semibold">Notes</th>
               </tr>
             </thead>
@@ -1220,13 +1523,13 @@ export default function AgentCommissionLog() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-10 text-center text-gray-500">
+                  <td colSpan={16} className="px-4 py-10 text-center text-gray-500">
                     Loading commission data…
                   </td>
                 </tr>
               ) : visibleRows.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-10 text-center text-gray-500">
+                  <td colSpan={16} className="px-4 py-10 text-center text-gray-500">
                     No rows match your filters.
                   </td>
                 </tr>
@@ -1235,42 +1538,60 @@ export default function AgentCommissionLog() {
                   const displayStatus = getDisplayStatus(r);
                   const blocked = !isCountsTowardCommission(r);
 
-                  const isWire = getIsWire(r);
-                  const wireRequired = getWireRequired(r);
-
-                  const preAck = getRowValue(r, "pre_ack_advance");
                   const referral = getRowValue(r, "referral_paid_out");
-                  const wireFunded = getRowValue(r, "wire_rac_funded");
                   const notes = getRowValue(r, "notes") ?? "";
 
                   const noStatusFound = normStatus(displayStatus) === "NO STATUS FOUND";
                   const fixState = fixStatusByKey[r.sync_key];
 
-                  const isPreAckTrue = normalizeBoolSelect(preAck) === true;
-                  const referralAmount = Number(referral);
-                  const hasReferral = !Number.isNaN(referralAmount) && referralAmount > 0;
+                  const referralAmount = moneyNumber(referral);
+                  const hasReferral = referralAmount > 0;
 
-                  const rawFee = Number(r.prep_fee) || 0;
-                  let deduction = 0;
-                  if (isPreAckTrue) deduction += PRE_ACK_FEE;
-                  if (hasReferral) deduction += referralAmount;
-                  const netFee = Math.max(0, rawFee - deduction);
+                  const rawFee = moneyNumber(r.prep_fee);
+                  const receiptAdjustment = getImportedReceiptAdjustments(r);
+                  const preAckDeduction = getImportedPreAckDeduction(r);
+                  const arViolationDeduction = getImportedArViolationDeduction(r);
+                  const totalDeductions =
+                    receiptAdjustment + preAckDeduction + arViolationDeduction + referralAmount;
+                  const netFee = Math.max(0, rawFee - totalDeductions);
 
                   const rowHasDraft = Boolean(draft[r.sync_key]);
+                  const arDisputed = Boolean(getRowValue(r, "ar_violation_disputed"));
 
-                  return (
+return (
                     <tr
-                      key={r.sync_key}
+                      key={r.display_key || r.sync_key}
                       className={cx(
                         "border-b last:border-b-0",
-                        blocked ? "bg-amber-50" : "hover:bg-gray-50/60",
+                        r.is_shadow_credit
+                          ? "bg-indigo-50 hover:bg-indigo-100/60"
+                          : blocked
+                            ? "bg-amber-50"
+                            : "hover:bg-gray-50/60",
                         rowHasDraft && "bg-blue-50/40"
                       )}
                     >
                       <td className="whitespace-nowrap px-4 py-3">{formatDateTime(r.date_time)}</td>
                       <td className="px-4 py-3">{r.office_code ?? ""}</td>
                       <td className="px-4 py-3">{r.cust_id ?? ""}</td>
-                      <td className="px-4 py-3">{r.customer ?? ""}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          <span>{r.customer ?? ""}</span>
+                          {r.is_shadow_credit && (
+                            <>
+                              <span className="w-fit rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-700">
+                                Shadow Credit
+                              </span>
+                              {r.original_agent_name && (
+                                <span className="text-[10px] font-semibold text-indigo-700">
+                                  Original preparer: {r.original_agent_name}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs">{r.policy_number || "—"}</td>
 
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="flex flex-col">
@@ -1286,7 +1607,7 @@ export default function AgentCommissionLog() {
                             </>
                           ) : (
                             <>
-                              {deduction > 0 ? (
+                              {totalDeductions > 0 ? (
                                 <>
                                   <span className="text-[11px] text-gray-400 line-through">
                                     {formatMoney(rawFee)}
@@ -1294,15 +1615,12 @@ export default function AgentCommissionLog() {
                                   <span className="font-medium text-emerald-700">
                                     {formatMoney(netFee)}
                                   </span>
+                                  <span className="text-[10px] font-medium text-red-500">
+                                    -{formatMoney(totalDeductions)}
+                                  </span>
                                 </>
                               ) : (
                                 <span>{formatMoney(rawFee)}</span>
-                              )}
-
-                              {deduction > 0 && (
-                                <span className="text-[10px] font-medium text-red-500">
-                                  -{formatMoney(deduction)}
-                                </span>
                               )}
                             </>
                           )}
@@ -1310,15 +1628,72 @@ export default function AgentCommissionLog() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span>{r.payment_method ?? ""}</span>
-                          {wireRequired && (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                              Wire Req
-                            </span>
+                        <div className="text-xs">
+                          {receiptAdjustment > 0 ? (
+                            <div className="space-y-0.5">
+                              <div className="font-bold text-red-600">
+                                -{formatMoney(receiptAdjustment)}
+                              </div>
+                              {negativeDeductionOnly(r.prep_fee_difference) > 0 && (
+                                <div className="text-gray-500">
+                                  Prep Fee Difference: -{formatMoney(negativeDeductionOnly(r.prep_fee_difference))}
+                                </div>
+                              )}
+                              {negativeDeductionOnly(r.unfunded) > 0 && (
+                                <div className="text-gray-500">
+                                  Unfunded: -{formatMoney(negativeDeductionOnly(r.unfunded))}
+                                </div>
+                              )}
+                              {negativeDeductionOnly(r.refunded) > 0 && (
+                                <div className="text-gray-500">
+                                  Refunded: -{formatMoney(negativeDeductionOnly(r.refunded))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">—</span>
                           )}
                         </div>
                       </td>
+
+                      <td className="px-4 py-3">
+                        {preAckDeduction > 0 ? (
+                          <span className="font-bold text-red-600">
+                            -{formatMoney(preAckDeduction)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          {arViolationDeduction > 0 ? (
+                            <span className="font-bold text-red-600">
+                              -{formatMoney(arViolationDeduction)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+
+                          {arViolationDeduction > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => openArDisputeModal(r)}
+                              className={cx(
+                                "w-fit rounded-lg px-2 py-1 text-[10px] font-bold",
+                                arDisputed
+                                  ? "bg-green-100 text-green-700"
+                                  : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                              )}
+                            >
+                              {arDisputed ? "Disputed" : "Dispute"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="px-4 py-3">{r.payment_method ?? ""}</td>
 
                       <td className="px-4 py-3">{r.tax_year ?? ""}</td>
 
@@ -1335,22 +1710,14 @@ export default function AgentCommissionLog() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cx(
-                              "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
-                              getStatusBadgeClass(displayStatus)
-                            )}
-                          >
-                            {displayStatus || "—"}
-                          </span>
-
-                          {noStatusFound && (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
-                              !
-                            </span>
+                        <span
+                          className={cx(
+                            "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
+                            getStatusBadgeClass(displayStatus)
                           )}
-                        </div>
+                        >
+                          {displayStatus || "—"}
+                        </span>
                       </td>
 
                       <td className="px-4 py-3">
@@ -1385,28 +1752,8 @@ export default function AgentCommissionLog() {
 
                       <td className="px-4 py-3">
                         <select
-                          value={preAck == null ? "" : preAck ? "yes" : "no"}
-                          onChange={(e) => {
-                            const v = normalizeBoolSelect(e.target.value);
-                            setRowDraft(r.sync_key, { pre_ack_advance: v });
-                          }}
-                          className={cx(
-                            "h-8 w-20 rounded-lg border px-1 text-xs outline-none focus:ring-2 focus:ring-black/10",
-                            isPreAckTrue && "border-blue-200 bg-blue-50 font-semibold text-blue-700"
-                          )}
-                        >
-                          <option value="">—</option>
-                          <option value="yes">Yes</option>
-                          <option value="no">No</option>
-                        </select>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <select
                           value={referral || ""}
-                          onChange={(e) => {
-                            setRowDraft(r.sync_key, { referral_paid_out: e.target.value });
-                          }}
+                          onChange={(e) => setRowDraft(r.sync_key, { referral_paid_out: e.target.value })}
                           className={cx(
                             "h-8 w-24 rounded-lg border px-1 text-xs outline-none focus:ring-2 focus:ring-black/10",
                             hasReferral && "border-blue-200 bg-blue-50 font-semibold text-blue-700"
@@ -1422,29 +1769,9 @@ export default function AgentCommissionLog() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <select
-                          value={wireFunded == null ? "" : wireFunded ? "yes" : "no"}
-                          onChange={(e) => {
-                            const v = normalizeBoolSelect(e.target.value);
-                            setRowDraft(r.sync_key, { wire_rac_funded: v });
-                          }}
-                          className={cx(
-                            "h-8 w-20 rounded-lg border px-1 text-xs outline-none focus:ring-2 focus:ring-black/10",
-                            isWire && wireRequired && "border-red-400"
-                          )}
-                        >
-                          <option value="">—</option>
-                          <option value="yes">Yes</option>
-                          <option value="no">No</option>
-                        </select>
-                      </td>
-
-                      <td className="px-4 py-3">
                         <input
                           value={notes}
-                          onChange={(e) => {
-                            setRowDraft(r.sync_key, { notes: e.target.value });
-                          }}
+                          onChange={(e) => setRowDraft(r.sync_key, { notes: e.target.value })}
                           placeholder="..."
                           className="h-8 w-40 rounded-lg border px-2 text-xs outline-none focus:ring-2 focus:ring-black/10"
                         />
@@ -1460,7 +1787,7 @@ export default function AgentCommissionLog() {
         <div className="flex items-center justify-between border-t bg-white px-4 py-3 text-xs text-gray-600">
           <div>Showing {visibleRows.length} rows</div>
           <div className="italic text-gray-400">
-            * Calculation applies Pre-Ack & Referral deductions before Corp Fee. Blocked rows are excluded.
+            * Negative receipt adjustments, Pre-Ack fees, AR violations, and referrals reduce commissionable revenue. Shadow credits are limited to 10 per original preparer.
           </div>
         </div>
       </div>
@@ -1543,6 +1870,157 @@ export default function AgentCommissionLog() {
                   {fixSubmitting ? "Submitting..." : "Submit Fix Request"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shadowOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl">
+            <div className="flex items-start justify-between border-b p-5">
+              <div>
+                <h2 className="text-lg font-semibold">Add Shadowed Tax Credit</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Enter the exact receipt details. The tax will only be added if it matches an existing Supabase record.
+                </p>
+              </div>
+              <button onClick={closeShadowModal} className="rounded-lg border px-3 py-1 text-sm">
+                Close
+              </button>
+            </div>
+
+            <div className="p-5">
+              <div className="rounded-xl border bg-indigo-50 p-3 text-sm text-indigo-900">
+                Shadow credits use the original tax status. Policy #, Cust ID, and Receipt must match exactly.
+                Payment method and charged amount are verified with flexible matching, like Wire vs Wire Transfer or 387 vs 387.00.
+                You may only claim the first {SHADOW_LIMIT_PER_ORIGINAL_PREPARER} shadowed taxes for the same original preparer.
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <Field
+                  label="POLICY #"
+                  value={shadowForm.policy_number}
+                  onChange={(v) => setShadowForm((p) => ({ ...p, policy_number: v }))}
+                  placeholder="Policy / Return ID"
+                />
+
+                <Field
+                  label="CUST ID"
+                  value={shadowForm.cust_id}
+                  onChange={(v) => setShadowForm((p) => ({ ...p, cust_id: v }))}
+                  placeholder="Customer ID"
+                />
+
+                <Field
+                  label="PAYMENT METHOD"
+                  value={shadowForm.payment_method}
+                  onChange={(v) => setShadowForm((p) => ({ ...p, payment_method: v }))}
+                  type="select"
+                  options={shadowPaymentOptions}
+                />
+
+                <Field
+                  label="RECEIPT"
+                  value={shadowForm.receipt}
+                  onChange={(v) => setShadowForm((p) => ({ ...p, receipt: v }))}
+                  placeholder="Receipt #"
+                />
+
+                <Field
+                  label="CHARGED"
+                  value={shadowForm.charged}
+                  onChange={(v) => setShadowForm((p) => ({ ...p, charged: v }))}
+                  placeholder="Example: 250 or 250.00"
+                />
+              </div>
+
+              {shadowError && <p className="mt-3 text-sm text-red-600">{shadowError}</p>}
+              {shadowSuccess && <p className="mt-3 text-sm text-green-700">{shadowSuccess}</p>}
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button onClick={closeShadowModal} className="rounded-xl border px-4 py-2">
+                  Cancel
+                </button>
+                <button
+                  onClick={submitShadowCredit}
+                  disabled={shadowSubmitting}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {shadowSubmitting ? "Checking..." : "Add Shadow Credit"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {arDisputeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl">
+            <div className="flex items-start justify-between border-b p-5">
+              <div>
+                <h2 className="text-lg font-semibold">Dispute AR Violation</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Use this only if the Return ID was entered as the Policy # before April 30th.
+                </p>
+              </div>
+              <button onClick={closeArDisputeModal} className="rounded-lg border px-3 py-1 text-sm">
+                Close
+              </button>
+            </div>
+
+            <div className="p-5">
+              <div className="rounded-xl border bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-semibold">Dispute statement:</p>
+                <p className="mt-1">
+                  I had the Return ID entered as the Policy # prior to April 30th.
+                </p>
+              </div>
+
+              <div className="mt-4">
+                <label className="text-xs font-semibold text-gray-600">Explanation</label>
+                <textarea
+                  value={arDisputeText}
+                  onChange={(e) => setArDisputeText(e.target.value)}
+                  rows={5}
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/10"
+                  placeholder="Explain why this AR violation should be reviewed..."
+                />
+              </div>
+
+              {arDisputeRow && (
+                <div className="mt-3 rounded-xl bg-gray-50 p-3 text-xs text-gray-600">
+                  <div>
+                    <b>Customer:</b> {arDisputeRow.customer || "—"}
+                  </div>
+                  <div>
+                    <b>Policy #:</b> {arDisputeRow.policy_number || "—"}
+                  </div>
+                  <div>
+                    <b>Receipt:</b> {arDisputeRow.receipt || "—"}
+                  </div>
+                </div>
+              )}
+
+              {arDisputeError && <p className="mt-3 text-sm text-red-600">{arDisputeError}</p>}
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button onClick={closeArDisputeModal} className="rounded-xl border px-4 py-2">
+                  Cancel
+                </button>
+                <button
+                  onClick={submitArDispute}
+                  disabled={arDisputeSubmitting}
+                  className="rounded-xl bg-black px-4 py-2 text-white"
+                >
+                  {arDisputeSubmitting ? "Submitting..." : "Submit Dispute"}
+                </button>
+              </div>
+
+              <p className="mt-3 text-xs text-gray-500">
+                After submitting, click <b>Save Changes</b> to store the dispute.
+              </p>
             </div>
           </div>
         </div>
