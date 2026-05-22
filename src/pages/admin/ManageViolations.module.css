@@ -207,3 +207,124 @@ th {
   color: #721c24;
 }
 
+.containerModern {
+  padding: 24px;
+  background: #f4f7fb;
+  min-height: 100vh;
+}
+
+.topHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.summaryCards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.summaryCard {
+  background: white;
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+}
+
+.summaryCard span {
+  display: block;
+  color: #64748b;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.summaryCard strong {
+  font-size: 32px;
+  color: #0f172a;
+}
+
+.tabsContainer {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.tabButton {
+  border: none;
+  background: white;
+  padding: 14px 18px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+}
+
+.activeTab {
+  background: #2563eb;
+  color: white;
+}
+
+.tabCount {
+  background: rgba(255,255,255,0.2);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.tableCardModern {
+  background: white;
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+}
+
+.modernTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.modernTable th {
+  text-align: left;
+  padding: 14px;
+  color: #64748b;
+  font-size: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.modernTable td {
+  padding: 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.categoryBadge {
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.clientCell {
+  display: flex;
+  flex-direction: column;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 50px !important;
+  color: #94a3b8;
+}
+
+.loadingCard {
+  background: white;
+  padding: 40px;
+  border-radius: 18px;
+  text-align: center;
+}

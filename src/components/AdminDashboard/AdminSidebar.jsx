@@ -178,7 +178,7 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 
         >
 
-          Commission Upload
+          EOD Data Calendar
 
         </NavLink>
 
@@ -198,7 +198,7 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 
         >
 
-          Tax WIP
+          Agent Commissions
 
         </NavLink>
 
