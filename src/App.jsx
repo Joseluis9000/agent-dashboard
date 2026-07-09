@@ -11,7 +11,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 // Layouts
 import AuthLayout from './layouts/AuthLayout';
 import AdminLayout from './layouts/AdminLayout';
-import SupervisorLayout from './layouts/SupervisorLayout';
 import UnderwriterLayout from './layouts/UnderwriterLayout';
 
 // Pages
@@ -342,7 +341,7 @@ function AppRoutes() {
       case 'admin':
         return '/admin';
       case 'supervisor':
-        return '/supervisor';
+    return '/dashboard';
       case 'underwriter':
       case 'uw_manager':
         return '/uw';
@@ -387,7 +386,13 @@ function AppRoutes() {
       <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
 
       {/* PROTECTED: Agent area */}
-      <Route element={<ProtectedRoute />}>
+      <Route
+    element={
+        <ProtectedRoute
+            allowedRoles={['agent', 'supervisor', 'admin']}
+        />
+    }
+>
         <Route element={<AuthLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/sv-ar" element={<SVARPage />} />
@@ -425,15 +430,13 @@ function AppRoutes() {
 
       {/* PROTECTED: Supervisor area */}
       <Route element={<ProtectedRoute allowedRoles={['supervisor', 'admin']} />}>
-        <Route path="/supervisor" element={<SupervisorLayout />}>
-          <Route index element={<SupervisorDashboard />} />
-          <Route path="office-numbers" element={<OfficeNumbers />} />
-          <Route path="tickets" element={<SupervisorTickets />} />
-
-          {/* ✅ ADDED: Supervisor Tax WIP Route */}
-          <Route path="tax-wip" element={<SupervisorTaxWip />} />
-        </Route>
-      </Route>
+  <Route path="/supervisor" element={<AuthLayout />}>
+    <Route index element={<SupervisorDashboard />} />
+    <Route path="office-numbers" element={<OfficeNumbers />} />
+    <Route path="tickets" element={<SupervisorTickets />} />
+    <Route path="tax-wip" element={<SupervisorTaxWip />} />
+  </Route>
+</Route>
 
       {/* PROTECTED: Admin area */}
       <Route element={<ProtectedRoute allowedRoles={['admin']} />}>

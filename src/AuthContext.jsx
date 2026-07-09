@@ -99,7 +99,7 @@ export const AuthProvider = ({ children }) => {
             .select('id,email,full_name,role')
             .eq('id', sessUser.id)
             .maybeSingle(),
-          1500,
+          5000,
           'fetch profile by id'
         );
 
@@ -110,7 +110,7 @@ export const AuthProvider = ({ children }) => {
               .select('id,email,full_name,role')
               .eq('email', sessUser.email)
               .maybeSingle(),
-            1500,
+            5000,
             'fetch profile by email'
           );
           if (!legacy.error && legacy.data) data = legacy.data;
@@ -158,7 +158,7 @@ export const AuthProvider = ({ children }) => {
           data: { session },
         } = await withTimeout(
           supabase.auth.getSession(),
-          2000,
+          5000,
           'getSession()'
         );
         const sessUser = session?.user ?? null;
