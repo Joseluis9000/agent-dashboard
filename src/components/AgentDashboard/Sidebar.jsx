@@ -1,6 +1,20 @@
 // src/components/AgentDashboard/Sidebar.jsx
 import React, { useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import {
+  Home,
+  DollarSign,
+  ShieldAlert,
+  FileText,
+  Ban,
+  CalendarDays,
+  ClipboardList,
+  Building2,
+  BarChart3,
+  Ticket,
+  Users,
+  LogOut,
+} from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import styles from './Dashboard.module.css';
 
@@ -9,75 +23,95 @@ const Sidebar = ({ onLogout }) => {
   const location = useLocation();
   const { user, profile } = useAuth();
 
-  // Derive display name safely
   const displayName =
     profile?.full_name ||
     user?.user_metadata?.full_name ||
     user?.email ||
     'Agent';
 
-  // Active if exact match OR a parent of current path
   const isActive = (path) =>
     location.pathname === path || location.pathname.startsWith(path + '/');
 
-  // Role from profiles first, then user_metadata fallback
   const role = profile?.role || user?.user_metadata?.role || 'agent';
-  const isUW = ['underwriter', 'uw_manager', 'supervisor', 'admin'].includes(role);
+  const isSupervisor = ['supervisor', 'admin'].includes(role);
 
   const menuItems = useMemo(() => {
     const items = [
-      { path: '/dashboard', label: 'Dashboard' },
-
-      // Agent items
-      { path: '/agent/commission', label: 'Tax Commission Log' },
-      { path: '/agent/violations', label: 'My Violations' },
-
-      // Shared tools
-      { path: '/uw/submit', label: 'Underwriting Submit' },
-      { path: '/disqualified-policies', label: 'Disqualified Policies' },
-      { path: '/ticketing-system', label: 'Appointment Calendar' },
-      { path: '/eod-report', label: 'EOD Report' },
-      { path: '/office-eods', label: 'Office & Agent EODs' },
+      { path: '/dashboard', label: 'Dashboard', icon: Home },
+      { path: '/agent/commission', label: 'Tax Commission Log', icon: DollarSign },
+      { path: '/agent/violations', label: 'My Violations', icon: ShieldAlert },
+      { path: '/uw/submit', label: 'Underwriting Submit', icon: FileText },
+      { path: '/disqualified-policies', label: 'Disqualified Policies', icon: Ban },
+      { path: '/ticketing-system', label: 'Appointment Calendar', icon: CalendarDays },
+      { path: '/eod-report', label: 'EOD Report', icon: ClipboardList },
+      { path: '/office-eods', label: 'Office & Agent EODs', icon: Building2 },
     ];
 
-    // Optional: show UW queue shortcut only for UW-capable roles
-    if (isUW) {
-      items.push({ path: '/uw/dashboard', label: 'Underwriting Queue' });
+    if (isSupervisor) {
+      items.push(
+        { type: 'divider', label: 'Supervisor Tools' },
+        { path: '/supervisor/office-numbers', label: 'Office Numbers', icon: BarChart3 },
+        { path: '/supervisor/tickets', label: 'Manage Tickets', icon: Ticket },
+        { path: '/supervisor/tax-wip', label: 'Tax Whip', icon: Users }
+      );
     }
 
     return items;
-  }, [isUW]);
+  }, [isSupervisor]);
 
   return (
-    <aside className={styles.sidebar}>
+    <aside
+      className={`${styles.sidebar} ${
+        isSupervisor ? styles.supervisorSidebar : ''
+      }`}
+    >
       <img
         src="/fiesta-logo.png"
         alt="Fiesta Insurance Logo"
         className={styles.logo}
       />
 
-      {/* 🔹 Agent Identity Section */}
       <div className={styles.sidebarHeader}>
-        <div className={styles.dashboardTitle}>Agent Dashboard</div>
+        <div className={styles.dashboardTitle}>
+          {isSupervisor ? 'Supervisor Dashboard' : 'Agent Dashboard'}
+        </div>
         <div className={styles.userName}>{displayName}</div>
       </div>
 
       <nav>
-        {menuItems.map((item) => (
-          <button
-            key={item.path}
-            type="button"
-            onClick={() => navigate(item.path)}
-            className={isActive(item.path) ? styles.active : ''}
-            aria-current={isActive(item.path) ? 'page' : undefined}
-          >
-            {item.label}
-          </button>
-        ))}
+        {menuItems.map((item) => {
+          if (item.type === 'divider') {
+            return (
+              <div key={item.label} className={styles.menuDivider}>
+                {item.label}
+              </div>
+            );
+          }
+
+          const Icon = item.icon;
+
+          return (
+            <button
+              key={item.path}
+              type="button"
+              onClick={() => navigate(item.path)}
+              className={isActive(item.path) ? styles.active : ''}
+              aria-current={isActive(item.path) ? 'page' : undefined}
+            >
+              <Icon className={styles.navIcon} size={18} strokeWidth={2.2} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
-      <button onClick={onLogout} className={styles.logoutButton} type="button">
-        Logout
+      <button
+        onClick={onLogout}
+        className={styles.logoutButton}
+        type="button"
+      >
+        <LogOut className={styles.navIcon} size={18} strokeWidth={2.2} />
+        <span>Logout</span>
       </button>
     </aside>
   );
