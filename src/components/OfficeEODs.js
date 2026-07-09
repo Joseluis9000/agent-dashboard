@@ -259,9 +259,6 @@ const getExcludedSubmittedWashReceipts = (report) => {
   return [...computeSubmittedReceiptsToExclude(submittedRows)];
 };
 
-const isOnlyWashedSubmittedExtra = (extraSubmittedRows = []) => {
-  return !extraSubmittedRows || extraSubmittedRows.length === 0;
-};
 
 const normalizeSourceTransactionRows = (rows = []) => {
   return rows
@@ -305,38 +302,6 @@ const buildExtraSubmittedRows = (sourceRows = [], submittedReport) => {
   );
 };
 
-const buildMissingTransactionReasons = (row) => {
-  const details = row.missing_transaction_details || row.missing_receipt_details || [];
-
-  if (!details.length) return [];
-
-  const policyRows = details.filter((item) => item.policy_number);
-  const receiptOnlyRows = details.filter((item) => !item.policy_number && item.receipt);
-
-  const reasons = [];
-
-  if (policyRows.length > 0) {
-    const policies = [...new Set(policyRows.map((item) => item.policy_number).filter(Boolean))];
-    const shownPolicies = policies.slice(0, 12).join(', ');
-    const more = policies.length > 12 ? `, +${policies.length - 12} more` : '';
-
-    reasons.push(
-      `Agent did not include ${policies.length} policy transaction(s): ${shownPolicies}${more}.`
-    );
-  }
-
-  if (receiptOnlyRows.length > 0) {
-    const receipts = [...new Set(receiptOnlyRows.map((item) => item.receipt).filter(Boolean))];
-    const shownReceipts = receipts.slice(0, 12).join(', ');
-    const more = receipts.length > 12 ? `, +${receipts.length - 12} more` : '';
-
-    reasons.push(
-      `Agent did not include ${receipts.length} receipt transaction(s) with no policy number: ${shownReceipts}${more}.`
-    );
-  }
-
-  return reasons;
-};
 
 const buildReceiptAuditGroups = (details = []) => {
   const grouped = {};
@@ -511,13 +476,20 @@ const calculateEodSummaryFromTransfers = (rows = []) => {
   summary.revenue_deposit =
     totalFee - (summary.convenience_fee + nbRwCorpFee + feeRoyalty);
 
-  return {
-    ...summary,
-    raw_rows_count: rows.length,
-    valid_rows_count: validRows.length,
-    excluded_receipts_count: receiptsToExclude.size,
-    valid_rows: validRows,
-  };
+  const validReceiptCount = new Set(
+  validRows
+    .map((row) => cleanStr(row.receipt_id || row.receipt || ''))
+    .filter(Boolean)
+).size;
+
+return {
+  ...summary,
+  raw_rows_count: rows.length,
+  valid_rows_count: validRows.length,
+  valid_receipts_count: validReceiptCount,
+  excluded_receipts_count: receiptsToExclude.size,
+  valid_rows: validRows,
+};
 };
 
 const fetchAllRowsForRange = async ({ table, startDate, endDate, dateColumn, select = '*' }) => {
@@ -551,6 +523,73 @@ const getAuditStatus = ({ isMissingEod, isIncompleteEod, hasDuplicateTransferDat
   if (isMissingEod) return 'Missing EOD';
   if (isIncompleteEod) return 'Incomplete EOD';
   return 'Matched';
+};
+
+const getTransactionRating = (count = 0) => {
+  if (count <= 2) return { label: 'Extremely Low', emoji: '🚩', color: '#dc2626' };
+  if (count <= 4) return { label: 'Needs Review', emoji: '⚠️', color: '#d97706' };
+  if (count <= 7) return { label: 'Typical Day', emoji: '✅', color: '#16a34a' };
+  if (count <= 10) return { label: 'High Productivity', emoji: '⭐', color: '#2563eb' };
+
+  return { label: 'Exceptional', emoji: '🔥', color: '#7c3aed' };
+};
+
+const getVolumeScore = (count = 0) => {
+  if (count <= 2) return 5;
+  if (count <= 4) return 15;
+  if (count <= 7) return 28;
+  if (count <= 10) return 36;
+
+  return 40;
+};
+
+const getComplexityPoints = (rows = []) => {
+  return rows.reduce((sum, row) => {
+    const type = String(row.type || '').toUpperCase();
+    const company = String(row.company || '').toUpperCase();
+
+    if (type.includes('NEW') || type.includes('RWR')) return sum + 5;
+    if (type.includes('REN')) return sum + 4;
+    if (company.includes('ENDORSEMENT') || type.includes('END')) return sum + 2;
+    if (company.includes('REINSTATEMENT')) return sum + 2;
+    if (company.includes('DMV') || company.includes('REGISTRATION')) return sum + 2;
+    if (company.includes('PAYMENT')) return sum + 1;
+
+    return sum + 1;
+  }, 0);
+};
+
+const getProductivityScore = (row) => {
+  const transactionCount = Number(row.valid_receipts_count || 0);
+
+  const volumeScore = getVolumeScore(transactionCount);
+
+  const complexityRaw = getComplexityPoints(row.valid_rows || []);
+  const complexityScore = Math.min(30, complexityRaw);
+
+  // Simple v1 office comparison until we add historical office medians
+  const officeScore = transactionCount >= 5 ? 20 : Math.round((transactionCount / 5) * 20);
+
+  // Simple v1 consistency score
+  const consistencyScore =
+  transactionCount <= 2
+    ? 3
+    : transactionCount <= 4
+    ? 6
+    : 10;
+
+  const total = Math.min(100, volumeScore + complexityScore + officeScore + consistencyScore);
+
+  return {
+    total,
+    volumeScore,
+    complexityScore,
+    officeScore,
+    consistencyScore,
+    transactionCount,
+    rating: getTransactionRating(transactionCount),
+    needsImmediateReview: total <= 39 || transactionCount <= 2,
+  };
 };
 
 
@@ -662,13 +701,14 @@ const getExpenseNote = (report) => {
   if (!report) return '';
 
   return cleanStr(
-    report.expenses_note ??
-    report.expense_note ??
-    report.expense_notes ??
-    report.expenses_description ??
-    report.expense_description ??
-    report.notes ??
-    ''
+    report.expenses_explanation ??
+report.expenses_note ??
+report.expense_note ??
+report.expense_notes ??
+report.expenses_description ??
+report.expense_description ??
+report.notes ??
+''
   );
 };
 
@@ -778,9 +818,18 @@ const EodTabButton = ({ active, onClick, children }) => (
 const SubmittedEodTabs = ({ row, meta }) => {
   const [activeSubmittedTab, setActiveSubmittedTab] = useState('summary');
 
-  const report = row.submitted_report;
-  const receipts = getSubmittedReportReceipts(report);
-  const notes = getSubmittedReportNotes(report);
+const report = row.submitted_report;
+const receipts = getSubmittedReportReceipts(report);
+const notes = getSubmittedReportNotes(report);
+
+const referralPolicyCounts = {};
+(report?.referrals || []).forEach((r) => {
+  const policy = r.policyNumber || r.policy_number || r.policy || r.Policy;
+  if (!policy) return;
+  referralPolicyCounts[policy] = (referralPolicyCounts[policy] || 0) + 1;
+});
+
+const hasDuplicateReferralPolicies = Object.values(referralPolicyCounts).some((count) => count > 1);
 
   if (!report) {
     return (
@@ -842,25 +891,198 @@ const SubmittedEodTabs = ({ row, meta }) => {
           <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>Payouts</h4>
             <div style={{ fontSize: 13 }}>
-              <div><strong>Expenses:</strong> {formatCurrency(row.submitted_expenses)}</div>
-              {row.expense_note && <div style={{ marginTop: 4, fontStyle: 'italic' }}>{row.expense_note}</div>}
-              <div style={{ marginTop: 8 }}><strong>Referrals Paid:</strong> {formatCurrency(row.submitted_referral_payouts)}</div>
+              <div>
+  <strong>Expenses:</strong> {formatCurrency(row.submitted_expenses)}
+
+  {row.expense_note && (
+    <div
+      style={{
+        marginTop:6,
+        padding:'8px',
+        background:'#f8fafc',
+        border:'1px solid #e2e8f0',
+        borderRadius:8,
+        color:'#475569'
+      }}
+    >
+      <strong>Reason:</strong> {row.expense_note}
+    </div>
+  )}
+</div>
+              <div style={{ marginTop:12 }}>
+  <strong>Referrals Paid:</strong> {formatCurrency(row.submitted_referral_payouts)}
+</div>
+
+{Array.isArray(report?.referrals) && report.referrals.length > 0 && (
+
+<div style={{ marginTop:12 }}>
+
+{hasDuplicateReferralPolicies && (
+  <div
+    style={{
+      marginBottom: 10,
+      padding: '10px 12px',
+      background: '#fef2f2',
+      border: '1px solid #fecaca',
+      color: '#991b1b',
+      borderRadius: 8,
+      fontWeight: 900,
+    }}
+  >
+    🚩 Duplicate referral policy number detected. Verify this was not entered twice.
+  </div>
+)}
+
+<table
+style={{
+width:'100%',
+borderCollapse:'collapse',
+fontSize:12
+}}>
+
+<thead>
+
+<tr style={{background:'#f8fafc'}}>
+
+<th style={{padding:8}}>Policy</th>
+
+<th style={{padding:8}}>Customer</th>
+
+<th style={{padding:8}}>Amount</th>
+
+<th style={{padding:8}}>Notes</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{report.referrals.map((r,index)=>(
+
+<tr
+  key={index}
+  style={{
+    background:
+      referralPolicyCounts[
+        r.policyNumber || r.policy_number || r.policy || r.Policy
+      ] > 1
+        ? '#fef2f2'
+        : undefined,
+  }}
+>
+
+<td style={{ padding: 8, fontWeight: 800 }}>
+  {r.policyNumber || r.policy_number || r.policy || r.Policy || '-'}
+
+  {referralPolicyCounts[
+    r.policyNumber || r.policy_number || r.policy || r.Policy
+  ] > 1 && (
+    <div
+      style={{
+        marginTop: 4,
+        color: '#dc2626',
+        fontWeight: 900,
+        fontSize: 11,
+      }}
+    >
+      🚩 Duplicate Policy
+    </div>
+  )}
+</td>
+
+<td style={{padding:8}}>
+  {r.clientName || r.customer_name || r.customer || r.Customer || r.name || '-'}
+</td>
+
+<td style={{padding:8}}>
+  {formatCurrency(r.amount || r.fee || r.total || 0)}
+</td>
+
+<td style={{padding:8}}>
+  {r.reason || r.note || r.notes || r.description || '-'}
+</td>
+
+</tr>
+
+))}
+
+</tbody>
+
+</table>
+
+</div>
+
+)}
             </div>
           </div>
 
           <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>Cash Balancing</h4>
             <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 6, fontSize: 13 }}>
-              <div>Expected Cash:</div><div><strong>{formatCurrency(getReportField(report, ['expected_cash', 'expected_cash_amount'], row.submitted_report?.expected_cash || 0))}</strong></div>
-              <div>Actual Cash:</div><div><strong>{formatCurrency(getReportField(report, ['actual_cash', 'actual_cash_amount'], row.submitted_report?.actual_cash || 0))}</strong></div>
-              <div>Difference:</div><div style={{ color: Number(report?.cash_difference || 0) === 0 ? '#16a34a' : '#dc2626', fontWeight: 900 }}>{formatCurrency(report?.cash_difference || 0)}</div>
+              <div>Expected Cash:</div>
+<div>
+  <strong>
+    {formatCurrency(
+      Number(report?.cash_premium || 0) +
+      Number(report?.cash_fee || 0)
+    )}
+  </strong>
+</div>
+
+<div>Actual Cash:</div>
+<div>
+  <strong>
+    {formatCurrency(report?.total_cash_in_hand || 0)}
+  </strong>
+</div>
+
+<div>Difference:</div>
+<div
+  style={{
+    fontWeight: 900,
+    color:
+      Math.abs(Number(report?.cash_difference || 0)) > 5
+        ? '#dc2626'
+        : '#111827',
+  }}
+>
+  {formatCurrency(report?.cash_difference || 0)}
+</div>
             </div>
           </div>
 
           <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 12 }}>
             <h4 style={{ margin: '0 0 8px' }}>A/R Corrections</h4>
             <div style={{ fontSize: 13 }}>
-              {getReportField(report, ['ar_corrections', 'ar_correction_notes'], '') || 'No A/R Corrections were made.'}
+              {Array.isArray(report?.ar_corrections) && report.ar_corrections.length>0 ? (
+
+report.ar_corrections.map((item,index)=>(
+
+<div
+key={index}
+style={{
+padding:'8px',
+marginBottom:8,
+background:'#f8fafc',
+border:'1px solid #e2e8f0',
+borderRadius:8
+}}
+>
+
+{typeof item==='string'
+? item
+: JSON.stringify(item,null,2)}
+
+</div>
+
+))
+
+):(
+
+'No A/R Corrections were made.'
+
+)}
             </div>
           </div>
         </div>
@@ -1643,11 +1865,7 @@ const OfficeEODs = () => {
         }))
         .filter((item) => item.receipt || item.policy_number);
 
-      const expectedReceipts = new Set(
-        expectedReceiptRows
-          .map((item) => item.receipt)
-          .filter(Boolean)
-      );
+     
 
       const submittedReceipts = buildSubmittedReceiptSet(submitted);
       const submittedPolicies = buildSubmittedPolicySet(submitted);
@@ -1694,8 +1912,15 @@ const OfficeEODs = () => {
       // They should not turn a financially correct EOD into an incomplete EOD.
       const isIncompleteEod = !!submitted && (hasAmountDifference || missingReceipts.length > 0);
 
+      const productivity = getProductivityScore(expected);
+
       return {
         ...expected,
+        productivity,
+        transaction_count: productivity.transactionCount,
+        productivity_score: productivity.total,
+        productivity_rating: productivity.rating,
+        needs_immediate_review: productivity.needsImmediateReview,
         submitted_report: submitted,
         submitted_report_id: submitted?.id || null,
         submitted_revenue_deposit: submitted?.revenue_deposit || 0,
@@ -1811,7 +2036,7 @@ const OfficeEODs = () => {
         if (row.is_missing_eod) acc.missingEods += 1;
         if (row.is_incomplete_eod) acc.incompleteEods += 1;
         if (row.has_duplicate_transfer_data) acc.duplicateRows += 1;
-
+        if (row.needs_immediate_review) acc.immediateReviews += 1;
         return acc;
       },
       {
@@ -1822,6 +2047,7 @@ const OfficeEODs = () => {
         missingEods: 0,
         incompleteEods: 0,
         duplicateRows: 0,
+        immediateReviews: 0,
       }
     );
   }, [auditRows]);
@@ -1835,7 +2061,19 @@ const OfficeEODs = () => {
     return auditRows.filter((row) => row.is_incomplete_eod);
   }, [auditRows]);
 
+  const immediateReviewRows = useMemo(() => {
+    return auditRows.filter((row) => row.needs_immediate_review);
+  }, [auditRows]);
+
   const openAuditListModal = (type) => {
+    if (type === 'immediate') {
+      setAuditModal({
+        type: 'list',
+        title: 'Agents Needing Immediate Productivity Review',
+        rows: immediateReviewRows,
+      });
+      return;
+    }
     if (type === 'missing') {
       setAuditModal({
         type: 'list',
@@ -1955,6 +2193,17 @@ const OfficeEODs = () => {
               {kpis.incompleteEods}
             </span>
           </button>
+          <button
+            type="button"
+            className={styles.kpiCard}
+            onClick={() => openAuditListModal('immediate')}
+            style={{ textAlign: 'left', border: 'none', cursor: 'pointer' }}
+            title="Click to view agents needing immediate productivity review">
+            <span className={styles.kpiLabel}>Immediate Reviews</span>
+            <span className={styles.kpiValue} style={{ color: kpis.immediateReviews > 0 ? '#dc2626' : '#38a169' }}>
+              {kpis.immediateReviews}
+            </span>
+          </button>
           <div className={styles.kpiCard}>
             <span className={styles.kpiLabel}>Duplicate Transfer Data</span>
             <span className={styles.kpiValue} style={{ color: kpis.duplicateRows > 0 ? '#e53e3e' : '#38a169' }}>
@@ -1992,12 +2241,75 @@ const OfficeEODs = () => {
             </div>
           </div>
 
+         {!isLoading && !error && (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                color: '#334155',
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Legend</div>
+
+              <div>
+                ▶ Click office row to expand agents.
+              </div>
+
+              <div>
+                ✅ Matched = submitted EOD matches transfer data.
+              </div>
+
+              <div>
+                🚩 Missing EOD = agent has transfer activity but did not submit an EOD.
+              </div>
+
+              <div>
+                ⚠️ Incomplete EOD = EOD was submitted, but deposits, policies, or receipts do not match transfer data.
+              </div>
+
+              <div style={{ marginTop: 6 }}>
+                Productivity Score: 95–100 Elite • 85–94 Excellent • 75–84 Meets Expectations • 60–74 Needs Improvement • 40–59 Low Productivity • 0–39 Immediate Review
+              </div>
+
+              <div>
+                Completed Transactions:
+1–2 🚩 Extremely Low •
+3–4 ⚠️ Needs Review •
+5–7 ✅ Typical Day •
+8–10 ⭐ High Productivity •
+11+ 🔥 Exceptional
+              </div>
+            </div>
+          )}
+            {!isLoading && !error && kpis.immediateReviews > 0 && (
+            <div
+              onClick={() => openAuditListModal('immediate')}
+              style={{
+                marginBottom: 14,
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#991b1b',
+                fontWeight: 900,
+                cursor: 'pointer',
+              }}
+            >
+              🚩 {kpis.immediateReviews} agent(s) need immediate productivity review.
+            </div>
+          )}
+
           {isLoading && <p>Loading EOD audit data...</p>}
           {error && <p className={styles.errorText}>Error: {error}</p>}
 
           {!isLoading && !error && viewMode === 'regional' && (
-            <div className={styles.tableContainer}>
-              <table className={styles.dataTable}>
+            <div className={styles.tableContainer} style={{ overflowX: 'auto', width: '100%' }}>
+              <table className={styles.dataTable} style={{ minWidth: 1250 }}>
                 <thead>
                   <tr>
                     <th style={{ width: '20px' }}></th>
@@ -2080,16 +2392,20 @@ const OfficeEODs = () => {
                               {expandedGroups.has(groupKey) && (
                                 <tr className={styles.detailRow}>
                                   <td colSpan="9">
-                                    <table className={styles.subTable}>
+                                    <table
+  className={styles.subTable}
+  style={{
+    minWidth: 1600,
+    tableLayout: 'auto'
+  }}
+>
                                       <thead>
                                         <tr>
                                           <th>Agent</th>
-                                          <th>Status</th>
-                                          <th>Submitted At</th>
-                                          <th>Edited At</th>
-                                          <th>Policies</th>
-                                          <th>Expected Revenue</th>
-                                          <th>Submitted Revenue</th>
+<th>Productivity</th>
+<th>Status</th>
+<th>Expected Revenue</th>
+<th>Submitted Revenue</th>
                                           <th>Difference</th>
                                           <th>Trust Diff.</th>
                                           <th>DMV Diff.</th>
@@ -2114,13 +2430,30 @@ const OfficeEODs = () => {
                                                 style={{ cursor: 'pointer' }}
                                               >
                                                 <td>
-                                                  <div style={{ fontWeight: 'bold', color: '#2d3748' }}>{getDisplayName(row)}</div>
-                                                  <div style={{ fontSize: '0.75rem', color: '#718096' }}>{row.agent_email}</div>
-                                                </td>
-                                                <td>
-                                                  <span style={{
-                                                    display: 'inline-block',
-                                                    padding: '2px 8px',
+  <div style={{ fontWeight: 'bold', color: '#2d3748' }}>{getDisplayName(row)}</div>
+  <div style={{ fontSize: '0.75rem', color: '#718096' }}>{row.agent_email}</div>
+</td>
+<td>
+  <div style={{ fontWeight: 900, color: row.productivity_rating?.color }}>
+    <div style={{ fontWeight: 900, color: row.productivity_rating?.color }}>
+  {row.transaction_count}
+</div>
+
+<div style={{ fontSize: 11 }}>
+  Completed Transactions
+</div>
+  </div>
+  <div style={{ fontSize: 12, fontWeight: 800 }}>
+    {row.productivity_score}%
+  </div>
+  <div style={{ fontSize: 11, color: row.productivity_rating?.color, fontWeight: 800 }}>
+    {row.productivity_rating?.emoji} {row.productivity_rating?.label}
+  </div>
+</td>
+<td>
+  <span style={{
+    display: 'inline-block',
+    padding: '2px 8px',
                                                     borderRadius: 999,
                                                     fontSize: '0.75rem',
                                                     fontWeight: 800,
@@ -2131,20 +2464,6 @@ const OfficeEODs = () => {
                                                   {row.excluded_submitted_wash_receipts?.length > 0 && (
                                                     <div style={{ fontSize: 11, color: '#92400e', fontWeight: 800, marginTop: 3 }}>
                                                       {row.excluded_submitted_wash_receipts.length} washed receipt(s)
-                                                    </div>
-                                                  )}
-                                                </td>
-                                                <td style={{ fontSize: 12, color: '#2d3748', fontWeight: 700 }}>
-                                                  {formatShortDateTime(row.submitted_audit_meta?.submittedAt)}
-                                                </td>
-                                                <td style={{ fontSize: 12, color: row.submitted_audit_meta?.editedAt && row.submitted_audit_meta.editedAt !== '—' ? '#d97706' : '#718096', fontWeight: 700 }}>
-                                                  {formatShortDateTime(row.submitted_audit_meta?.editedAt)}
-                                                </td>
-                                                <td>
-                                                  {row.nb_rw_count}
-                                                  {row.policies_difference !== 0 && (
-                                                    <div style={{ fontSize: 11, color: '#e53e3e', fontWeight: 800 }}>
-                                                      Submitted: {row.submitted_nb_rw_count}
                                                     </div>
                                                   )}
                                                 </td>
@@ -2159,7 +2478,7 @@ const OfficeEODs = () => {
 
                                               {isOpen && (
                                                 <tr>
-                                                  <td colSpan="10" style={{ padding: 12, background: '#fff' }}>
+                                                  <td colSpan="8" style={{ padding: 12, background: '#fff' }}>
                                                     <div style={{ fontSize: 12 }}>
                                                       <strong>Audit Details</strong>
                                                       <div style={{ marginTop: 6 }}>

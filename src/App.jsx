@@ -43,6 +43,9 @@ import AgentCommissionLog from './pages/agent/AgentCommissionLog';
 // ✅ ADDED: Commission Uploader page import
 import CommissionUploader from './pages/admin/CommissionUploader';
 
+// ✅ ADDED: Marketing Operations Center page import
+import MarketingOps from './pages/admin/MarketingOps';
+
 // ✅ ADDED: Admin Tax WIP page import
 import AdminTaxWip from './pages/admin/AdminTaxWip';
 
@@ -449,6 +452,9 @@ function AppRoutes() {
 
           {/* ✅ ADDED: Admin Commission Upload Route */}
           <Route path="commission-upload" element={<CommissionUploader />} />
+
+          {/* ✅ ADDED: Marketing Operations Center Route */}
+          <Route path="marketing" element={<MarketingOps />} />
 
           {/* ✅ ADDED: Admin Tax WIP Route */}
           <Route path="tax-wip" element={<AdminTaxWip />} />
