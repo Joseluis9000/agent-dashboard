@@ -165,41 +165,33 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 
 
         {/* ✅ NEW: Commission Upload */}
-
         <NavLink
-
           to="/admin/commission-upload"
-
           className={({ isActive }) =>
-
             `${styles.navLink} ${isActive ? styles.activeLink : ''}`
-
           }
-
         >
-
           EOD Data Calendar
-
         </NavLink>
 
-
+        {/* ✅ NEW: Marketing Operations Center */}
+        <NavLink
+          to="/admin/marketing"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Marketing Operations
+        </NavLink>
 
         {/* ✅ NEW: Tax WIP */}
-
         <NavLink
-
           to="/admin/tax-wip"
-
           className={({ isActive }) =>
-
             `${styles.navLink} ${isActive ? styles.activeLink : ''}`
-
           }
-
         >
-
           Agent Commissions
-
         </NavLink>
 
       </nav>
