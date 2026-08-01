@@ -1,1936 +1,2973 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+// OfficeNumbers.jsx
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import styles from '../components/AdminDashboard/AdminDashboard.module.css';
 
-// --- ICONS & HELPERS ---
-const ArrowUp = () => <span style={{ color: '#27ae60', fontWeight: 'bold' }}>▲</span>;
-const ArrowDown = () => <span style={{ color: '#c0392b', fontWeight: 'bold' }}>▼</span>;
+const PAGE_SIZE = 1000;
+const SETTINGS_STORAGE_KEY = 'officeNumbersPacingSettingsV5';
 
-const formatCurrency = (val) =>
-  parseFloat(val || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const FEE_TYPE_OPTIONS = [
+  { value: 'broker', label: 'Broker Fee' },
+  { value: 'endorsement', label: 'Endorsement Fee' },
+  { value: 'renewal', label: 'Renewal Fee' },
+  { value: 'reinstatement', label: 'Reinstatement Fee' },
+  { value: 'payment', label: 'Payment Fee' },
+  { value: 'registration', label: 'Registration Fee' },
+  { value: 'convenience', label: 'Convenience Fee' },
+  { value: 'tax_prep', label: 'Tax Prep / Product Fee' },
+  { value: 'all', label: 'All Fees' },
+];
 
-const formatCount = (val) => (val || 0).toLocaleString();
+const cleanStr = (value) => String(value ?? '').replace(/\r/g, '').trim();
 
-const formatPct = (val) => {
-  if (val === null || val === undefined || val === Infinity || Number.isNaN(val)) return '-';
-  const color = val >= 0 ? '#27ae60' : '#c0392b';
-  return (
-    <span style={{ color, fontWeight: 'bold' }}>
-      {val > 0 ? '+' : ''}
-      {val.toFixed(1)}%
-    </span>
+const parseMoney = (value) => {
+  const parsed = parseFloat(String(value || '0').replace(/,/g, '').trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeOffice = (officeRaw = '') => {
+  const match = String(officeRaw || '').match(/CA\d{3}/i);
+  return match ? match[0].toUpperCase() : cleanStr(officeRaw) || 'Unknown';
+};
+
+const getOfficeNumber = (office = '') => {
+  const match = String(office).match(/CA(\d{3})/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+};
+
+const getDateKeyFromTransfer = (row) => {
+  const raw = cleanStr(row?.date_time);
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+};
+
+const isVoidedRow = (row) => cleanStr(row?.voided).toUpperCase().includes('VOIDED');
+
+const getTransferTxnKey = (row) => {
+  if (row.sync_key) return `sync:${row.sync_key}`;
+
+  const receipt = cleanStr(row.receipt_id || row.receipt || '');
+  const customerId = cleanStr(row.customer_id || row.id || '');
+  const premium = parseMoney(row.premium).toFixed(2);
+  const fee = parseMoney(row.fee).toFixed(2);
+  const total = parseMoney(row.total).toFixed(2);
+  const company = cleanStr(row.company);
+  const type = cleanStr(row.type);
+
+  return `${receipt}|${customerId}|${premium}|${fee}|${total}|${company}|${type}`;
+};
+
+const getFeeCategory = (row) => {
+  const company = cleanStr(row?.company).toUpperCase();
+  const policyType = cleanStr(row?.policy_type).toUpperCase();
+  const type = cleanStr(row?.type).toUpperCase();
+  const policy = cleanStr(row?.policy).toUpperCase();
+  const combined = `${company} ${policyType} ${type} ${policy}`;
+
+  if (combined.includes('BROKER FEE')) return 'broker';
+  if (combined.includes('ENDORSEMENT FEE')) return 'endorsement';
+  if (combined.includes('RENEWAL FEE')) return 'renewal';
+  if (combined.includes('REINSTATEMENT FEE')) return 'reinstatement';
+  if (combined.includes('PAYMENT FEE')) return 'payment';
+  if (combined.includes('REGISTRATION FEE')) return 'registration';
+  if (combined.includes('CONVENIENCE FEE')) return 'convenience';
+
+  if (
+    combined.includes('TAX PREP') ||
+    combined.includes('TAX ESTIMATE') ||
+    combined.includes('DEFENDMYID') ||
+    combined.includes('MAX SHIELD')
+  ) {
+    return 'tax_prep';
+  }
+
+  return null;
+};
+
+const createFeeBucket = () => ({
+  broker: 0,
+  endorsement: 0,
+  renewal: 0,
+  reinstatement: 0,
+  payment: 0,
+  registration: 0,
+  convenience: 0,
+  tax_prep: 0,
+  all: 0,
+});
+
+const calculateTransactionSummary = (rows = []) => {
+  const seenTxn = new Set();
+  let excludedRowsCount = 0;
+
+  const validRows = rows.filter((row) => {
+    if (isVoidedRow(row)) {
+      excludedRowsCount += 1;
+      return false;
+    }
+
+    const txnKey = getTransferTxnKey(row);
+    if (seenTxn.has(txnKey)) {
+      excludedRowsCount += 1;
+      return false;
+    }
+
+    seenTxn.add(txnKey);
+    return true;
+  });
+
+  let newBusinessCount = 0;
+  let rewriteCount = 0;
+  const feeTotals = createFeeBucket();
+  const feeCounts = createFeeBucket();
+
+  validRows.forEach((row) => {
+    const type = cleanStr(row.type).toUpperCase();
+    const fee = parseMoney(row.fee);
+
+    if (type === 'NEW') newBusinessCount += 1;
+    if (type === 'RWR') rewriteCount += 1;
+
+    if (Math.abs(fee) > 0.0001) {
+      feeTotals.all += fee;
+      feeCounts.all += Math.sign(fee);
+    }
+
+    const feeCategory = getFeeCategory(row);
+    if (feeCategory) {
+      feeTotals[feeCategory] += fee;
+      feeCounts[feeCategory] += Math.sign(fee);
+    }
+  });
+
+  const validReceiptCount = new Set(
+    validRows
+      .map((row) => cleanStr(row.receipt_id || row.receipt || ''))
+      .filter(Boolean)
+  ).size;
+
+  return {
+    nb_rw_count: newBusinessCount + rewriteCount,
+    new_business_count: newBusinessCount,
+    rewrite_count: rewriteCount,
+    fee_totals: feeTotals,
+    fee_counts: feeCounts,
+    raw_rows_count: rows.length,
+    valid_rows_count: validRows.length,
+    valid_receipts_count: validReceiptCount,
+    excluded_rows_count: excludedRowsCount,
+  };
+};
+
+const getCurrentMonthValue = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const getMonthDetails = (monthValue) => {
+  const [year, month] = monthValue.split('-').map(Number);
+  const nextMonthDate = new Date(year, month, 1);
+
+  return {
+    year,
+    month,
+    firstDay: `${year}-${String(month).padStart(2, '0')}-01`,
+    nextMonthFirstDay: `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-01`,
+    daysInMonth: new Date(year, month, 0).getDate(),
+  };
+};
+
+const getComparisonMonthDetails = (monthValue) => {
+  const [year, month] = monthValue.split('-').map(Number);
+
+  const lastMonthDate = new Date(year, month - 2, 1);
+  const lastYearDate = new Date(year - 1, month - 1, 1);
+
+  const toMonthValue = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+  return {
+    lastMonth: {
+      value: toMonthValue(lastMonthDate),
+      ...getMonthDetails(toMonthValue(lastMonthDate)),
+    },
+    lastYear: {
+      value: toMonthValue(lastYearDate),
+      ...getMonthDetails(toMonthValue(lastYearDate)),
+    },
+  };
+};
+
+const buildHistoricalMetricMap = (rows, selectedFeeType, usesNbRwCount) => {
+  const rowsByOffice = new Map();
+
+  rows.forEach((row) => {
+    const office = normalizeOffice(row.office);
+    if (!office) return;
+
+    if (!rowsByOffice.has(office)) rowsByOffice.set(office, []);
+    rowsByOffice.get(office).push(row);
+  });
+
+  const metricByOffice = {};
+
+  rowsByOffice.forEach((officeRows, office) => {
+    const summary = calculateTransactionSummary(officeRows);
+    const selectedFeeCount = summary.fee_counts[selectedFeeType] || 0;
+
+    metricByOffice[office] = usesNbRwCount
+      ? summary.nb_rw_count
+      : selectedFeeCount;
+  });
+
+  return metricByOffice;
+};
+
+const getMonthLabel = (monthValue) => {
+  const [year, month] = monthValue.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+    .format(new Date(year, month - 1, 1));
+};
+
+const formatDateLabel = (dateKey) => {
+  if (!dateKey) return 'No data loaded';
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(year, month - 1, day));
+};
+
+const formatCurrency = (value, digits = 0) => new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits,
+}).format(Number(value) || 0);
+
+const formatNumber = (value) => new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 0,
+}).format(Number(value) || 0);
+
+const formatDecimal = (value) => new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+}).format(Number(value) || 0);
+
+
+const normalizeAgent = (row) => {
+  const email = cleanStr(row?.agent_email).toLowerCase();
+  return email || 'Unknown Agent';
+};
+
+
+
+const buildAgentHistoricalMetricMap = (rows, selectedFeeType, usesNbRwCount) => {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const agent = normalizeAgent(row);
+    if (!grouped.has(agent)) grouped.set(agent, []);
+    grouped.get(agent).push(row);
+  });
+  const output = {};
+  grouped.forEach((agentRows, agent) => {
+    const summary = calculateTransactionSummary(agentRows);
+    output[agent] = usesNbRwCount
+      ? summary.nb_rw_count
+      : (summary.fee_counts[selectedFeeType] || 0);
+  });
+  return output;
+};
+
+const getMostRecentCsrName = (rows = [], fallbackEmail = '') => {
+  const sortedRows = [...rows].sort((a, b) => {
+    const aDate = cleanStr(a?.date_time);
+    const bDate = cleanStr(b?.date_time);
+    return bDate.localeCompare(aDate);
+  });
+
+  const latestNamedRow = sortedRows.find((row) => cleanStr(row?.csr));
+
+  if (latestNamedRow) {
+    return cleanStr(latestNamedRow.csr);
+  }
+
+  const emailPrefix = cleanStr(fallbackEmail).split('@')[0] || 'Unknown Agent';
+
+  return emailPrefix
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const getAgentOfficeAndRegion = (rows = [], officeRegions = {}) => {
+  const officeCounts = new Map();
+
+  rows.forEach((row) => {
+    const office = normalizeOffice(row.office);
+    if (!office || office === 'Unknown') return;
+    officeCounts.set(office, (officeCounts.get(office) || 0) + 1);
+  });
+
+  const offices = Array.from(officeCounts.entries())
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return getOfficeNumber(a[0]) - getOfficeNumber(b[0]);
+    })
+    .map(([office]) => office);
+
+  const primaryOffice = offices[0] || 'Unknown';
+
+  const regions = Array.from(
+    new Set(
+      offices
+        .map((office) => cleanStr(officeRegions[office]))
+        .filter(Boolean)
+    )
   );
+
+  return {
+    primaryOffice,
+    offices,
+    region: regions.length > 0 ? regions.join(' / ') : 'Unassigned',
+  };
 };
 
-const safeDivide = (fees, count) => {
-  const f = parseFloat(fees || 0);
-  const c = parseFloat(count || 0);
-  return c ? f / c : 0;
+const loadSavedSettings = () => {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return { groupByRegion: true };
+    const parsed = JSON.parse(raw);
+    return { groupByRegion: parsed.groupByRegion !== false };
+  } catch (error) {
+    console.warn('Unable to load dashboard display settings:', error);
+    return { groupByRegion: true };
+  }
 };
 
-const formatAvg = (fees, count) => safeDivide(fees, count).toFixed(2);
-
-// --- METRIC OPTIONS FOR SUMMARY MODAL ---
-const METRIC_OPTIONS = [
-  { label: 'New Business Fees', key: 'new_business_fees', goalKey: 'new_business_fees' },
-  { label: 'New Business Count', key: 'new_business_count', goalKey: 'new_business_count', isCount: true },
-  { label: 'Total Fees', key: 'total_fees', goalKey: 'total_fees' },
-  { label: 'DMV Fees', key: 'dmv_fees', goalKey: 'dmv_fees' },
-  { label: 'Renewal Fees', key: 'renewal_fees', goalKey: 'renewal_fees' },
-  { label: 'Endorsement Fees', key: 'endorsement_fees', goalKey: 'endorsement_fees' },
-];
-
-// --- CATEGORY REPORT CONFIG ---
-const CATEGORY_GROUPS = [
-  {
-    key: 'new_business',
-    label: 'New Business',
-    countKey: 'new_business_count',
-    feesKey: 'new_business_fees',
-    avgLabel: 'NB Avg',
-  },
-  {
-    key: 'endorsement',
-    label: 'Endorsement',
-    countKey: 'endorsement_count',
-    feesKey: 'endorsement_fees',
-    avgLabel: 'Endorsement Avg',
-  },
-  {
-    key: 'installment',
-    label: 'Installment',
-    countKey: 'installment_count',
-    feesKey: 'installment_fees',
-    avgLabel: 'Installment Avg',
-  },
-  {
-    key: 'dmv',
-    label: 'DMV',
-    countKey: 'dmv_count',
-    feesKey: 'dmv_fees',
-    avgLabel: 'DMV Avg',
-  },
-  {
-    key: 'reissue',
-    label: 'Reissue',
-    countKey: 'reissue_count',
-    feesKey: 'reissue_fees',
-    avgLabel: 'Reissue Avg',
-  },
-  {
-    key: 'renewal',
-    label: 'Renewal',
-    countKey: 'renewal_count',
-    feesKey: 'renewal_fees',
-    avgLabel: 'Renewal Avg',
-  },
-  {
-    key: 'taxes',
-    label: 'Taxes',
-    countKey: 'taxes_count',
-    feesKey: 'tax_fees',
-    avgLabel: 'Tax Avg',
-  },
-];
+const createEmptyOfficeMetric = (officeName) => ({
+  officeName,
+  nbRwCount: 0,
+  newBusinessCount: 0,
+  rewriteCount: 0,
+  feeTotals: createFeeBucket(),
+  feeCounts: createFeeBucket(),
+  transactionCount: 0,
+  rawRows: 0,
+  validRows: 0,
+  excludedRows: 0,
+  activeDays: new Set(),
+});
 
 const OfficeNumbers = () => {
-  const [salesData, setSalesData] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthValue);
+  const [monthlyRows, setMonthlyRows] = useState([]);
+  const [lastMonthRows, setLastMonthRows] = useState([]);
+  const [lastYearRows, setLastYearRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [monthOptions, setMonthOptions] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [selectedFeeType, setSelectedFeeType] = useState('broker');
+  const [viewMode, setViewMode] = useState('office');
 
-  // View State
-  const [activeView, setActiveView] = useState('summary');
-  const [sortConfig, setSortConfig] = useState({ key: 'new_business_fees', direction: 'desc' });
+  const initialSettings = useMemo(loadSavedSettings, []);
+  const [officeGoals, setOfficeGoals] = useState({});
+  const [agentGoals, setAgentGoals] = useState({});
+  const [officeRegions, setOfficeRegions] = useState({});
+  const [groupByRegion, setGroupByRegion] = useState(initialSettings.groupByRegion);
+  const [currentProfile, setCurrentProfile] = useState(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
 
-  // Drill-down State
-  const [selectedOfficeData, setSelectedOfficeData] = useState(null);
-  const [modalMetric, setModalMetric] = useState(METRIC_OPTIONS[0]);
+  const [savedOfficeRegions, setSavedOfficeRegions] = useState({});
+  const [savedOfficeGoals, setSavedOfficeGoals] = useState({});
+  const [savedAgentGoals, setSavedAgentGoals] = useState({});
 
-  // --- CUSTOM REPORTS STATE ---
-  const [customReportType, setCustomReportType] = useState('rollup'); // rollup | comparison | movers | mix | category
-  const [rangeStartMonth, setRangeStartMonth] = useState('');
-  const [rangeEndMonth, setRangeEndMonth] = useState('');
-  const [compareStartMonth, setCompareStartMonth] = useState('');
-  const [compareEndMonth, setCompareEndMonth] = useState('');
-  const [selectedRegions, setSelectedRegions] = useState([]);
-  const [selectedOffices, setSelectedOffices] = useState([]);
-  const [moversMetric, setMoversMetric] = useState('total_fees');
-  const [selectedCategoryGroups, setSelectedCategoryGroups] = useState(CATEGORY_GROUPS.map((g) => g.key));
+  const [editingOfficeRegions, setEditingOfficeRegions] = useState({});
+  const [editingOfficeGoals, setEditingOfficeGoals] = useState({});
+  const [editingAgentGoals, setEditingAgentGoals] = useState({});
+
+  const [savingKey, setSavingKey] = useState('');
+
+  const currentMonthValue = getCurrentMonthValue();
+  const monthDetails = useMemo(() => getMonthDetails(selectedMonth), [selectedMonth]);
+  const comparisonMonths = useMemo(
+    () => getComparisonMonthDetails(selectedMonth),
+    [selectedMonth]
+  );
+  const selectedFeeConfig = useMemo(
+    () => FEE_TYPE_OPTIONS.find((option) => option.value === selectedFeeType) || FEE_TYPE_OPTIONS[0],
+    [selectedFeeType]
+  );
+
+  /*
+   * Broker Fee is tied to the true NEW + RWR policy count.
+   * Every other fee type is tied to its own matching fee-row count.
+   */
+  const isBrokerView = selectedFeeType === 'broker';
+
+  const currentRole = cleanStr(currentProfile?.role).toLowerCase();
+  const isAdmin = currentRole === 'admin';
+  const canEditGoals = ['admin', 'regional'].includes(currentRole);
+  const assignedRegion = cleanStr(currentProfile?.region);
+  const normalizedAssignedRegion = assignedRegion.toUpperCase();
+
+  const canViewOffice = useCallback((officeCode) => {
+    if (isAdmin) return true;
+    if (!normalizedAssignedRegion) return false;
+
+    const officeRegion = cleanStr(
+      officeRegions[normalizeOffice(officeCode)]
+    ).toUpperCase();
+
+    return officeRegion === normalizedAssignedRegion;
+  }, [isAdmin, normalizedAssignedRegion, officeRegions]);
+
+
+  const selectedMetricConfig = useMemo(() => {
+    const usesNbRwCount = selectedFeeType === 'broker';
+
+    return {
+      usesNbRwCount,
+      goalKey: usesNbRwCount ? 'nb_rw' : selectedFeeType,
+      countLabel: usesNbRwCount
+        ? 'NB/RW Count'
+        : `${selectedFeeConfig.label} Count`,
+      shortCountLabel: usesNbRwCount
+        ? 'NB/RW'
+        : selectedFeeConfig.label,
+      goalLabel: usesNbRwCount
+        ? 'NB/RW Count Goal'
+        : `${selectedFeeConfig.label} Count Goal`,
+      projectedLabel: usesNbRwCount
+        ? 'Projected NB/RW Count'
+        : `Projected ${selectedFeeConfig.label} Count`,
+      goalPlaceholder: usesNbRwCount
+        ? 'NB/RW count goal'
+        : `${selectedFeeConfig.label} count goal`,
+    };
+  }, [selectedFeeType, selectedFeeConfig]);
 
   useEffect(() => {
-    const fetchSalesData = async () => {
-      setLoading(true);
-      try {
-        const { data, error: fetchError } = await supabase
-          .from('monthly_sales')
-          .select('*')
-          .order('month_start_date', { ascending: false });
+    try {
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ groupByRegion })
+      );
+    } catch (error) {
+      console.warn('Unable to save dashboard display settings:', error);
+    }
+  }, [groupByRegion]);
 
-        if (fetchError) throw fetchError;
+  const fetchProfileAndSettings = useCallback(async () => {
+    setSettingsLoading(true);
 
-        setSalesData(data || []);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
 
-        if (data && data.length > 0) {
-          const uniqueMonths = [...new Set(data.map((item) => item.month_start_date))];
-          setMonthOptions(uniqueMonths);
-          setSelectedMonth(uniqueMonths[0]);
+      const user = authData?.user;
+      if (!user) throw new Error('No authenticated user was found.');
 
-          const end = uniqueMonths[0];
-          const start = uniqueMonths[Math.min(5, uniqueMonths.length - 1)];
-          setRangeEndMonth(end);
-          setRangeStartMonth(start);
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, role, office, region')
+        .eq('id', user.id)
+        .single();
 
-          const cmpEnd = uniqueMonths[Math.min(6, uniqueMonths.length - 1)];
-          const cmpStart = uniqueMonths[Math.min(11, uniqueMonths.length - 1)];
-          setCompareEndMonth(cmpEnd);
-          setCompareStartMonth(cmpStart);
+      if (profileError) throw profileError;
+
+      const [
+        officeSettingsResult,
+        officeGoalsResult,
+        agentGoalsResult,
+      ] = await Promise.all([
+        supabase
+          .from('office_dashboard_settings')
+          .select('office_code, region'),
+        supabase
+          .from('office_monthly_goals')
+          .select('office_code, report_month, nb_rw_goal')
+          .eq('report_month', selectedMonth),
+        supabase
+          .from('agent_monthly_goals')
+          .select('agent_email, report_month, nb_rw_goal')
+          .eq('report_month', selectedMonth),
+      ]);
+
+      if (officeSettingsResult.error) throw officeSettingsResult.error;
+      if (officeGoalsResult.error) throw officeGoalsResult.error;
+      if (agentGoalsResult.error) throw agentGoalsResult.error;
+
+      const regionMap = {};
+      const savedRegionMap = {};
+
+      (officeSettingsResult.data || []).forEach((row) => {
+        const officeCode = normalizeOffice(row.office_code);
+        const region = cleanStr(row.region);
+
+        regionMap[officeCode] = region;
+
+        if (region) {
+          savedRegionMap[officeCode] = region;
         }
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      });
+
+      const officeGoalMap = {};
+      const savedOfficeGoalMap = {};
+
+      (officeGoalsResult.data || []).forEach((row) => {
+        const officeCode = normalizeOffice(row.office_code);
+        const goal = Number(row.nb_rw_goal) || 0;
+
+        officeGoalMap[officeCode] = { nb_rw: goal };
+        savedOfficeGoalMap[officeCode] = goal;
+      });
+
+      const agentGoalMap = {};
+      const savedAgentGoalMap = {};
+
+      (agentGoalsResult.data || []).forEach((row) => {
+        const email = cleanStr(row.agent_email).toLowerCase();
+        if (!email) return;
+
+        const goal = Number(row.nb_rw_goal) || 0;
+        agentGoalMap[email] = { nb_rw: goal };
+        savedAgentGoalMap[email] = goal;
+      });
+
+      setCurrentProfile(profile);
+      setOfficeRegions(regionMap);
+      setOfficeGoals(officeGoalMap);
+      setAgentGoals(agentGoalMap);
+
+      setSavedOfficeRegions(savedRegionMap);
+      setSavedOfficeGoals(savedOfficeGoalMap);
+      setSavedAgentGoals(savedAgentGoalMap);
+
+      setEditingOfficeRegions({});
+      setEditingOfficeGoals({});
+      setEditingAgentGoals({});
+    } catch (error) {
+      console.error('Error loading dashboard settings:', error);
+      setErrorMessage(
+        error?.message || 'Unable to load dashboard settings.'
+      );
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [selectedMonth]);
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage('');
+
+    const fetchRange = async (firstDay, nextMonthFirstDay) => {
+      let allRows = [];
+      let from = 0;
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('daily_transaction_detail_transfers')
+          .select('id, sync_key, receipt_id, customer_id, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
+          .gte('date_time', `${firstDay} 00:00:00`)
+          .lt('date_time', `${nextMonthFirstDay} 00:00:00`)
+          .order('date_time', { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) throw error;
+
+        const rows = data || [];
+        allRows = allRows.concat(rows);
+
+        if (rows.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
       }
+
+      return allRows;
     };
 
-    fetchSalesData();
-  }, []);
+    try {
+      const [currentRows, previousMonthRows, previousYearRows] =
+        await Promise.all([
+          fetchRange(
+            monthDetails.firstDay,
+            monthDetails.nextMonthFirstDay
+          ),
+          fetchRange(
+            comparisonMonths.lastMonth.firstDay,
+            comparisonMonths.lastMonth.nextMonthFirstDay
+          ),
+          fetchRange(
+            comparisonMonths.lastYear.firstDay,
+            comparisonMonths.lastYear.nextMonthFirstDay
+          ),
+        ]);
 
-  // --- HELPER: Aggregates an array of rows into a single "Total" object ---
-  const aggregateRows = (rows, label = 'TOTAL') => {
-    const agg = {
-      office: label,
-      region: 'ALL',
-      isGrandTotal: true,
-      month_start_date: rows[0]?.month_start_date || '',
-      new_business_count: 0,
-      new_business_fees: 0,
-      endorsement_count: 0,
-      endorsement_fees: 0,
-      installment_count: 0,
-      installment_fees: 0,
-      dmv_count: 0,
-      dmv_fees: 0,
-      reissue_count: 0,
-      reissue_fees: 0,
-      renewal_count: 0,
-      renewal_fees: 0,
-      taxes_count: 0,
-      tax_fees: 0,
-      total_fees: 0,
-    };
-
-    rows.forEach((r) => {
-      agg.new_business_count += parseFloat(r.new_business_count || 0);
-      agg.new_business_fees += parseFloat(r.new_business_fees || 0);
-      agg.endorsement_count += parseFloat(r.endorsement_count || 0);
-      agg.endorsement_fees += parseFloat(r.endorsement_fees || 0);
-      agg.installment_count += parseFloat(r.installment_count || 0);
-      agg.installment_fees += parseFloat(r.installment_fees || 0);
-      agg.dmv_count += parseFloat(r.dmv_count || 0);
-      agg.dmv_fees += parseFloat(r.dmv_fees || 0);
-      agg.reissue_count += parseFloat(r.reissue_count || 0);
-      agg.reissue_fees += parseFloat(r.reissue_fees || 0);
-      agg.renewal_count += parseFloat(r.renewal_count || 0);
-      agg.renewal_fees += parseFloat(r.renewal_fees || 0);
-      agg.taxes_count += parseFloat(r.taxes_count || 0);
-      agg.tax_fees += parseFloat(r.tax_fees || 0);
-    });
-
-    agg.total_fees =
-      agg.new_business_fees +
-      agg.endorsement_fees +
-      agg.installment_fees +
-      agg.dmv_fees +
-      agg.reissue_fees +
-      agg.renewal_fees +
-      agg.tax_fees;
-
-    return agg;
-  };
-
-  // --- DATA PROCESSING ---
-  const getComparisonData = (currentMonthDate, lookbackMonths) => {
-    const currDate = new Date(currentMonthDate);
-    currDate.setMonth(currDate.getMonth() - lookbackMonths);
-    const year = currDate.getFullYear();
-    const month = String(currDate.getMonth() + 1).padStart(2, '0');
-    return `${year}-${month}-01`;
-  };
-
-  const calcTotalFees = (row) =>
-    parseFloat(row.new_business_fees || 0) +
-    parseFloat(row.endorsement_fees || 0) +
-    parseFloat(row.installment_fees || 0) +
-    parseFloat(row.dmv_fees || 0) +
-    parseFloat(row.reissue_fees || 0) +
-    parseFloat(row.renewal_fees || 0) +
-    parseFloat(row.tax_fees || 0);
-
-  const processedData = useMemo(() => {
-    if (!selectedMonth) return { grouped: {}, grandTotal: null, flatList: [] };
-
-    const currentMonthData = salesData.filter((item) => item.month_start_date === selectedMonth);
-    const lastMonthStr = getComparisonData(selectedMonth, 1);
-    const lastYearStr = getComparisonData(selectedMonth, 12);
-
-    const lastMonthData = salesData.filter((d) => d.month_start_date === lastMonthStr);
-    const lastYearData = salesData.filter((d) => d.month_start_date === lastYearStr);
-
-    const grouped = {};
-    const flatList = [];
-
-    currentMonthData.forEach((row) => {
-      const region = row.region || 'Unknown';
-      if (!grouped[region]) grouped[region] = [];
-
-      const prevMonthRow = lastMonthData.find((d) => d.office === row.office);
-      const prevYearRow = lastYearData.find((d) => d.office === row.office);
-
-      const calcChange = (curr, past) => (past ? ((curr - past) / past) * 100 : 0);
-
-      const totalFees = calcTotalFees(row);
-
-      const enhancedRow = {
-        ...row,
-        prevMonthRow,
-        prevYearRow,
-        nb_mom_pct: calcChange(parseFloat(row.new_business_fees || 0), parseFloat(prevMonthRow?.new_business_fees || 0)),
-        nb_yoy_pct: calcChange(parseFloat(row.new_business_fees || 0), parseFloat(prevYearRow?.new_business_fees || 0)),
-        total_fees: totalFees,
-      };
-
-      grouped[region].push(enhancedRow);
-      flatList.push(enhancedRow);
-    });
-
-    const grandTotal = aggregateRows(currentMonthData, 'COMPANY TOTAL');
-    const prevMonthTotal = aggregateRows(lastMonthData);
-    const prevYearTotal = aggregateRows(lastYearData);
-
-    grandTotal.prevMonthRow = prevMonthTotal;
-    grandTotal.prevYearRow = prevYearTotal;
-
-    const calcGtChange = (curr, past) => (past ? ((curr - past) / past) * 100 : 0);
-    grandTotal.nb_mom_pct = calcGtChange(grandTotal.new_business_fees, prevMonthTotal.new_business_fees);
-    grandTotal.nb_yoy_pct = calcGtChange(grandTotal.new_business_fees, prevYearTotal.new_business_fees);
-    grandTotal.total_rev_trend = calcGtChange(grandTotal.total_fees, prevMonthTotal.total_fees);
-
-    return { grouped, grandTotal, flatList };
-  }, [salesData, selectedMonth]);
-
-  // --- COMPANY HISTORY CALCULATOR (For Grand Total Modal) ---
-  const getCompanyHistory = () => {
-    const uniqueMonths = [
-      ...new Set(salesData.filter((d) => d.month_start_date <= selectedMonth).map((d) => d.month_start_date)),
-    ];
-
-    uniqueMonths.sort((a, b) => new Date(b) - new Date(a));
-    const last6 = uniqueMonths.slice(0, 6);
-
-    return last6
-      .map((m) => {
-        const monthRows = salesData.filter((d) => d.month_start_date === m);
-        return aggregateRows(monthRows);
-      })
-      .reverse();
-  };
-
-  // --- KPI CALCULATION HELPER ---
-  const getKPIMetrics = (row) => {
-    if (!row) return null;
-
-    let rank = 0;
-    let totalPeers = 0;
-
-    if (row.isGrandTotal) {
-      rank = 1;
-      totalPeers = 1;
-    } else {
-      const regionPeers = salesData.filter((d) => d.region === row.region && d.month_start_date === row.month_start_date);
-      regionPeers.sort((a, b) => parseFloat(b.new_business_fees || 0) - parseFloat(a.new_business_fees || 0));
-      rank = regionPeers.findIndex((p) => p.office === row.office) + 1;
-      totalPeers = regionPeers.length;
+      setMonthlyRows(currentRows);
+      setLastMonthRows(previousMonthRows);
+      setLastYearRows(previousYearRows);
+    } catch (error) {
+      console.error('Error fetching office numbers:', error);
+      setErrorMessage(
+        error?.message || 'Unable to load the monthly office report.'
+      );
+      setMonthlyRows([]);
+      setLastMonthRows([]);
+      setLastYearRows([]);
+    } finally {
+      setLoading(false);
     }
+  }, [
+    monthDetails.firstDay,
+    monthDetails.nextMonthFirstDay,
+    comparisonMonths.lastMonth.firstDay,
+    comparisonMonths.lastMonth.nextMonthFirstDay,
+    comparisonMonths.lastYear.firstDay,
+    comparisonMonths.lastYear.nextMonthFirstDay,
+  ]);
 
-    const currDate = new Date(row.month_start_date);
-    const currentYear = currDate.getFullYear();
-    const prevYear = currentYear - 1;
-    const currentMonthIndex = currDate.getMonth();
-
-    const officeHistory = row.isGrandTotal ? salesData : salesData.filter((d) => d.office === row.office);
-
-    const sumSubset = (rows) => rows.reduce((sum, d) => sum + parseFloat(d.new_business_fees || 0), 0);
-
-    const calcYTD = (year) => {
-      const relevantRows = officeHistory.filter((d) => {
-        const dDate = new Date(d.month_start_date);
-        return dDate.getFullYear() === year && dDate.getMonth() <= currentMonthIndex;
-      });
-      return sumSubset(relevantRows);
-    };
-
-    const currentYTD = calcYTD(currentYear);
-    const prevYTD = calcYTD(prevYear);
-    const ytdDiff = currentYTD - prevYTD;
-    const ytdPct = prevYTD ? (ytdDiff / prevYTD) * 100 : 0;
-
-    const validHistory = officeHistory.filter((d) => d.month_start_date <= row.month_start_date);
-
-    let monthlyHistory = [];
-    if (row.isGrandTotal) {
-      const monthMap = {};
-      validHistory.forEach((r) => {
-        if (!monthMap[r.month_start_date]) monthMap[r.month_start_date] = 0;
-        monthMap[r.month_start_date] += parseFloat(r.new_business_fees || 0);
-      });
-      monthlyHistory = Object.keys(monthMap).map((k) => ({
-        month_start_date: k,
-        new_business_fees: monthMap[k],
-      }));
-    } else {
-      monthlyHistory = validHistory;
-    }
-
-    monthlyHistory.sort((a, b) => new Date(b.month_start_date) - new Date(a.month_start_date));
-
-    const last3Months = monthlyHistory.slice(1, 4);
-    const avg3Month =
-      last3Months.length > 0
-        ? last3Months.reduce((sum, d) => sum + parseFloat(d.new_business_fees || 0), 0) / last3Months.length
-        : parseFloat(row.new_business_fees || 0);
-
-    const currentFees = parseFloat(row.new_business_fees || 0);
-    const velocityDiff = currentFees - avg3Month;
-
-    return { rank, totalPeers, currentYTD, prevYTD, ytdDiff, ytdPct, avg3Month, velocityDiff };
-  };
-
-  // -------------------------
-  // CUSTOM REPORTS HELPERS
-  // -------------------------
-  const uniqueRegions = useMemo(() => {
-    const r = [...new Set(salesData.map((d) => d.region).filter(Boolean))].sort();
-    return r;
-  }, [salesData]);
-
-  const officesByRegion = useMemo(() => {
-    const map = {};
-    salesData.forEach((d) => {
-      const region = d.region || 'Unknown';
-      if (!map[region]) map[region] = new Set();
-      if (d.office) map[region].add(d.office);
-    });
-    const out = {};
-    Object.keys(map).forEach((k) => {
-      out[k] = [...map[k]].sort();
-    });
-    return out;
-  }, [salesData]);
-
-  const allOffices = useMemo(() => [...new Set(salesData.map((d) => d.office).filter(Boolean))].sort(), [salesData]);
-
-  const isMonthInRange = (m, start, end) => {
-    if (!m || !start || !end) return false;
-    const min = start <= end ? start : end;
-    const max = start <= end ? end : start;
-    return m >= min && m <= max;
-  };
-
-  const normalizeRow = useCallback((row) => ({
-    ...row,
-    total_fees: calcTotalFees(row),
-  }), []);
-
-  const filterRowsByScope = useCallback((rows) => {
-    let scoped = rows;
-
-    if (selectedRegions.length > 0) {
-      scoped = scoped.filter((r) => selectedRegions.includes(r.region || 'Unknown'));
-    }
-
-    if (selectedOffices.length > 0) {
-      scoped = scoped.filter((r) => selectedOffices.includes(r.office));
-    }
-
-    return scoped;
-  }, [selectedRegions, selectedOffices]);
-
-  const rangeRows = useMemo(() => {
-    const base = salesData.filter((d) => isMonthInRange(d.month_start_date, rangeStartMonth, rangeEndMonth));
-    return filterRowsByScope(base).map(normalizeRow);
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, filterRowsByScope, normalizeRow]);
-
-  const compareRows = useMemo(() => {
-    const base = salesData.filter((d) => isMonthInRange(d.month_start_date, compareStartMonth, compareEndMonth));
-    return filterRowsByScope(base).map(normalizeRow);
-  }, [salesData, compareStartMonth, compareEndMonth, selectedRegions, selectedOffices, filterRowsByScope, normalizeRow]);
-
-  const rollupData = useMemo(() => {
-    if (!rangeRows.length) return { total: null, perOffice: [] };
-
-    const byOffice = {};
-    rangeRows.forEach((r) => {
-      if (!byOffice[r.office]) byOffice[r.office] = [];
-      byOffice[r.office].push(r);
-    });
-
-    const perOffice = Object.keys(byOffice)
-      .sort()
-      .map((office) => aggregateRows(byOffice[office], office));
-
-    const total = aggregateRows(rangeRows, 'SELECTED TOTAL');
-    return { total, perOffice };
-  }, [rangeRows]);
-
-  const comparisonData = useMemo(() => {
-    if (!rangeRows.length || !compareRows.length) return { aTotal: null, bTotal: null };
-    const aTotal = aggregateRows(rangeRows, 'PERIOD A');
-    const bTotal = aggregateRows(compareRows, 'PERIOD B');
-    return { aTotal, bTotal };
-  }, [rangeRows, compareRows]);
-
-  const moversData = useMemo(() => {
-    if (!rangeStartMonth || !rangeEndMonth) return [];
-
-    const startRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeStartMonth).map(normalizeRow));
-    const endRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeEndMonth).map(normalizeRow));
-
-    const getVal = (row) => {
-      if (!row) return 0;
-      if (moversMetric === 'total_fees') return parseFloat(row.total_fees || 0);
-      return parseFloat(row[moversMetric] || 0);
-    };
-
-    const officeSet = new Set();
-    startRows.forEach((r) => officeSet.add(r.office));
-    endRows.forEach((r) => officeSet.add(r.office));
-
-    const results = [...officeSet].map((office) => {
-      const s = startRows.find((r) => r.office === office);
-      const e = endRows.find((r) => r.office === office);
-      const startVal = getVal(s);
-      const endVal = getVal(e);
-      const diff = endVal - startVal;
-      const pct = startVal ? (diff / startVal) * 100 : endVal ? 100 : 0;
-
-      return {
-        office,
-        region: e?.region || s?.region || 'Unknown',
-        startVal,
-        endVal,
-        diff,
-        pct,
-      };
-    });
-
-    results.sort((a, b) => b.diff - a.diff);
-    return results;
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, moversMetric, filterRowsByScope, normalizeRow]);
-
-  const mixShiftData = useMemo(() => {
-    if (!rangeStartMonth || !rangeEndMonth) return { rows: [], totalStart: null, totalEnd: null };
-
-    const startRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeStartMonth));
-    const endRows = filterRowsByScope(salesData.filter((d) => d.month_start_date === rangeEndMonth));
-
-    if (!startRows.length || !endRows.length) return { rows: [], totalStart: null, totalEnd: null };
-
-    const totalStart = aggregateRows(startRows, 'START TOTAL');
-    const totalEnd = aggregateRows(endRows, 'END TOTAL');
-
-    const officeSet = new Set();
-    startRows.forEach((r) => officeSet.add(r.office));
-    endRows.forEach((r) => officeSet.add(r.office));
-
-    const calcMix = (r) => {
-      const nb = parseFloat(r?.new_business_fees || 0);
-      const rn = parseFloat(r?.renewal_fees || 0);
-      const en = parseFloat(r?.endorsement_fees || 0);
-      const dmv = parseFloat(r?.dmv_fees || 0);
-      const total = nb + rn + en + dmv;
-
-      return {
-        total,
-        nbPct: total ? (nb / total) * 100 : 0,
-        rnPct: total ? (rn / total) * 100 : 0,
-        enPct: total ? (en / total) * 100 : 0,
-        dmvPct: total ? (dmv / total) * 100 : 0,
-      };
-    };
-
-    const rows = [...officeSet].map((office) => {
-      const s = startRows.find((r) => r.office === office);
-      const e = endRows.find((r) => r.office === office);
-      const sMix = calcMix(s);
-      const eMix = calcMix(e);
-
-      return {
-        office,
-        region: e?.region || s?.region || 'Unknown',
-        start: sMix,
-        end: eMix,
-        shift: {
-          nb: eMix.nbPct - sMix.nbPct,
-          rn: eMix.rnPct - sMix.rnPct,
-          en: eMix.enPct - sMix.enPct,
-          dmv: eMix.dmvPct - sMix.dmvPct,
-        },
-      };
-    });
-
-    return { rows, totalStart, totalEnd };
-  }, [salesData, rangeStartMonth, rangeEndMonth, selectedRegions, selectedOffices, filterRowsByScope]);
-
-  const categoryReportData = useMemo(() => {
-    if (!rangeRows.length) {
-      return { total: null, rows: [] };
-    }
-
-    // Sort rows alphabetically by office, then chronologically by month
-    const sortedRows = [...rangeRows].sort((a, b) => {
-      if (a.office < b.office) return -1;
-      if (a.office > b.office) return 1;
-      // If same office, sort by month chronologically
-      return new Date(a.month_start_date) - new Date(b.month_start_date);
-    });
-
-    const total = aggregateRows(rangeRows, 'SELECTED TOTAL');
-
-    return { total, rows: sortedRows };
-  }, [rangeRows]);
-
-  // Auto-sync offices list when regions chosen
   useEffect(() => {
-    if (selectedRegions.length === 0) return;
+    fetchProfileAndSettings();
+    fetchDashboardData();
+  }, [fetchProfileAndSettings, fetchDashboardData]);
 
-    const allowed = new Set();
-    selectedRegions.forEach((r) => (officesByRegion[r] || []).forEach((o) => allowed.add(o)));
+  const visibleMonthlyRows = useMemo(
+    () => monthlyRows.filter((row) => canViewOffice(row.office)),
+    [monthlyRows, canViewOffice]
+  );
 
-    setSelectedOffices((prev) => prev.filter((o) => allowed.has(o)));
-  }, [selectedRegions, officesByRegion]);
+  const visibleLastMonthRows = useMemo(
+    () => lastMonthRows.filter((row) => canViewOffice(row.office)),
+    [lastMonthRows, canViewOffice]
+  );
 
-  // -------------------------
-  // RENDER HELPERS
-  // -------------------------
-  const renderGrandTotalRow = () => {
-    if (!processedData.grandTotal) return null;
-    const gt = processedData.grandTotal;
+  const visibleLastYearRows = useMemo(
+    () => lastYearRows.filter((row) => canViewOffice(row.office)),
+    [lastYearRows, canViewOffice]
+  );
+
+  const latestDataDate = useMemo(() => {
+    return visibleMonthlyRows.reduce((latest, row) => {
+      const date = getDateKeyFromTransfer(row);
+      return date && (!latest || date > latest) ? date : latest;
+    }, '');
+  }, [visibleMonthlyRows]);
+
+  const pacingDetails = useMemo(() => {
+    if (!latestDataDate) {
+      return {
+        asOfDay: monthDetails.daysInMonth,
+        totalDaysInMonth: monthDetails.daysInMonth,
+        projectionMultiplier: 1,
+        isPartialMonth: false,
+      };
+    }
+
+    const [latestYear, latestMonth, latestDay] = latestDataDate.split('-').map(Number);
+    const belongsToSelectedMonth =
+      latestYear === monthDetails.year && latestMonth === monthDetails.month;
+
+    const asOfDay = belongsToSelectedMonth
+      ? Math.max(1, Math.min(latestDay, monthDetails.daysInMonth))
+      : monthDetails.daysInMonth;
+
+    return {
+      asOfDay,
+      totalDaysInMonth: monthDetails.daysInMonth,
+      projectionMultiplier: asOfDay < monthDetails.daysInMonth
+        ? monthDetails.daysInMonth / asOfDay
+        : 1,
+      isPartialMonth: asOfDay < monthDetails.daysInMonth,
+    };
+  }, [latestDataDate, monthDetails]);
+
+  const lastMonthMetricByOffice = useMemo(
+    () =>
+      buildHistoricalMetricMap(
+        visibleLastMonthRows,
+        selectedFeeType,
+        selectedMetricConfig.usesNbRwCount
+      ),
+    [visibleLastMonthRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+  );
+
+  const lastYearMetricByOffice = useMemo(
+    () =>
+      buildHistoricalMetricMap(
+        visibleLastYearRows,
+        selectedFeeType,
+        selectedMetricConfig.usesNbRwCount
+      ),
+    [visibleLastYearRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+  );
+
+
+  const lastMonthMetricByAgent = useMemo(
+    () => buildAgentHistoricalMetricMap(
+      visibleLastMonthRows,
+      selectedFeeType,
+      selectedMetricConfig.usesNbRwCount
+    ),
+    [visibleLastMonthRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+  );
+
+  const lastYearMetricByAgent = useMemo(
+    () => buildAgentHistoricalMetricMap(
+      visibleLastYearRows,
+      selectedFeeType,
+      selectedMetricConfig.usesNbRwCount
+    ),
+    [visibleLastYearRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+  );
+
+  const officeMetrics = useMemo(() => {
+    const dailyGroups = {};
+
+    visibleMonthlyRows.forEach((row) => {
+      const office = normalizeOffice(row.office);
+      const date = getDateKeyFromTransfer(row);
+      if (!office || !date) return;
+
+      const key = `${office}|${date}`;
+      if (!dailyGroups[key]) dailyGroups[key] = { office, date, rows: [] };
+      dailyGroups[key].rows.push(row);
+    });
+
+    const metricsByOffice = {};
+
+    Object.values(dailyGroups).forEach((group) => {
+      const summary = calculateTransactionSummary(group.rows);
+
+      if (!metricsByOffice[group.office]) {
+        metricsByOffice[group.office] = createEmptyOfficeMetric(group.office);
+      }
+
+      const office = metricsByOffice[group.office];
+      office.nbRwCount += summary.nb_rw_count;
+      office.newBusinessCount += summary.new_business_count;
+      office.rewriteCount += summary.rewrite_count;
+      office.transactionCount += summary.valid_receipts_count;
+      office.rawRows += summary.raw_rows_count;
+      office.validRows += summary.valid_rows_count;
+      office.excludedRows += summary.excluded_rows_count;
+
+      Object.keys(office.feeTotals).forEach((feeType) => {
+        office.feeTotals[feeType] += summary.fee_totals[feeType] || 0;
+        office.feeCounts[feeType] += summary.fee_counts[feeType] || 0;
+      });
+
+      if (summary.valid_rows_count > 0) office.activeDays.add(group.date);
+    });
+
+    return Object.values(metricsByOffice)
+      .map((office) => {
+        const selectedFeeTotal = office.feeTotals[selectedFeeType] || 0;
+        const selectedFeeCount = office.feeCounts[selectedFeeType] || 0;
+
+        // Broker Fee average is based on the true NEW + RWR policy count.
+        // Other fee categories use their own matching fee transaction count.
+        const selectedFeeAvgDenominator = selectedFeeType === 'broker'
+          ? office.nbRwCount
+          : selectedFeeCount;
+        const selectedFeeAvg = selectedFeeAvgDenominator !== 0
+          ? selectedFeeTotal / selectedFeeAvgDenominator
+          : 0;
+
+        /*
+         * Broker Fee uses the correct NEW + RWR policy count.
+         * Other fee selections use the matching fee-transaction count.
+         */
+        const selectedMetricCount = selectedMetricConfig.usesNbRwCount
+          ? office.nbRwCount
+          : selectedFeeCount;
+
+        const projectedCount =
+          selectedMetricCount * pacingDetails.projectionMultiplier;
+
+        const goal = isBrokerView
+          ? Number(
+              officeGoals?.[office.officeName]?.nb_rw
+            ) || 0
+          : 0;
+
+        const actualGoalPercent =
+          isBrokerView && goal > 0
+            ? (selectedMetricCount / goal) * 100
+            : 0;
+
+        const projectedGoalPercent =
+          isBrokerView && goal > 0
+            ? (projectedCount / goal) * 100
+            : 0;
+
+        const difference = isBrokerView
+          ? projectedCount - goal
+          : 0;
+
+        return {
+          ...office,
+          activeDays: office.activeDays.size,
+          region: cleanStr(officeRegions[office.officeName]) || 'Unassigned',
+          selectedFeeTotal,
+          selectedFeeCount,
+          selectedFeeAvg,
+          selectedMetricCount,
+          projectedCount,
+          lastMonthCount:
+            lastMonthMetricByOffice[office.officeName] ?? null,
+          lastYearCount:
+            lastYearMetricByOffice[office.officeName] ?? null,
+          goal,
+          actualGoalPercent,
+          projectedGoalPercent,
+          difference,
+          status: goal <= 0 ? 'No Goal' : projectedCount >= goal ? 'On Track' : 'Behind',
+        };
+      })
+      .sort((a, b) => getOfficeNumber(a.officeName) - getOfficeNumber(b.officeName));
+  }, [
+  visibleMonthlyRows,
+  pacingDetails.projectionMultiplier,
+  officeGoals,
+  officeRegions,
+  selectedFeeType,
+  selectedMetricConfig,
+  lastMonthMetricByOffice,
+  lastYearMetricByOffice,
+  isBrokerView,
+]);
+  const agentMetrics = useMemo(() => {
+    const groups = new Map();
+
+    visibleMonthlyRows.forEach((row) => {
+      const agent = normalizeAgent(row);
+      if (!groups.has(agent)) groups.set(agent, []);
+      groups.get(agent).push(row);
+    });
+
+    return Array.from(groups.entries())
+      .map(([agentEmail, rows]) => {
+        const summary = calculateTransactionSummary(rows);
+        const csrName = getMostRecentCsrName(rows, agentEmail);
+        const selectedFeeTotal = summary.fee_totals[selectedFeeType] || 0;
+        const selectedFeeCount = summary.fee_counts[selectedFeeType] || 0;
+
+        const selectedMetricCount = selectedMetricConfig.usesNbRwCount
+          ? summary.nb_rw_count
+          : selectedFeeCount;
+
+        const avgDenominator = selectedFeeType === 'broker'
+          ? summary.nb_rw_count
+          : selectedFeeCount;
+
+        const selectedFeeAvg = avgDenominator
+          ? selectedFeeTotal / avgDenominator
+          : 0;
+
+        const assignment = getAgentOfficeAndRegion(rows, officeRegions);
+        const goal = isBrokerView
+          ? Number(agentGoals?.[agentEmail]?.nb_rw) || 0
+          : 0;
+
+        const projectedCount =
+          selectedMetricCount * pacingDetails.projectionMultiplier;
+
+        const actualGoalPercent =
+          goal > 0 ? (selectedMetricCount / goal) * 100 : 0;
+
+        const projectedGoalPercent =
+          goal > 0 ? (projectedCount / goal) * 100 : 0;
+
+        return {
+          agentEmail,
+          csrName,
+          office: assignment.primaryOffice,
+          offices: assignment.offices,
+          region: assignment.region,
+          nbRwCount: summary.nb_rw_count,
+          newBusinessCount: summary.new_business_count,
+          rewriteCount: summary.rewrite_count,
+          selectedMetricCount,
+          selectedFeeTotal,
+          selectedFeeCount,
+          selectedFeeAvg,
+          projectedCount,
+          lastMonthCount: lastMonthMetricByAgent[agentEmail] ?? null,
+          lastYearCount: lastYearMetricByAgent[agentEmail] ?? null,
+          goal,
+          actualGoalPercent,
+          projectedGoalPercent,
+          difference: projectedCount - goal,
+          status:
+            !isBrokerView
+              ? ''
+              : goal <= 0
+                ? 'No Goal'
+                : projectedCount >= goal
+                  ? 'On Track'
+                  : 'Behind',
+        };
+      })
+      .sort((a, b) => {
+        const regionCompare = a.region.localeCompare(
+          b.region,
+          undefined,
+          { numeric: true, sensitivity: 'base' }
+        );
+
+        if (regionCompare !== 0) return regionCompare;
+
+        const officeCompare =
+          getOfficeNumber(a.office) - getOfficeNumber(b.office);
+
+        if (officeCompare !== 0) return officeCompare;
+
+        return a.agentEmail.localeCompare(b.agentEmail);
+      });
+  }, [
+    visibleMonthlyRows,
+    selectedFeeType,
+    selectedMetricConfig,
+    pacingDetails.projectionMultiplier,
+    officeRegions,
+    agentGoals,
+    isBrokerView,
+    lastMonthMetricByAgent,
+    lastYearMetricByAgent,
+  ]);
+
+  const agentRegionGroups = useMemo(() => {
+    if (!groupByRegion) {
+      return [{ regionName: '', agents: agentMetrics }];
+    }
+
+    const grouped = new Map();
+
+    agentMetrics.forEach((agent) => {
+      const regionName = agent.region || 'Unassigned';
+
+      if (!grouped.has(regionName)) grouped.set(regionName, []);
+      grouped.get(regionName).push(agent);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([regionName, agents]) => ({
+        regionName,
+        agents: [...agents].sort((a, b) => {
+          const officeCompare =
+            getOfficeNumber(a.office) - getOfficeNumber(b.office);
+
+          if (officeCompare !== 0) return officeCompare;
+          return a.agentEmail.localeCompare(b.agentEmail);
+        }),
+      }))
+      .sort((a, b) => {
+        if (a.regionName === 'Unassigned') return 1;
+        if (b.regionName === 'Unassigned') return -1;
+
+        return a.regionName.localeCompare(
+          b.regionName,
+          undefined,
+          { numeric: true, sensitivity: 'base' }
+        );
+      });
+  }, [agentMetrics, groupByRegion]);
+
+  const agentTotals = useMemo(() => {
+    const result = agentMetrics.reduce((acc, agent) => {
+      acc.nbRwCount += agent.nbRwCount;
+      acc.newBusinessCount += agent.newBusinessCount;
+      acc.rewriteCount += agent.rewriteCount;
+      acc.selectedMetricCount += agent.selectedMetricCount;
+      acc.selectedFeeTotal += agent.selectedFeeTotal;
+      acc.selectedFeeCount += agent.selectedFeeCount;
+      acc.projectedCount += agent.projectedCount;
+      acc.goal += agent.goal;
+
+      if (agent.lastMonthCount !== null) {
+        acc.lastMonthCount += agent.lastMonthCount;
+        acc.hasLastMonthData = true;
+      }
+
+      if (agent.lastYearCount !== null) {
+        acc.lastYearCount += agent.lastYearCount;
+        acc.hasLastYearData = true;
+      }
+
+      return acc;
+    }, {
+      nbRwCount: 0,
+      newBusinessCount: 0,
+      rewriteCount: 0,
+      selectedMetricCount: 0,
+      selectedFeeTotal: 0,
+      selectedFeeCount: 0,
+      projectedCount: 0,
+      goal: 0,
+      lastMonthCount: 0,
+      lastYearCount: 0,
+      hasLastMonthData: false,
+      hasLastYearData: false,
+    });
+
+    const avgDenominator = selectedFeeType === 'broker'
+      ? result.nbRwCount
+      : result.selectedFeeCount;
+
+    result.selectedFeeAvg = avgDenominator
+      ? result.selectedFeeTotal / avgDenominator
+      : 0;
+
+    result.status =
+      result.goal <= 0
+        ? 'No Goal'
+        : result.projectedCount >= result.goal
+          ? 'On Track'
+          : 'Behind';
+
+    return result;
+  }, [agentMetrics, selectedFeeType]);
+
+  const regionGroups = useMemo(() => {
+    if (!groupByRegion) return [{ regionName: '', offices: officeMetrics }];
+
+    const grouped = new Map();
+    officeMetrics.forEach((office) => {
+      const regionName = office.region || 'Unassigned';
+      if (!grouped.has(regionName)) grouped.set(regionName, []);
+      grouped.get(regionName).push(office);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([regionName, offices]) => ({
+        regionName,
+        offices: [...offices].sort(
+          (a, b) => getOfficeNumber(a.officeName) - getOfficeNumber(b.officeName)
+        ),
+      }))
+      .sort((a, b) => {
+        if (a.regionName === 'Unassigned') return 1;
+        if (b.regionName === 'Unassigned') return -1;
+        return a.regionName.localeCompare(b.regionName, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+      });
+  }, [officeMetrics, groupByRegion]);
+
+  const totals = useMemo(() => {
+    const result = officeMetrics.reduce((acc, office) => {
+      acc.nbRwCount += office.nbRwCount;
+      acc.newBusinessCount += office.newBusinessCount;
+      acc.rewriteCount += office.rewriteCount;
+      acc.selectedFeeTotal += office.selectedFeeTotal;
+      acc.selectedFeeCount += office.selectedFeeCount;
+      acc.selectedMetricCount += office.selectedMetricCount;
+      acc.projectedCount += office.projectedCount;
+
+      if (office.lastMonthCount !== null) {
+        acc.lastMonthCount += office.lastMonthCount;
+        acc.hasLastMonthData = true;
+      }
+
+      if (office.lastYearCount !== null) {
+        acc.lastYearCount += office.lastYearCount;
+        acc.hasLastYearData = true;
+      }
+
+      acc.goal += office.goal;
+      acc.transactionCount += office.transactionCount;
+      acc.excludedRows += office.excludedRows;
+      return acc;
+    }, {
+      nbRwCount: 0,
+      newBusinessCount: 0,
+      rewriteCount: 0,
+      selectedFeeTotal: 0,
+      selectedFeeCount: 0,
+      selectedMetricCount: 0,
+      projectedCount: 0,
+      lastMonthCount: 0,
+      lastYearCount: 0,
+      hasLastMonthData: false,
+      hasLastYearData: false,
+      goal: 0,
+      transactionCount: 0,
+      excludedRows: 0,
+    });
+
+    const selectedFeeAvgDenominator = selectedFeeType === 'broker'
+      ? result.nbRwCount
+      : result.selectedFeeCount;
+
+    result.selectedFeeAvg = selectedFeeAvgDenominator !== 0
+      ? result.selectedFeeTotal / selectedFeeAvgDenominator
+      : 0;
+
+    return result;
+  }, [officeMetrics, selectedFeeType]);
+
+  const updateOfficeGoal = (officeName, value) => {
+    if (!isBrokerView || !canEditGoals) return;
+
+    setOfficeGoals((current) => ({
+      ...current,
+      [officeName]: {
+        ...(current[officeName] || {}),
+        nb_rw: value,
+      },
+    }));
+  };
+
+  const saveOfficeGoal = async (officeName) => {
+    if (!isBrokerView || !canEditGoals) return;
+
+    const saveKey = `office-goal:${officeName}`;
+    setSavingKey(saveKey);
+
+    try {
+      const nbRwGoal = Number(officeGoals?.[officeName]?.nb_rw) || 0;
+
+      const { error } = await supabase
+        .from('office_monthly_goals')
+        .upsert(
+          {
+            office_code: officeName,
+            report_month: selectedMonth,
+            nb_rw_goal: nbRwGoal,
+            updated_at: new Date().toISOString(),
+            updated_by: currentProfile?.id || null,
+          },
+          { onConflict: 'office_code,report_month' }
+        );
+
+      if (error) throw error;
+
+      setSavedOfficeGoals((current) => ({
+        ...current,
+        [officeName]: nbRwGoal,
+      }));
+
+      setEditingOfficeGoals((current) => ({
+        ...current,
+        [officeName]: false,
+      }));
+    } catch (error) {
+      console.error('Unable to save office goal:', error);
+      setErrorMessage(error?.message || 'Unable to save office goal.');
+    } finally {
+      setSavingKey('');
+    }
+  };
+
+  const updateOfficeRegion = (officeName, value) => {
+    if (!isAdmin) return;
+
+    setOfficeRegions((current) => ({
+      ...current,
+      [officeName]: value,
+    }));
+  };
+
+  const saveOfficeRegion = async (officeName) => {
+    if (!isAdmin) return;
+
+    const saveKey = `office-region:${officeName}`;
+    setSavingKey(saveKey);
+
+    try {
+      const region = cleanStr(officeRegions[officeName]);
+
+      if (!region) {
+        throw new Error('Enter a region before saving.');
+      }
+
+      const { error } = await supabase
+        .from('office_dashboard_settings')
+        .upsert(
+          {
+            office_code: officeName,
+            region,
+            updated_at: new Date().toISOString(),
+            updated_by: currentProfile?.id || null,
+          },
+          { onConflict: 'office_code' }
+        );
+
+      if (error) throw error;
+
+      setOfficeRegions((current) => ({
+        ...current,
+        [officeName]: region,
+      }));
+
+      setSavedOfficeRegions((current) => ({
+        ...current,
+        [officeName]: region,
+      }));
+
+      setEditingOfficeRegions((current) => ({
+        ...current,
+        [officeName]: false,
+      }));
+    } catch (error) {
+      console.error('Unable to save office region:', error);
+      setErrorMessage(error?.message || 'Unable to save office region.');
+    } finally {
+      setSavingKey('');
+    }
+  };
+
+  const updateAgentGoal = (agentEmail, value) => {
+    if (!isBrokerView || !canEditGoals) return;
+
+    setAgentGoals((current) => ({
+      ...current,
+      [agentEmail]: {
+        ...(current[agentEmail] || {}),
+        nb_rw: value,
+      },
+    }));
+  };
+
+  const saveAgentGoal = async (agentEmail) => {
+    if (!isBrokerView || !canEditGoals) return;
+
+    const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+    const saveKey = `agent-goal:${normalizedEmail}`;
+    setSavingKey(saveKey);
+
+    try {
+      const nbRwGoal = Number(agentGoals?.[normalizedEmail]?.nb_rw) || 0;
+
+      const { error } = await supabase
+        .from('agent_monthly_goals')
+        .upsert(
+          {
+            agent_email: normalizedEmail,
+            report_month: selectedMonth,
+            nb_rw_goal: nbRwGoal,
+            updated_at: new Date().toISOString(),
+            updated_by: currentProfile?.id || null,
+          },
+          { onConflict: 'agent_email,report_month' }
+        );
+
+      if (error) throw error;
+
+      setSavedAgentGoals((current) => ({
+        ...current,
+        [normalizedEmail]: nbRwGoal,
+      }));
+
+      setEditingAgentGoals((current) => ({
+        ...current,
+        [normalizedEmail]: false,
+      }));
+    } catch (error) {
+      console.error('Unable to save agent goal:', error);
+      setErrorMessage(error?.message || 'Unable to save agent goal.');
+    } finally {
+      setSavingKey('');
+    }
+  };
+
+  const startEditingOfficeRegion = (officeName) => {
+    if (!isAdmin) return;
+
+    setEditingOfficeRegions((current) => ({
+      ...current,
+      [officeName]: true,
+    }));
+  };
+
+  const cancelEditingOfficeRegion = (officeName) => {
+    setOfficeRegions((current) => ({
+      ...current,
+      [officeName]: savedOfficeRegions[officeName] || '',
+    }));
+
+    setEditingOfficeRegions((current) => ({
+      ...current,
+      [officeName]: false,
+    }));
+  };
+
+  const startEditingOfficeGoal = (officeName) => {
+    if (!canEditGoals) return;
+
+    setEditingOfficeGoals((current) => ({
+      ...current,
+      [officeName]: true,
+    }));
+  };
+
+  const cancelEditingOfficeGoal = (officeName) => {
+    setOfficeGoals((current) => ({
+      ...current,
+      [officeName]: {
+        ...(current[officeName] || {}),
+        nb_rw: savedOfficeGoals[officeName] ?? '',
+      },
+    }));
+
+    setEditingOfficeGoals((current) => ({
+      ...current,
+      [officeName]: false,
+    }));
+  };
+
+  const startEditingAgentGoal = (agentEmail) => {
+    if (!canEditGoals) return;
+
+    const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+
+    setEditingAgentGoals((current) => ({
+      ...current,
+      [normalizedEmail]: true,
+    }));
+  };
+
+  const cancelEditingAgentGoal = (agentEmail) => {
+    const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+
+    setAgentGoals((current) => ({
+      ...current,
+      [normalizedEmail]: {
+        ...(current[normalizedEmail] || {}),
+        nb_rw: savedAgentGoals[normalizedEmail] ?? '',
+      },
+    }));
+
+    setEditingAgentGoals((current) => ({
+      ...current,
+      [normalizedEmail]: false,
+    }));
+  };
+
+  const renderOfficeRow = (office) => {
+    const onTrack = office.status === 'On Track';
 
     return (
-      <div
-        className={styles.grandTotalContainer}
-        onClick={() => {
-          setModalMetric(METRIC_OPTIONS[0]);
-          setSelectedOfficeData(gt);
-        }}
-        style={{ cursor: 'pointer' }}
-        title="Click to view Company Analysis"
-      >
-        <div className={styles.grandTotalLabel}>
-          COMPANY TOTAL{' '}
-          <span style={{ fontSize: '0.7rem', display: 'block', color: '#bdc3c7', fontWeight: 'normal' }}>
-            (Click for Details)
-          </span>
-        </div>
+      <tr key={office.officeName}>
+        <td style={styles.officeCell}>
+          {office.officeName}
+          <div style={styles.smallMuted}>{office.activeDays} days</div>
+        </td>
 
-        {activeView === 'summary' && (
-          <div className={styles.gtGridSummary}>
-            <div>
-              <span>Total Fees:</span> {formatCurrency(gt.total_fees)}
+        <td style={styles.regionCell}>
+          {isAdmin && (
+            !savedOfficeRegions[office.officeName] ||
+            editingOfficeRegions[office.officeName]
+          ) ? (
+            <div style={styles.editFieldRow}>
+              <input
+                type="text"
+                value={officeRegions[office.officeName] || ''}
+                onChange={(event) =>
+                  updateOfficeRegion(office.officeName, event.target.value)
+                }
+                placeholder="Region name"
+                style={styles.inlineInput}
+              />
+              <button
+                type="button"
+                onClick={() => saveOfficeRegion(office.officeName)}
+                disabled={savingKey === `office-region:${office.officeName}`}
+                style={styles.saveMiniButton}
+              >
+                {savingKey === `office-region:${office.officeName}`
+                  ? 'Saving'
+                  : 'Save'}
+              </button>
+              {savedOfficeRegions[office.officeName] && (
+                <button
+                  type="button"
+                  onClick={() => cancelEditingOfficeRegion(office.officeName)}
+                  style={styles.cancelMiniButton}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
-            <div>
-              <span>New Biz #:</span> {formatCount(gt.new_business_count)}
+          ) : (
+            <div style={styles.savedFieldRow}>
+              <span style={styles.savedFieldText}>
+                {officeRegions[office.officeName] || 'Unassigned'}
+              </span>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => startEditingOfficeRegion(office.officeName)}
+                  style={styles.editMiniButton}
+                  aria-label={`Edit ${office.officeName} region`}
+                  title="Edit region"
+                >
+                  Edit
+                </button>
+              )}
             </div>
-            <div>
-              <span>New Biz $:</span> {formatCurrency(gt.new_business_fees)}
-            </div>
-            <div>
-              <span>Renewals:</span> {formatCount(gt.renewal_count)}
-            </div>
-            <div>
-              <span>DMV $:</span> {formatCurrency(gt.dmv_fees)}
-            </div>
+          )}
+        </td>
+
+        <td style={{ ...styles.numberCell, ...styles.metricCurrentCell }}>
+          <strong>{formatNumber(office.selectedMetricCount)}</strong>
+          <div style={styles.smallMuted}>
+            {selectedMetricConfig.usesNbRwCount
+              ? `${formatNumber(office.newBusinessCount)} NEW / ${formatNumber(office.rewriteCount)} RWR`
+              : `${formatNumber(office.selectedFeeCount)} matching fee transaction(s)`}
           </div>
+        </td>
+
+        <td style={styles.numberCell}>
+          <strong>{formatCurrency(office.selectedFeeTotal)}</strong>
+          <div style={styles.smallMuted}>
+            {formatNumber(office.selectedFeeCount)} fee transaction(s)
+          </div>
+        </td>
+
+        <td style={styles.numberCell}>{formatCurrency(office.selectedFeeAvg, 2)}</td>
+
+        {isBrokerView && (
+          <td style={{...styles.goalCell, ...styles.metricGoalCell}}>
+            {canEditGoals && (
+              savedOfficeGoals[office.officeName] === undefined ||
+              editingOfficeGoals[office.officeName]
+            ) ? (
+              <div style={styles.editFieldRow}>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={officeGoals?.[office.officeName]?.nb_rw ?? ''}
+                  onChange={(event) =>
+                    updateOfficeGoal(office.officeName, event.target.value)
+                  }
+                  placeholder="NB/RW goal"
+                  style={styles.goalInput}
+                />
+                <button
+                  type="button"
+                  onClick={() => saveOfficeGoal(office.officeName)}
+                  disabled={savingKey === `office-goal:${office.officeName}`}
+                  style={styles.saveMiniButton}
+                >
+                  {savingKey === `office-goal:${office.officeName}`
+                    ? 'Saving'
+                    : 'Save'}
+                </button>
+                {savedOfficeGoals[office.officeName] !== undefined && (
+                  <button
+                    type="button"
+                    onClick={() => cancelEditingOfficeGoal(office.officeName)}
+                    style={styles.cancelMiniButton}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={styles.savedFieldRow}>
+                <span style={styles.savedGoalValue}>
+                  {savedOfficeGoals[office.officeName] !== undefined
+                    ? formatNumber(savedOfficeGoals[office.officeName])
+                    : 'Not Set'}
+                </span>
+                {canEditGoals && (
+                  <button
+                    type="button"
+                    onClick={() => startEditingOfficeGoal(office.officeName)}
+                    style={styles.editMiniButton}
+                    aria-label={`Edit ${office.officeName} goal for ${selectedMonth}`}
+                    title={`Edit ${getMonthLabel(selectedMonth)} goal`}
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
+          </td>
         )}
 
-        {activeView === 'trends' && (
-          <div className={styles.gtGridTrends}>
-            <div>
-              <span>NB Fees:</span> {formatCurrency(gt.new_business_fees)}
-            </div>
-            <div>
-              <span>MoM:</span> {formatPct(gt.nb_mom_pct)}
-            </div>
-            <div>
-              <span>YoY:</span> {formatPct(gt.nb_yoy_pct)}
-            </div>
-            <div>
-              <span>Total Rev Trend:</span> {formatPct(gt.total_rev_trend)}
-            </div>
-          </div>
-        )}
+        <td style={{ ...styles.strongCell, ...styles.metricProjectedCell }}>
+          {formatDecimal(office.projectedCount)}
+        </td>
 
-        {(activeView === 'detailed' || activeView === 'ranking') && (
-          <div className={styles.gtGridSummary}>
-            <div>
-              <span>NB $:</span> {formatCurrency(gt.new_business_fees)}
-            </div>
-            <div>
-              <span>Endorse $:</span> {formatCurrency(gt.endorsement_fees)}
-            </div>
-            <div>
-              <span>DMV $:</span> {formatCurrency(gt.dmv_fees)}
-            </div>
-            <div>
-              <span>Tax $:</span> {formatCurrency(gt.tax_fees)}
-            </div>
-          </div>
+        <td style={styles.numberCell}>
+          {office.lastMonthCount === null
+            ? '—'
+            : formatNumber(office.lastMonthCount)}
+        </td>
+
+        <td style={styles.numberCell}>
+          {office.lastYearCount === null
+            ? '—'
+            : formatNumber(office.lastYearCount)}
+        </td>
+
+        {isBrokerView && (
+          <>
+            <td style={styles.progressCell}>
+              {office.goal > 0 ? (
+                <>
+                  <div style={styles.progressText}>
+                    {Math.round(office.actualGoalPercent)}%
+                  </div>
+                  <div style={styles.progressTrack}>
+                    <div
+                      style={{
+                        ...styles.progressFill,
+                        width: `${Math.min(office.actualGoalPercent, 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <div style={styles.smallMuted}>
+                    {Math.round(office.projectedGoalPercent)}% proj.
+                  </div>
+                </>
+              ) : '—'}
+            </td>
+
+            <td style={styles.numberCell}>
+              <span
+                style={
+                  office.status === 'No Goal'
+                    ? styles.noGoalBadge
+                    : onTrack
+                      ? styles.onTrackBadge
+                      : styles.behindBadge
+                }
+              >
+                {office.status}
+              </span>
+
+              {office.goal > 0 && (
+                <div
+                  style={{
+                    ...styles.difference,
+                    color: onTrack ? '#047857' : '#be123c',
+                  }}
+                >
+                  {office.difference >= 0 ? '+' : '-'}
+                  {formatDecimal(Math.abs(office.difference))}
+                </div>
+              )}
+            </td>
+          </>
         )}
-      </div>
+      </tr>
     );
   };
 
-  // --- MODAL A: SUMMARY SNAPSHOT ---
-  const renderSummaryModal = () => {
-    const curr = selectedOfficeData;
-    const yoy = curr.prevYearRow || {};
+  return (
+    <>
+      <style>{`
+        @media (max-width: 1500px) {
+          .office-numbers-table th,
+          .office-numbers-table td {
+            line-height: 1.15;
+          }
+        }
 
-    let history = [];
-    if (curr.isGrandTotal) {
-      history = getCompanyHistory();
-    } else {
-      history = salesData
-        .filter((d) => d.office === curr.office && d.month_start_date <= curr.month_start_date)
-        .sort((a, b) => new Date(b.month_start_date) - new Date(a.month_start_date))
-        .slice(0, 6)
-        .reverse();
-    }
+        @media (max-width: 1250px) {
+          .office-numbers-page {
+            padding: 16px !important;
+          }
 
-    const getVal = (row, key) => {
-      if (!row) return 0;
-      if (key === 'total_fees') return calcTotalFees(row);
-      return parseFloat(row[key] || 0);
-    };
-
-    const metricKey = modalMetric.key;
-    const isCount = modalMetric.isCount || false;
-    const maxVal = Math.max(...history.map((h) => getVal(h, metricKey)), 0);
-    const currentVal = getVal(curr, metricKey);
-    const targetVal = getVal(yoy, metricKey);
-    const progressPct = targetVal > 0 ? Math.min((currentVal / targetVal) * 100, 100) : currentVal > 0 ? 100 : 0;
-
-    const nbFees = parseFloat(curr.new_business_fees || 0);
-    const renewFees = parseFloat(curr.renewal_fees || 0);
-    const endorseFees = parseFloat(curr.endorsement_fees || 0);
-    const totalMix = nbFees + renewFees + endorseFees;
-
-    const nbPct = totalMix ? (nbFees / totalMix) * 100 : 0;
-    const renewPct = totalMix ? (renewFees / totalMix) * 100 : 0;
-    const endorsePct = totalMix ? (endorseFees / totalMix) * 100 : 0;
-
-    return (
-      <div className={styles.modalOverlay} onClick={() => setSelectedOfficeData(null)}>
-        <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-          <div className={styles.modalHeader}>
-            <div>
-              <h2 style={{ margin: 0 }}>Performance: {curr.office}</h2>
-              <span style={{ fontSize: '0.85rem', color: '#666' }}>{curr.month_start_date}</span>
+          .office-numbers-table {
+            font-size: 11px;
+          }
+        }
+      `}</style>
+      <div className="office-numbers-page" style={styles.page}>
+      <div style={styles.header}>
+        <div>
+          <h1 style={styles.title}>{viewMode === 'office' ? 'Monthly Office Performance' : 'Monthly Agent Performance'}</h1>
+          <p style={styles.subtitle}>
+            Switch between office and agent performance. NB/RW goals appear only in Broker Fee view; other fee views focus on counts, totals, averages, pacing, and historical comparisons.
+          </p>
+          {currentProfile && (
+            <div style={styles.accessNote}>
+              Access: {isAdmin ? 'All regions' : (assignedRegion || 'No region assigned')} • Role: {currentProfile.role || 'Unknown'}
             </div>
-            <button onClick={() => setSelectedOfficeData(null)}>✖</button>
-          </div>
+          )}
+        </div>
 
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666' }}>ANALYSIS VIEW:</label>
-            <select
-              className={styles.modalSelect}
-              value={modalMetric.key}
-              onChange={(e) => {
-                const selected = METRIC_OPTIONS.find((m) => m.key === e.target.value);
-                setModalMetric(selected);
+        <div style={styles.monthSelector}>
+          <label htmlFor="office-report-month" style={styles.monthLabel}>Report Month</label>
+          <input
+            id="office-report-month"
+            type="month"
+            value={selectedMonth}
+            max={currentMonthValue}
+            onChange={(event) => setSelectedMonth(event.target.value)}
+            style={styles.monthInput}
+          />
+        </div>
+      </div>
+
+      <div style={styles.controlBar}>
+        <div>
+          <h2 style={styles.monthTitle}>{getMonthLabel(selectedMonth)}</h2>
+          <p style={styles.monthDescription}>
+            Data through <strong>{formatDateLabel(latestDataDate)}</strong>.{' '}
+            {pacingDetails.isPartialMonth
+              ? `${formatDateLabel(latestDataDate)} is treated as today: day ${pacingDetails.asOfDay} of ${pacingDetails.totalDaysInMonth}.`
+              : 'The loaded data reaches the final day of the month.'}
+          </p>
+        </div>
+
+        <div style={styles.controlsRight}>
+          <div style={styles.segmentedControl}>
+            <button
+              type="button"
+              onClick={() => setViewMode('office')}
+              style={{
+                ...styles.segmentButton,
+                ...(viewMode === 'office' ? styles.segmentButtonActive : {}),
               }}
             >
-              {METRIC_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
+              Offices
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('agent')}
+              style={{
+                ...styles.segmentButton,
+                ...(viewMode === 'agent' ? styles.segmentButtonActive : {}),
+              }}
+            >
+              Agents
+            </button>
+          </div>
+
+          <div style={styles.feeSelectorWrap}>
+            <label htmlFor="fee-type-selector" style={styles.feeSelectorLabel}>Fee Type</label>
+            <select
+              id="fee-type-selector"
+              value={selectedFeeType}
+              onChange={(event) => setSelectedFeeType(event.target.value)}
+              style={styles.feeSelector}
+            >
+              {FEE_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className={styles.comparisonGrid}>
-            <div className={styles.compCard}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4>{modalMetric.label}</h4>
-                <div className={styles.badgeNeutral}>Vs Last Year</div>
-              </div>
+          <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={groupByRegion}
+                onChange={(event) => setGroupByRegion(event.target.checked)}
+              />
+              Group by region
+            </label>
 
-              <div className={styles.heroNumber}>{isCount ? formatCount(currentVal) : formatCurrency(currentVal)}</div>
+          <button
+            type="button"
+            onClick={() => { fetchProfileAndSettings(); fetchDashboardData(); }}
+            disabled={loading || settingsLoading}
+            style={styles.primaryButton}
+          >
+            {loading || settingsLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+      </div>
 
-              <div style={{ marginTop: '15px' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: '0.75rem',
-                    marginBottom: '2px',
-                  }}
-                >
-                  <span>Progress to beat Last Year</span>
-                  <span>Target: {isCount ? formatCount(targetVal) : formatCurrency(targetVal)}</span>
-                </div>
-
-                <div className={styles.progressBarBg}>
-                  <div
-                    className={styles.progressBarFill}
-                    style={{
-                      width: `${progressPct}%`,
-                      backgroundColor: progressPct >= 100 ? '#27ae60' : '#3498db',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginTop: '25px' }}>
-                <span style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase' }}>6-Month Trend</span>
-                <div className={styles.trendContainer}>
-                  {history.map((h, i) => {
-                    const val = getVal(h, metricKey);
-                    const heightPct = maxVal ? (val / maxVal) * 100 : 0;
-                    const isCurrent = i === history.length - 1;
-                    const monthShort = new Date(h.month_start_date).toLocaleDateString('default', { month: 'short' });
-
-                    return (
-                      <div key={i} className={styles.trendBarWrapper}>
-                        <div
-                          className={styles.trendBar}
-                          style={{
-                            height: `${heightPct}%`,
-                            backgroundColor: isCurrent ? '#c0392b' : '#bdc3c7',
-                          }}
-                        />
-                        <div className={styles.trendLabelVal}>
-                          {isCount ? val : val > 999 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
-                        </div>
-                        <div className={styles.trendLabelMonth}>{monthShort}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.compCard} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-              <div>
-                <h4>Revenue Composition</h4>
-                <div className={styles.heroNumber} style={{ fontSize: '1.8rem' }}>
-                  {formatCurrency(getVal(curr, 'total_fees'))}
-                  <span style={{ fontSize: '0.9rem', color: '#666', fontWeight: 'normal', marginLeft: '10px' }}>
-                    Total Fees
-                  </span>
-                </div>
-
-                <div className={styles.mixBarContainer}>
-                  <div className={styles.mixSegment} style={{ width: `${nbPct}%`, backgroundColor: '#c0392b' }} />
-                  <div className={styles.mixSegment} style={{ width: `${renewPct}%`, backgroundColor: '#f1c40f' }} />
-                  <div className={styles.mixSegment} style={{ width: `${endorsePct}%`, backgroundColor: '#3498db' }} />
-                </div>
-
-                <div className={styles.mixLegend}>
-                  <span>
-                    <span className={styles.dot} style={{ background: '#c0392b' }} /> New Biz
-                  </span>
-                  <span>
-                    <span className={styles.dot} style={{ background: '#f1c40f' }} /> Renewal
-                  </span>
-                  <span>
-                    <span className={styles.dot} style={{ background: '#3498db' }} /> Endorse
-                  </span>
-                </div>
-              </div>
+      {!isAdmin && currentProfile && !assignedRegion && (
+        <div style={styles.errorBox}>
+          <div>
+            <strong>No region assigned</strong>
+            <div>
+              Add a region to this user's profile before the dashboard can show office or agent data.
             </div>
           </div>
         </div>
+      )}
+
+      {errorMessage && (
+        <div style={styles.errorBox}>
+          <div>
+            <strong>Unable to load report</strong>
+            <div>{errorMessage}</div>
+          </div>
+          <button type="button" onClick={() => { fetchProfileAndSettings(); fetchDashboardData(); }} style={styles.retryButton}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {viewMode === 'office' && (
+        <>
+      <div style={styles.summaryGrid}>
+        <SummaryCard
+          label={selectedMetricConfig.countLabel}
+          value={formatNumber(totals.selectedMetricCount)}
+          subtext={
+            selectedMetricConfig.usesNbRwCount
+              ? `${formatNumber(totals.newBusinessCount)} NEW • ${formatNumber(totals.rewriteCount)} RWR`
+              : `${formatNumber(totals.selectedFeeCount)} matching fee transaction(s)`
+          }
+        />
+        <SummaryCard
+          label={selectedFeeConfig.label}
+          value={formatCurrency(totals.selectedFeeTotal)}
+          subtext={`${formatNumber(totals.selectedFeeCount)} fee transaction(s)`}
+        />
+        <SummaryCard
+          label={`Average ${selectedFeeConfig.label}`}
+          value={formatCurrency(totals.selectedFeeAvg, 2)}
+        />
+        <SummaryCard
+          label={selectedMetricConfig.projectedLabel}
+          value={formatDecimal(totals.projectedCount)}
+          subtext={`Based on data through ${formatDateLabel(latestDataDate)}`}
+        />
+        {isBrokerView && (
+          <SummaryCard
+            label="NB/RW Count Goal"
+            value={totals.goal > 0 ? formatNumber(totals.goal) : 'Not Set'}
+          />
+        )}
+        <SummaryCard
+          label="Loaded Receipts"
+          value={formatNumber(totals.transactionCount)}
+          subtext={`${formatNumber(totals.excludedRows)} duplicate/voided rows excluded`}
+        />
       </div>
-    );
-  };
 
-  // --- MODAL B: EXECUTIVE ANALYSIS ---
-  const renderExecutiveModal = () => {
-    const curr = selectedOfficeData;
-    const kpi = getKPIMetrics(curr);
-    if (!kpi) return null;
+      <div style={styles.tableCard}>
+        {loading ? (
+          <div style={styles.loading}>Loading office performance metrics...</div>
+        ) : officeMetrics.length === 0 ? (
+          <div style={styles.loading}>
+            No daily_transaction_detail_transfers data was found for this month.
+          </div>
+        ) : (
+          <div style={styles.tableWrapper}>
+            <table
+              className="office-numbers-table"
+              style={{
+                ...styles.table,
+                minWidth: isBrokerView ? 1320 : 1040,
+              }}
+            >
+              
 
-    return (
-      <div className={styles.modalOverlay} onClick={() => setSelectedOfficeData(null)}>
-        <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-          <div className={styles.modalHeader}>
-            <div>
-              <h2 style={{ margin: 0, color: '#c0392b' }}>📈 Executive Analysis: {curr.office}</h2>
-              <span style={{ fontSize: '0.85rem', color: '#666' }}>
-                {curr.region} • {curr.month_start_date}
-              </span>
-            </div>
+              <tbody>
+                {regionGroups.map((group) => {
+                  const regionTotals = group.offices.reduce((acc, office) => {
+                    acc.nbRwCount += office.nbRwCount;
+                    acc.newBusinessCount += office.newBusinessCount;
+                    acc.rewriteCount += office.rewriteCount;
+                    acc.selectedFeeCount += office.selectedFeeCount;
+                    acc.selectedMetricCount += office.selectedMetricCount;
+                    acc.selectedFeeTotal += office.selectedFeeTotal;
+                    acc.projectedCount += office.projectedCount;
 
-            {!curr.isGrandTotal && (
-              <div className={styles.rankBadge}>
-                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Region Rank</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: '800' }}>
-                  #{kpi.rank} <span style={{ fontSize: '0.9rem', color: '#ccc' }}>/ {kpi.totalPeers}</span>
-                </div>
+                    if (office.lastMonthCount !== null) {
+                      acc.lastMonthCount += office.lastMonthCount;
+                      acc.hasLastMonthData = true;
+                    }
+
+                    if (office.lastYearCount !== null) {
+                      acc.lastYearCount += office.lastYearCount;
+                      acc.hasLastYearData = true;
+                    }
+
+                    acc.goal += office.goal;
+                    return acc;
+                  }, {
+                    nbRwCount: 0,
+                    newBusinessCount: 0,
+                    rewriteCount: 0,
+                    selectedFeeCount: 0,
+                    selectedMetricCount: 0,
+                    selectedFeeTotal: 0,
+                    projectedCount: 0,
+                    lastMonthCount: 0,
+                    lastYearCount: 0,
+                    hasLastMonthData: false,
+                    hasLastYearData: false,
+                    goal: 0,
+                  });
+
+                  const regionFeeAvgDenominator = selectedFeeType === 'broker'
+                    ? regionTotals.nbRwCount
+                    : regionTotals.selectedFeeCount;
+                  const regionFeeAvg = regionFeeAvgDenominator !== 0
+                    ? regionTotals.selectedFeeTotal / regionFeeAvgDenominator
+                    : 0;
+
+                  return (
+                    <React.Fragment key={group.regionName || 'all-offices'}>
+                      {groupByRegion && (
+                        <>
+                          <tr>
+                            <td
+                              colSpan={isBrokerView ? 11 : 8}
+                              style={styles.regionHeaderCell}
+                            >
+                              <div style={styles.regionHeaderContent}>
+                                <strong>{group.regionName}</strong>
+                              </div>
+                            </td>
+                          </tr>
+
+                          <tr>
+                            <th style={styles.regionColumnHeaderCell}>Office</th>
+                            <th style={styles.regionColumnHeaderCell}>Region</th>
+                            <th
+                              style={{
+                                ...styles.regionColumnHeaderCell,
+                                ...styles.metricCurrentHeaderCell,
+                              }}
+                            >
+                              {selectedMetricConfig.shortCountLabel}
+                            </th>
+                            <th style={styles.regionColumnHeaderCell}>
+                              {selectedFeeConfig.label}
+                            </th>
+                            <th style={styles.regionColumnHeaderCell}>Avg Fee</th>
+                            {isBrokerView && (
+                              <th
+                                style={{
+                                  ...styles.regionColumnHeaderCell,
+                                  ...styles.metricGoalHeaderCell,
+                                }}
+                              >
+                                NB/RW Count Goal
+                              </th>
+                            )}
+                            <th
+                              style={{
+                                ...styles.regionColumnHeaderCell,
+                                ...styles.metricProjectedHeaderCell,
+                              }}
+                            >
+                              {selectedMetricConfig.projectedLabel}
+                            </th>
+                            <th style={styles.regionColumnHeaderCell}>
+                              Last Month ({getMonthLabel(comparisonMonths.lastMonth.value)})
+                            </th>
+                            <th style={styles.regionColumnHeaderCell}>
+                              Last Year ({getMonthLabel(comparisonMonths.lastYear.value)})
+                            </th>
+                            {isBrokerView && (
+                              <>
+                                <th style={styles.regionColumnHeaderCell}>
+                                  Goal Progress
+                                </th>
+                                <th style={styles.regionColumnHeaderCell}>
+                                  Status
+                                </th>
+                              </>
+                            )}
+                          </tr>
+                        </>
+                      )}
+
+                      {group.offices.map(renderOfficeRow)}
+
+                      {groupByRegion && (() => {
+                        const regionActualGoalPercent =
+                          regionTotals.goal > 0
+                            ? (regionTotals.selectedMetricCount / regionTotals.goal) * 100
+                            : 0;
+
+                        const regionProjectedGoalPercent =
+                          regionTotals.goal > 0
+                            ? (regionTotals.projectedCount / regionTotals.goal) * 100
+                            : 0;
+
+                        const regionOnTrack =
+                          regionTotals.goal > 0 &&
+                          regionTotals.projectedCount >= regionTotals.goal;
+
+                        return (
+                          <tr>
+                            <td
+                              style={{
+                                ...styles.regionTotalCell,
+                                fontSize: 12,
+                                textTransform: 'uppercase',
+                                letterSpacing: '.02em',
+                              }}
+                            >
+                              {group.regionName} Total
+                            </td>
+                            <td style={styles.regionTotalCell}>{group.regionName}</td>
+                            <td style={{...styles.regionTotalCell,...styles.metricCurrentCell}}>
+                              {formatNumber(regionTotals.selectedMetricCount)}
+                            </td>
+                            <td style={styles.regionTotalCell}>
+                              {formatCurrency(regionTotals.selectedFeeTotal)}
+                            </td>
+                            <td style={styles.regionTotalCell}>
+                              {formatCurrency(regionFeeAvg, 2)}
+                            </td>
+
+                            {isBrokerView && (
+                              <td style={{...styles.regionTotalCell,...styles.metricGoalCell}}>
+                                {regionTotals.goal > 0
+                                  ? formatNumber(regionTotals.goal)
+                                  : 'Not Set'}
+                              </td>
+                            )}
+
+                            <td style={{...styles.regionTotalCell,...styles.metricProjectedCell}}>
+                              {formatDecimal(regionTotals.projectedCount)}
+                            </td>
+                            <td style={styles.regionTotalCell}>
+                              {regionTotals.hasLastMonthData
+                                ? formatNumber(regionTotals.lastMonthCount)
+                                : '—'}
+                            </td>
+                            <td style={styles.regionTotalCell}>
+                              {regionTotals.hasLastYearData
+                                ? formatNumber(regionTotals.lastYearCount)
+                                : '—'}
+                            </td>
+
+                            {isBrokerView && (
+                              <>
+                                <td style={styles.regionTotalCell}>
+                                  {regionTotals.goal > 0 ? (
+                                    <>
+                                      <div style={styles.progressText}>
+                                        {Math.round(regionActualGoalPercent)}%
+                                      </div>
+                                      <div style={styles.progressTrack}>
+                                        <div
+                                          style={{
+                                            ...styles.progressFill,
+                                            width: `${Math.min(
+                                              regionActualGoalPercent,
+                                              100
+                                            )}%`,
+                                          }}
+                                        />
+                                      </div>
+                                      <div style={styles.smallMuted}>
+                                        {Math.round(regionProjectedGoalPercent)}% proj.
+                                      </div>
+                                    </>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  <span
+                                    style={
+                                      regionTotals.goal <= 0
+                                        ? styles.noGoalBadge
+                                        : regionOnTrack
+                                          ? styles.onTrackBadge
+                                          : styles.behindBadge
+                                    }
+                                  >
+                                    {regionTotals.goal <= 0
+                                      ? 'No Goal'
+                                      : regionOnTrack
+                                        ? 'On Track'
+                                        : 'Behind'}
+                                  </span>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        );
+                      })()}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+
+              <tfoot>
+                <tr>
+                  <td style={styles.footerCell}>All Offices</td>
+                  <td style={styles.footerCell}>—</td>
+                  <td style={{ ...styles.footerCell, ...styles.metricCurrentCell }}>
+                    {formatNumber(totals.selectedMetricCount)}
+                  </td>
+                  <td style={styles.footerCell}>{formatCurrency(totals.selectedFeeTotal)}</td>
+                  <td style={styles.footerCell}>{formatCurrency(totals.selectedFeeAvg, 2)}</td>
+                  <td style={{ ...styles.footerCell, ...styles.metricGoalCell }}>
+                    {totals.goal > 0 ? formatNumber(totals.goal) : 'Not Set'}
+                  </td>
+                  <td style={{ ...styles.footerCell, ...styles.metricProjectedCell }}>
+                    {formatDecimal(totals.projectedCount)}
+                  </td>
+                  <td style={styles.footerCell}>
+                    {totals.hasLastMonthData
+                      ? formatNumber(totals.lastMonthCount)
+                      : '—'}
+                  </td>
+                  <td style={styles.footerCell}>
+                    {totals.hasLastYearData
+                      ? formatNumber(totals.lastYearCount)
+                      : '—'}
+                  </td>
+                  <td style={styles.footerCell}>—</td>
+                  <td style={styles.footerCell}>
+                    {totals.goal <= 0
+                      ? 'No Goal'
+                      : totals.projectedCount >= totals.goal
+                        ? 'On Track'
+                        : 'Behind'}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+        </>
+      )}
+      {viewMode === 'agent' && (
+        <>
+          <div style={styles.summaryGrid}>
+            <SummaryCard
+              label={selectedMetricConfig.countLabel}
+              value={formatNumber(agentTotals.selectedMetricCount)}
+              subtext={
+                selectedMetricConfig.usesNbRwCount
+                  ? `${formatNumber(agentTotals.newBusinessCount)} NEW • ${formatNumber(agentTotals.rewriteCount)} RWR`
+                  : `${formatNumber(agentTotals.selectedFeeCount)} matching fee transaction(s)`
+              }
+            />
+            <SummaryCard
+              label={selectedFeeConfig.label}
+              value={formatCurrency(agentTotals.selectedFeeTotal)}
+              subtext={`${formatNumber(agentTotals.selectedFeeCount)} fee transaction(s)`}
+            />
+            <SummaryCard
+              label={`Average ${selectedFeeConfig.label}`}
+              value={formatCurrency(agentTotals.selectedFeeAvg, 2)}
+            />
+            <SummaryCard
+              label={selectedMetricConfig.projectedLabel}
+              value={formatDecimal(agentTotals.projectedCount)}
+              subtext={`Based on data through ${formatDateLabel(latestDataDate)}`}
+            />
+            {isBrokerView && (
+              <SummaryCard
+                label="NB/RW Count Goal"
+                value={
+                  agentTotals.goal > 0
+                    ? formatNumber(agentTotals.goal)
+                    : 'Not Set'
+                }
+              />
+            )}
+            <SummaryCard
+              label="Agents"
+              value={formatNumber(agentMetrics.length)}
+              subtext={isAdmin ? "Grouped by office region" : `Showing ${assignedRegion || "assigned"} region only`}
+            />
+          </div>
+
+          <div style={styles.tableCard}>
+            {loading ? (
+              <div style={styles.loading}>Loading agent performance metrics...</div>
+            ) : agentMetrics.length === 0 ? (
+              <div style={styles.loading}>
+                No agent transaction data was found for this month.
+              </div>
+            ) : (
+              <div style={styles.tableWrapper}>
+                <table
+                  className="office-numbers-table"
+                  style={{
+                    ...styles.table,
+                    minWidth: isBrokerView ? 1380 : 1120,
+                  }}
+                >
+                  
+
+                  <tbody>
+                    {agentRegionGroups.map((group) => {
+                      const regionTotals = group.agents.reduce((acc, agent) => {
+                        acc.selectedMetricCount += agent.selectedMetricCount;
+                        acc.selectedFeeTotal += agent.selectedFeeTotal;
+                        acc.selectedFeeCount += agent.selectedFeeCount;
+                        acc.nbRwCount += agent.nbRwCount;
+                        acc.projectedCount += agent.projectedCount;
+                        acc.goal += agent.goal;
+
+                        if (agent.lastMonthCount !== null) {
+                          acc.lastMonthCount += agent.lastMonthCount;
+                          acc.hasLastMonthData = true;
+                        }
+
+                        if (agent.lastYearCount !== null) {
+                          acc.lastYearCount += agent.lastYearCount;
+                          acc.hasLastYearData = true;
+                        }
+
+                        return acc;
+                      }, {
+                        selectedMetricCount: 0,
+                        selectedFeeTotal: 0,
+                        selectedFeeCount: 0,
+                        nbRwCount: 0,
+                        projectedCount: 0,
+                        goal: 0,
+                        lastMonthCount: 0,
+                        lastYearCount: 0,
+                        hasLastMonthData: false,
+                        hasLastYearData: false,
+                      });
+
+                      const avgDenominator = selectedFeeType === 'broker'
+                        ? regionTotals.nbRwCount
+                        : regionTotals.selectedFeeCount;
+
+                      const regionAvg = avgDenominator
+                        ? regionTotals.selectedFeeTotal / avgDenominator
+                        : 0;
+
+                      return (
+                        <React.Fragment key={group.regionName || 'all-agents'}>
+                          {groupByRegion && (
+                            <>
+                              <tr>
+                                <td
+                                  colSpan={isBrokerView ? 12 : 9}
+                                  style={styles.regionHeaderCell}
+                                >
+                                  <div style={styles.regionHeaderContent}>
+                                    <strong>{group.regionName}</strong>
+                                  </div>
+                                </td>
+                              </tr>
+
+                              <tr>
+                                <th style={styles.regionColumnHeaderCell}>Agent</th>
+                                <th style={styles.regionColumnHeaderCell}>Office</th>
+                                <th style={styles.regionColumnHeaderCell}>Region</th>
+                                <th
+                                  style={{
+                                    ...styles.regionColumnHeaderCell,
+                                    ...styles.metricCurrentHeaderCell,
+                                  }}
+                                >
+                                  {selectedMetricConfig.shortCountLabel}
+                                </th>
+                                <th style={styles.regionColumnHeaderCell}>
+                                  {selectedFeeConfig.label}
+                                </th>
+                                <th style={styles.regionColumnHeaderCell}>Avg Fee</th>
+                                {isBrokerView && (
+                                  <th
+                                    style={{
+                                      ...styles.regionColumnHeaderCell,
+                                      ...styles.metricGoalHeaderCell,
+                                    }}
+                                  >
+                                    NB/RW Count Goal
+                                  </th>
+                                )}
+                                <th
+                                  style={{
+                                    ...styles.regionColumnHeaderCell,
+                                    ...styles.metricProjectedHeaderCell,
+                                  }}
+                                >
+                                  {selectedMetricConfig.projectedLabel}
+                                </th>
+                                <th style={styles.regionColumnHeaderCell}>
+                                  Last Month
+                                </th>
+                                <th style={styles.regionColumnHeaderCell}>
+                                  Last Year
+                                </th>
+                                {isBrokerView && (
+                                  <>
+                                    <th style={styles.regionColumnHeaderCell}>
+                                      Goal Progress
+                                    </th>
+                                    <th style={styles.regionColumnHeaderCell}>
+                                      Status
+                                    </th>
+                                  </>
+                                )}
+                              </tr>
+                            </>
+                          )}
+
+                          {group.agents.map((agent) => {
+                            const onTrack = agent.status === 'On Track';
+
+                            return (
+                              <tr key={agent.agentEmail}>
+                                <td style={styles.officeCell}>
+                                  <div style={styles.agentName}>
+                                    {agent.csrName}
+                                  </div>
+                                  <div style={styles.smallMuted}>
+                                    {agent.agentEmail}
+                                  </div>
+                                </td>
+                                <td style={styles.numberCell}>
+                                  {agent.offices?.length > 0
+                                    ? agent.offices.join(', ')
+                                    : agent.office}
+                                </td>
+                                <td style={styles.numberCell}>{agent.region}</td>
+                                <td
+                                  style={{
+                                    ...styles.numberCell,
+                                    ...styles.metricCurrentCell,
+                                  }}
+                                >
+                                  <strong>
+                                    {formatNumber(agent.selectedMetricCount)}
+                                  </strong>
+                                  {selectedMetricConfig.usesNbRwCount && (
+                                    <div style={styles.smallMuted}>
+                                      {formatNumber(agent.newBusinessCount)} NEW /{' '}
+                                      {formatNumber(agent.rewriteCount)} RWR
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={styles.numberCell}>
+                                  {formatCurrency(agent.selectedFeeTotal)}
+                                  <div style={styles.smallMuted}>
+                                    {formatNumber(agent.selectedFeeCount)} fee transaction(s)
+                                  </div>
+                                </td>
+                                <td style={styles.numberCell}>
+                                  {formatCurrency(agent.selectedFeeAvg, 2)}
+                                </td>
+                                {isBrokerView && (
+                                  <td style={{...styles.goalCell, ...styles.metricGoalCell}}>
+                                    {canEditGoals && (
+                                      savedAgentGoals[agent.agentEmail] === undefined ||
+                                      editingAgentGoals[agent.agentEmail]
+                                    ) ? (
+                                      <div style={styles.editFieldRow}>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="1"
+                                          value={
+                                            agentGoals?.[agent.agentEmail]?.nb_rw ?? ''
+                                          }
+                                          onChange={(event) =>
+                                            updateAgentGoal(
+                                              agent.agentEmail,
+                                              event.target.value
+                                            )
+                                          }
+                                          placeholder="NB/RW goal"
+                                          style={styles.goalInput}
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            saveAgentGoal(agent.agentEmail)
+                                          }
+                                          disabled={
+                                            savingKey ===
+                                            `agent-goal:${agent.agentEmail}`
+                                          }
+                                          style={styles.saveMiniButton}
+                                        >
+                                          {savingKey ===
+                                          `agent-goal:${agent.agentEmail}`
+                                            ? 'Saving'
+                                            : 'Save'}
+                                        </button>
+                                        {savedAgentGoals[agent.agentEmail] !==
+                                          undefined && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              cancelEditingAgentGoal(
+                                                agent.agentEmail
+                                              )
+                                            }
+                                            style={styles.cancelMiniButton}
+                                          >
+                                            Cancel
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div style={styles.savedFieldRow}>
+                                        <span style={styles.savedGoalValue}>
+                                          {savedAgentGoals[agent.agentEmail] !==
+                                          undefined
+                                            ? formatNumber(
+                                                savedAgentGoals[agent.agentEmail]
+                                              )
+                                            : 'Not Set'}
+                                        </span>
+                                        {canEditGoals && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              startEditingAgentGoal(
+                                                agent.agentEmail
+                                              )
+                                            }
+                                            style={styles.editMiniButton}
+                                            title={`Edit ${getMonthLabel(
+                                              selectedMonth
+                                            )} goal`}
+                                          >
+                                            Edit
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+                                )}
+                                <td
+                                  style={{
+                                    ...styles.strongCell,
+                                    ...styles.metricProjectedCell,
+                                  }}
+                                >
+                                  {formatDecimal(agent.projectedCount)}
+                                </td>
+                                <td style={styles.numberCell}>
+                                  {agent.lastMonthCount === null
+                                    ? '—'
+                                    : formatNumber(agent.lastMonthCount)}
+                                </td>
+                                <td style={styles.numberCell}>
+                                  {agent.lastYearCount === null
+                                    ? '—'
+                                    : formatNumber(agent.lastYearCount)}
+                                </td>
+                                {isBrokerView && (
+                                  <>
+                                    <td style={styles.progressCell}>
+                                      {agent.goal > 0 ? (
+                                        <>
+                                          <div style={styles.progressText}>
+                                            {Math.round(agent.actualGoalPercent)}%
+                                          </div>
+                                          <div style={styles.progressTrack}>
+                                            <div
+                                              style={{
+                                                ...styles.progressFill,
+                                                width: `${Math.min(
+                                                  agent.actualGoalPercent,
+                                                  100
+                                                )}%`,
+                                              }}
+                                            />
+                                          </div>
+                                          <div style={styles.smallMuted}>
+                                            {Math.round(agent.projectedGoalPercent)}% proj.
+                                          </div>
+                                        </>
+                                      ) : '—'}
+                                    </td>
+                                    <td style={styles.numberCell}>
+                                      <span
+                                        style={
+                                          agent.status === 'No Goal'
+                                            ? styles.noGoalBadge
+                                            : onTrack
+                                              ? styles.onTrackBadge
+                                              : styles.behindBadge
+                                        }
+                                      >
+                                        {agent.status}
+                                      </span>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            );
+                          })}
+
+                          {groupByRegion && (() => {
+                            const regionActualGoalPercent =
+                              regionTotals.goal > 0
+                                ? (regionTotals.selectedMetricCount / regionTotals.goal) * 100
+                                : 0;
+
+                            const regionProjectedGoalPercent =
+                              regionTotals.goal > 0
+                                ? (regionTotals.projectedCount / regionTotals.goal) * 100
+                                : 0;
+
+                            const regionOnTrack =
+                              regionTotals.goal > 0 &&
+                              regionTotals.projectedCount >= regionTotals.goal;
+
+                            return (
+                              <tr>
+                                <td
+                                  style={{
+                                    ...styles.regionTotalCell,
+                                    fontSize: 12,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '.02em',
+                                  }}
+                                >
+                                  {group.regionName} Total
+                                </td>
+                                <td style={styles.regionTotalCell}>All Offices</td>
+                                <td style={styles.regionTotalCell}>
+                                  {group.regionName}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  {formatNumber(regionTotals.selectedMetricCount)}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  {formatCurrency(regionTotals.selectedFeeTotal)}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  {formatCurrency(regionAvg, 2)}
+                                </td>
+
+                                {isBrokerView && (
+                                  <td style={styles.regionTotalCell}>
+                                    {regionTotals.goal > 0
+                                      ? formatNumber(regionTotals.goal)
+                                      : 'Not Set'}
+                                  </td>
+                                )}
+
+                                <td style={styles.regionTotalCell}>
+                                  {formatDecimal(regionTotals.projectedCount)}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  {regionTotals.hasLastMonthData
+                                    ? formatNumber(regionTotals.lastMonthCount)
+                                    : '—'}
+                                </td>
+                                <td style={styles.regionTotalCell}>
+                                  {regionTotals.hasLastYearData
+                                    ? formatNumber(regionTotals.lastYearCount)
+                                    : '—'}
+                                </td>
+
+                                {isBrokerView && (
+                                  <>
+                                    <td style={styles.regionTotalCell}>
+                                      {regionTotals.goal > 0 ? (
+                                        <>
+                                          <div style={styles.progressText}>
+                                            {Math.round(regionActualGoalPercent)}%
+                                          </div>
+                                          <div style={styles.progressTrack}>
+                                            <div
+                                              style={{
+                                                ...styles.progressFill,
+                                                width: `${Math.min(
+                                                  regionActualGoalPercent,
+                                                  100
+                                                )}%`,
+                                              }}
+                                            />
+                                          </div>
+                                          <div style={styles.smallMuted}>
+                                            {Math.round(regionProjectedGoalPercent)}% proj.
+                                          </div>
+                                        </>
+                                      ) : (
+                                        '—'
+                                      )}
+                                    </td>
+                                    <td style={styles.regionTotalCell}>
+                                      <span
+                                        style={
+                                          regionTotals.goal <= 0
+                                            ? styles.noGoalBadge
+                                            : regionOnTrack
+                                              ? styles.onTrackBadge
+                                              : styles.behindBadge
+                                        }
+                                      >
+                                        {regionTotals.goal <= 0
+                                          ? 'No Goal'
+                                          : regionOnTrack
+                                            ? 'On Track'
+                                            : 'Behind'}
+                                      </span>
+                                    </td>
+                                  </>
+                                )}
+                              </tr>
+                            );
+                          })()}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+
+                  <tfoot>
+                    <tr>
+                      <td style={styles.footerCell}>All Agents</td>
+                      <td style={styles.footerCell}>—</td>
+                      <td style={styles.footerCell}>—</td>
+                      <td
+                        style={{
+                          ...styles.footerCell,
+                          ...styles.metricCurrentCell,
+                        }}
+                      >
+                        {formatNumber(agentTotals.selectedMetricCount)}
+                      </td>
+                      <td style={styles.footerCell}>
+                        {formatCurrency(agentTotals.selectedFeeTotal)}
+                      </td>
+                      <td style={styles.footerCell}>
+                        {formatCurrency(agentTotals.selectedFeeAvg, 2)}
+                      </td>
+                      {isBrokerView && (
+                        <td
+                          style={{
+                            ...styles.footerCell,
+                            ...styles.metricGoalCell,
+                          }}
+                        >
+                          {agentTotals.goal > 0
+                            ? formatNumber(agentTotals.goal)
+                            : 'Not Set'}
+                        </td>
+                      )}
+                      <td
+                        style={{
+                          ...styles.footerCell,
+                          ...styles.metricProjectedCell,
+                        }}
+                      >
+                        {formatDecimal(agentTotals.projectedCount)}
+                      </td>
+                      <td style={styles.footerCell}>
+                        {agentTotals.hasLastMonthData
+                          ? formatNumber(agentTotals.lastMonthCount)
+                          : '—'}
+                      </td>
+                      <td style={styles.footerCell}>
+                        {agentTotals.hasLastYearData
+                          ? formatNumber(agentTotals.lastYearCount)
+                          : '—'}
+                      </td>
+                      {isBrokerView && (
+                        <>
+                          <td style={styles.footerCell}>—</td>
+                          <td style={styles.footerCell}>{agentTotals.status}</td>
+                        </>
+                      )}
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
           </div>
+        </>
+      )}
 
-          <div className={styles.comparisonGrid}>
-            <div className={styles.compCard} style={{ gridColumn: '1 / -1' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h4>Year-to-Date (YTD) Performance</h4>
-                <div className={kpi.ytdPct >= 0 ? styles.badgeGreen : styles.badgeRed}>
-                  {kpi.ytdPct > 0 ? '▲ Ahead of' : '▼ Behind'} Last Year by {Math.abs(kpi.ytdPct).toFixed(1)}%
-                </div>
-              </div>
-
-              <div className={styles.ytdContainer}>
-                <div className={styles.ytdRow}>
-                  <div style={{ width: '80px', fontWeight: 'bold' }}>2025 YTD</div>
-                  <div className={styles.ytdBarBg}>
-                    <div className={styles.ytdBarFill} style={{ width: '100%', background: '#2c3e50' }} />
-                  </div>
-                  <div style={{ width: '80px', textAlign: 'right', fontWeight: 'bold' }}>{formatCurrency(kpi.currentYTD)}</div>
-                </div>
-
-                <div className={styles.ytdRow}>
-                  <div style={{ width: '80px', color: '#7f8c8d' }}>2024 YTD</div>
-                  <div className={styles.ytdBarBg}>
-                    <div
-                      className={styles.ytdBarFill}
-                      style={{
-                        width: `${Math.min((kpi.prevYTD / (kpi.currentYTD || 1)) * 100, 100)}%`,
-                        background: '#95a5a6',
-                      }}
-                    />
-                  </div>
-                  <div style={{ width: '80px', textAlign: 'right', color: '#7f8c8d' }}>{formatCurrency(kpi.prevYTD)}</div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '10px', textAlign: 'center' }}>
-                {curr.office} has generated{' '}
-                <b>
-                  {formatCurrency(kpi.ytdDiff)} {kpi.ytdDiff >= 0 ? 'more' : 'less'}
-                </b>{' '}
-                in fees than at this point last year.
-              </div>
-            </div>
-
-            <div className={styles.compCard}>
-              <h4>Momentum (Vs. 3-Mo Avg)</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '15px' }}>
-                <div style={{ fontSize: '2rem', fontWeight: '800', color: kpi.velocityDiff >= 0 ? '#27ae60' : '#c0392b' }}>
-                  {kpi.velocityDiff >= 0 ? '+' : ''}
-                  {formatCurrency(kpi.velocityDiff)}
-                </div>
-                <div style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>vs recent average</div>
-
-                <div className={styles.velocityGrid}>
-                  <div>
-                    <span>Current Month</span>
-                    <strong>{formatCurrency(curr.new_business_fees)}</strong>
-                  </div>
-                  <div>
-                    <span>3-Mo Avg</span>
-                    <strong>{formatCurrency(kpi.avg3Month)}</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.compCard}>
-              <h4>Efficiency Metrics</h4>
-              <div style={{ marginTop: '15px' }}>
-                <div className={styles.statRow}>
-                  <span>Avg Fee / New Biz</span>
-                  <strong>${formatAvg(curr.new_business_fees, curr.new_business_count)}</strong>
-                </div>
-                <div className={styles.statRow}>
-                  <span>Avg Fee / Renewal</span>
-                  <strong>${formatAvg(curr.renewal_fees, curr.renewal_count)}</strong>
-                </div>
-                <div className={styles.statRow} style={{ borderTop: '1px solid #eee', paddingTop: '10px', marginTop: '10px' }}>
-                  <span>MoM Growth</span>
-                  <span style={{ fontWeight: 'bold', color: curr.nb_mom_pct >= 0 ? 'green' : 'red' }}>{formatPct(curr.nb_mom_pct)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
-    );
-  };
-
-  const renderDrillDownModal = () => {
-    if (!selectedOfficeData) return null;
-    if (activeView === 'trends') return renderExecutiveModal();
-    return renderSummaryModal();
-  };
-
-  // --- TABLES RENDERING ---
-  const renderSummaryTable = (rows) => (
-    <table className={styles.ticketsTable}>
-      <thead>
-        <tr>
-          <th style={{ width: '150px' }}>Office</th>
-          <th>Total Fees</th>
-          <th>New Biz #</th>
-          <th>New Biz Fees</th>
-          <th>Renewals #</th>
-          <th>DMV Fees</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr
-            key={row.id}
-            onClick={() => {
-              setModalMetric(METRIC_OPTIONS[0]);
-              setSelectedOfficeData(row);
-            }}
-            className={styles.clickableRow}
-          >
-            <td style={{ fontWeight: 'bold' }}>{row.office}</td>
-            <td style={{ fontWeight: 'bold', color: '#2c3e50' }}>{formatCurrency(row.total_fees)}</td>
-            <td>{formatCount(row.new_business_count)}</td>
-            <td>{formatCurrency(row.new_business_fees)}</td>
-            <td>{formatCount(row.renewal_count)}</td>
-            <td>{formatCurrency(row.dmv_fees)}</td>
-            <td>
-              <button className={styles.viewBtn}>View</button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    </>
   );
-
-  const renderTrendsTable = (rows) => (
-    <table className={styles.ticketsTable}>
-      <thead>
-        <tr>
-          <th style={{ width: '150px' }}>Office</th>
-          <th style={{ backgroundColor: '#f0f8ff' }}>NB Fees (Curr)</th>
-          <th style={{ backgroundColor: '#f0f8ff' }}>MoM %</th>
-          <th style={{ backgroundColor: '#fff0f0' }}>YoY %</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr
-            key={row.id}
-            onClick={() => {
-              setModalMetric(METRIC_OPTIONS[0]);
-              setSelectedOfficeData(row);
-            }}
-            className={styles.clickableRow}
-          >
-            <td style={{ fontWeight: 'bold' }}>{row.office}</td>
-            <td>{formatCurrency(row.new_business_fees)}</td>
-            <td>
-              {row.nb_mom_pct > 0 ? <ArrowUp /> : row.nb_mom_pct < 0 ? <ArrowDown /> : ''} {formatPct(row.nb_mom_pct)}
-            </td>
-            <td>{formatPct(row.nb_yoy_pct)}</td>
-            <td>
-              <button className={styles.viewBtn}>Compare</button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-
-  const renderRankingsTable = (rows) => {
-    const sortedRows = [...rows].sort((a, b) => {
-      const valA = parseFloat(a[sortConfig.key] || 0);
-      const valB = parseFloat(b[sortConfig.key] || 0);
-      return sortConfig.direction === 'asc' ? valA - valB : valB - valA;
-    });
-
-    const maxVal = Math.max(...sortedRows.map((r) => parseFloat(r[sortConfig.key] || 0)), 0);
-
-    const handleSort = (key) => {
-      let direction = 'desc';
-      if (sortConfig.key === key && sortConfig.direction === 'desc') direction = 'asc';
-      setSortConfig({ key, direction });
-    };
-
-    return (
-      <div style={{ overflowX: 'auto', maxWidth: '100%', background: 'white', borderRadius: '8px', padding: '10px' }}>
-        <h3 style={{ margin: '10px 0', color: '#f1c40f' }}>🏆 Company Leaderboard</h3>
-        <table className={styles.ticketsTable}>
-          <thead>
-            <tr>
-              <th style={{ width: '50px' }}>Rank</th>
-              <th style={{ width: '150px' }}>Office</th>
-              <th style={{ width: '100px' }}>Region</th>
-              <th
-                onClick={() => handleSort('new_business_fees')}
-                style={{ cursor: 'pointer', textDecoration: sortConfig.key === 'new_business_fees' ? 'underline' : 'none' }}
-              >
-                New Biz Fees {sortConfig.key === 'new_business_fees' && (sortConfig.direction === 'desc' ? '▼' : '▲')}
-              </th>
-              <th
-                onClick={() => handleSort('new_business_count')}
-                style={{ cursor: 'pointer', textDecoration: sortConfig.key === 'new_business_count' ? 'underline' : 'none' }}
-              >
-                New Biz # {sortConfig.key === 'new_business_count' && (sortConfig.direction === 'desc' ? '▼' : '▲')}
-              </th>
-              <th
-                onClick={() => handleSort('total_fees')}
-                style={{ cursor: 'pointer', textDecoration: sortConfig.key === 'total_fees' ? 'underline' : 'none' }}
-              >
-                Total Fees {sortConfig.key === 'total_fees' && (sortConfig.direction === 'desc' ? '▼' : '▲')}
-              </th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedRows.map((row, index) => {
-              const isTop3 = index < 3;
-              const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : index + 1;
-              const barWidth = maxVal ? (parseFloat(row[sortConfig.key] || 0) / maxVal) * 100 : 0;
-
-              return (
-                <tr
-                  key={row.id}
-                  onClick={() => {
-                    setModalMetric(METRIC_OPTIONS[0]);
-                    setSelectedOfficeData(row);
-                  }}
-                  className={styles.clickableRow}
-                >
-                  <td style={{ fontSize: '1.2rem', textAlign: 'center', fontWeight: isTop3 ? 'bold' : 'normal' }}>{rankIcon}</td>
-                  <td style={{ fontWeight: 'bold' }}>{row.office}</td>
-                  <td>
-                    <span style={{ fontSize: '0.75rem', background: '#eee', padding: '2px 6px', borderRadius: '4px' }}>{row.region}</span>
-                  </td>
-                  <td style={{ position: 'relative' }}>
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: '10%',
-                        bottom: '10%',
-                        width: `${barWidth}%`,
-                        background: '#fef9e7',
-                        zIndex: 0,
-                      }}
-                    />
-                    <span style={{ position: 'relative', zIndex: 1, fontWeight: 'bold', color: '#d35400' }}>
-                      {formatCurrency(row.new_business_fees)}
-                    </span>
-                  </td>
-                  <td>{formatCount(row.new_business_count)}</td>
-                  <td>{formatCurrency(row.total_fees)}</td>
-                  <td>
-                    <button className={styles.viewBtn}>Analyze</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  const renderDetailedTable = (rows) => (
-    <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
-      <table className={styles.ticketsTable}>
-        <thead>
-          <tr>
-            <th className={styles.stickyCol}>Office</th>
-            <th>New Business #</th>
-            <th>New Business Fees</th>
-            <th>NB Avg</th>
-            <th>Endorsement #</th>
-            <th>Endorsement Fees</th>
-            <th>Endorsement Avg</th>
-            <th>Installment #</th>
-            <th>Installment Fees</th>
-            <th>Installment Avg</th>
-            <th>DMV #</th>
-            <th>DMV Fees</th>
-            <th>DMV Avg</th>
-            <th>Reissue #</th>
-            <th>Reissue Fees</th>
-            <th>Reissue Avg</th>
-            <th>Renewal #</th>
-            <th>Renewal Fees</th>
-            <th>Renewal Avg</th>
-            <th>Taxes #</th>
-            <th>Tax Fees</th>
-            <th>Tax Avg</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td className={styles.stickyCol}>{row.office}</td>
-
-              <td>{formatCount(row.new_business_count)}</td>
-              <td>{formatCurrency(row.new_business_fees)}</td>
-              <td>{formatAvg(row.new_business_fees, row.new_business_count)}</td>
-
-              <td>{formatCount(row.endorsement_count)}</td>
-              <td>{formatCurrency(row.endorsement_fees)}</td>
-              <td>{formatAvg(row.endorsement_fees, row.endorsement_count)}</td>
-
-              <td>{formatCount(row.installment_count)}</td>
-              <td>{formatCurrency(row.installment_fees)}</td>
-              <td>{formatAvg(row.installment_fees, row.installment_count)}</td>
-
-              <td>{formatCount(row.dmv_count)}</td>
-              <td>{formatCurrency(row.dmv_fees)}</td>
-              <td>{formatAvg(row.dmv_fees, row.dmv_count)}</td>
-
-              <td>{formatCount(row.reissue_count)}</td>
-              <td>{formatCurrency(row.reissue_fees)}</td>
-              <td>{formatAvg(row.reissue_fees, row.reissue_count)}</td>
-
-              <td>{formatCount(row.renewal_count)}</td>
-              <td>{formatCurrency(row.renewal_fees)}</td>
-              <td>{formatAvg(row.renewal_fees, row.renewal_count)}</td>
-
-              <td>{formatCount(row.taxes_count)}</td>
-              <td>{formatCurrency(row.tax_fees)}</td>
-              <td>{formatAvg(row.tax_fees, row.taxes_count)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
-  // -------------------------
-  // CUSTOM REPORTS RENDERING
-  // -------------------------
-  const renderCustomReports = () => {
-    const pillStyle = (active) => ({
-      padding: '8px 12px',
-      borderRadius: 999,
-      border: active ? '2px solid #c0392b' : '1px solid #ddd',
-      background: active ? '#fff5f5' : '#fff',
-      cursor: 'pointer',
-      fontWeight: active ? 800 : 600,
-      fontSize: '0.85rem',
-    });
-
-    const chipStyle = (active) => ({
-      padding: '6px 10px',
-      borderRadius: 8,
-      border: active ? '2px solid #2c3e50' : '1px solid #ddd',
-      background: active ? '#f4f6f7' : '#fff',
-      cursor: 'pointer',
-      fontWeight: active ? 800 : 600,
-      fontSize: '0.8rem',
-    });
-
-    const scopeLabel = () => {
-      const regionText = selectedRegions.length ? selectedRegions.join(', ') : 'All Regions';
-      const officeText = selectedOffices.length ? `${selectedOffices.length} offices` : 'All Offices';
-      return `${regionText} • ${officeText}`;
-    };
-
-    const renderScopeControls = () => (
-      <div style={{ background: 'white', borderRadius: 10, padding: 12, marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Range (Start → End)</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <select className={styles.monthSelector} value={rangeStartMonth} onChange={(e) => setRangeStartMonth(e.target.value)}>
-                {monthOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {new Date(m).toLocaleString('default', { month: 'short', year: 'numeric', timeZone: 'UTC' })}
-                  </option>
-                ))}
-              </select>
-
-              <select className={styles.monthSelector} value={rangeEndMonth} onChange={(e) => setRangeEndMonth(e.target.value)}>
-                {monthOptions.map((m) => (
-                  <option key={m} value={m}>
-                    {new Date(m).toLocaleString('default', { month: 'short', year: 'numeric', timeZone: 'UTC' })}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {customReportType === 'comparison' && (
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Compare Against (Period B)</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <select className={styles.monthSelector} value={compareStartMonth} onChange={(e) => setCompareStartMonth(e.target.value)}>
-                  {monthOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {new Date(m).toLocaleString('default', { month: 'short', year: 'numeric', timeZone: 'UTC' })}
-                    </option>
-                  ))}
-                </select>
-
-                <select className={styles.monthSelector} value={compareEndMonth} onChange={(e) => setCompareEndMonth(e.target.value)}>
-                  {monthOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {new Date(m).toLocaleString('default', { month: 'short', year: 'numeric', timeZone: 'UTC' })}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div style={{ minWidth: 220 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Regions</div>
-            <select
-              multiple
-              value={selectedRegions}
-              onChange={(e) => {
-                const vals = Array.from(e.target.selectedOptions).map((o) => o.value);
-                setSelectedRegions(vals);
-              }}
-              style={{ width: '100%', minHeight: 90, padding: 8, borderRadius: 8, border: '1px solid #ddd' }}
-            >
-              {uniqueRegions.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-
-            <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-              <button type="button" className={styles.viewBtn} onClick={() => setSelectedRegions(uniqueRegions)}>
-                Select All
-              </button>
-              <button type="button" className={styles.viewBtn} onClick={() => setSelectedRegions([])}>
-                Clear
-              </button>
-            </div>
-          </div>
-
-          <div style={{ minWidth: 220 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Offices</div>
-            <select
-              multiple
-              value={selectedOffices}
-              onChange={(e) => {
-                const vals = Array.from(e.target.selectedOptions).map((o) => o.value);
-                setSelectedOffices(vals);
-              }}
-              style={{ width: '100%', minHeight: 90, padding: 8, borderRadius: 8, border: '1px solid #ddd' }}
-            >
-              {(selectedRegions.length ? selectedRegions.flatMap((r) => officesByRegion[r] || []) : allOffices)
-                .filter(Boolean)
-                .filter((v, i, arr) => arr.indexOf(v) === i)
-                .sort()
-                .map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-            </select>
-
-            <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                className={styles.viewBtn}
-                onClick={() => {
-                  const pool = selectedRegions.length ? selectedRegions.flatMap((r) => officesByRegion[r] || []) : allOffices;
-                  setSelectedOffices([...new Set(pool)].sort());
-                }}
-              >
-                Select All
-              </button>
-              <button type="button" className={styles.viewBtn} onClick={() => setSelectedOffices([])}>
-                Clear
-              </button>
-            </div>
-          </div>
-
-          {customReportType === 'movers' && (
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Movers Metric</div>
-              <select className={styles.monthSelector} value={moversMetric} onChange={(e) => setMoversMetric(e.target.value)}>
-                <option value="total_fees">Total Fees</option>
-                <option value="new_business_fees">New Biz Fees</option>
-                <option value="new_business_count">New Biz Count</option>
-                <option value="renewal_fees">Renewal Fees</option>
-                <option value="dmv_fees">DMV Fees</option>
-              </select>
-            </div>
-          )}
-
-          {customReportType === 'category' && (
-            <div style={{ minWidth: 320 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#666' }}>Category Columns</div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                  marginTop: 8,
-                  background: '#fff',
-                  border: '1px solid #ddd',
-                  borderRadius: 8,
-                  padding: 8,
-                }}
-              >
-                {CATEGORY_GROUPS.map((group) => {
-                  const active = selectedCategoryGroups.includes(group.key);
-
-                  return (
-                    <button
-                      key={group.key}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategoryGroups((prev) =>
-                          prev.includes(group.key) ? prev.filter((k) => k !== group.key) : [...prev, group.key]
-                        );
-                      }}
-                      style={{
-                        padding: '6px 10px',
-                        borderRadius: 999,
-                        border: active ? '2px solid #c0392b' : '1px solid #ccc',
-                        background: active ? '#fff5f5' : '#fff',
-                        fontWeight: active ? 800 : 600,
-                        cursor: 'pointer',
-                        fontSize: '0.8rem',
-                      }}
-                    >
-                      {group.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups(CATEGORY_GROUPS.map((g) => g.key))}>
-                  Select All
-                </button>
-                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups(['new_business'])}>
-                  NB Only
-                </button>
-                <button type="button" className={styles.viewBtn} onClick={() => setSelectedCategoryGroups([])}>
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: '#666' }}>
-          <b>Scope:</b> {scopeLabel()}
-        </div>
-      </div>
-    );
-
-    const renderRollup = () => (
-      <div>
-        {rollupData.total ? (
-          <div className={styles.grandTotalContainer} style={{ cursor: 'default' }}>
-            <div className={styles.grandTotalLabel}>
-              SELECTED OFFICES TOTAL
-              <span style={{ fontSize: '0.7rem', display: 'block', color: '#bdc3c7', fontWeight: 'normal' }}>
-                {rangeStartMonth} → {rangeEndMonth}
-              </span>
-            </div>
-
-            <div className={styles.gtGridSummary}>
-              <div>
-                <span>Total Fees:</span> {formatCurrency(rollupData.total.total_fees)}
-              </div>
-              <div>
-                <span>New Biz #:</span> {formatCount(rollupData.total.new_business_count)}
-              </div>
-              <div>
-                <span>New Biz $:</span> {formatCurrency(rollupData.total.new_business_fees)}
-              </div>
-              <div>
-                <span>Renewals:</span> {formatCount(rollupData.total.renewal_count)}
-              </div>
-              <div>
-                <span>DMV $:</span> {formatCurrency(rollupData.total.dmv_fees)}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>No data for that selection.</div>
-        )}
-
-        {rollupData.perOffice.length > 0 && (
-          <div style={{ marginTop: 12, background: 'white', borderRadius: 10, padding: 10 }}>
-            <h3 style={{ margin: '6px 0 10px 0' }}>Multi-Office Rollup</h3>
-            <table className={styles.ticketsTable}>
-              <thead>
-                <tr>
-                  <th style={{ width: '150px' }}>Office</th>
-                  <th>Total Fees</th>
-                  <th>New Biz #</th>
-                  <th>New Biz Fees</th>
-                  <th>Renewals #</th>
-                  <th>DMV Fees</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rollupData.perOffice.map((r) => (
-                  <tr key={r.office}>
-                    <td style={{ fontWeight: 'bold' }}>{r.office}</td>
-                    <td style={{ fontWeight: 'bold' }}>{formatCurrency(r.total_fees)}</td>
-                    <td>{formatCount(r.new_business_count)}</td>
-                    <td>{formatCurrency(r.new_business_fees)}</td>
-                    <td>{formatCount(r.renewal_count)}</td>
-                    <td>{formatCurrency(r.dmv_fees)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-
-    const renderComparison = () => {
-      const a = comparisonData.aTotal;
-      const b = comparisonData.bTotal;
-
-      const diffPct = (curr, past) => (past ? ((curr - past) / past) * 100 : curr ? 100 : 0);
-
-      const row = (label, aVal, bVal, isCount = false) => {
-        const diff = aVal - bVal;
-        const pct = diffPct(aVal, bVal);
-
-        return (
-          <tr key={label}>
-            <td style={{ fontWeight: 800 }}>{label}</td>
-            <td>{isCount ? formatCount(aVal) : formatCurrency(aVal)}</td>
-            <td>{isCount ? formatCount(bVal) : formatCurrency(bVal)}</td>
-            <td style={{ fontWeight: 800, color: diff >= 0 ? '#27ae60' : '#c0392b' }}>
-              {isCount ? formatCount(diff) : formatCurrency(diff)}
-            </td>
-            <td>{formatPct(pct)}</td>
-          </tr>
-        );
-      };
-
-      if (!a || !b) {
-        return <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>Select ranges that contain data.</div>;
-      }
-
-      return (
-        <div style={{ background: 'white', borderRadius: 10, padding: 10 }}>
-          <h3 style={{ margin: '6px 0 10px 0' }}>Period Comparison</h3>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-            <b>Period A:</b> {rangeStartMonth} → {rangeEndMonth} &nbsp; | &nbsp;
-            <b>Period B:</b> {compareStartMonth} → {compareEndMonth}
-          </div>
-
-          <table className={styles.ticketsTable}>
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th>Period A</th>
-                <th>Period B</th>
-                <th>Δ</th>
-                <th>Δ%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {row('Total Fees', a.total_fees, b.total_fees)}
-              {row('New Biz Fees', a.new_business_fees, b.new_business_fees)}
-              {row('New Biz Count', a.new_business_count, b.new_business_count, true)}
-              {row('Renewal Fees', a.renewal_fees, b.renewal_fees)}
-              {row('DMV Fees', a.dmv_fees, b.dmv_fees)}
-              {row('Endorsement Fees', a.endorsement_fees, b.endorsement_fees)}
-              {row('Tax Fees', a.tax_fees, b.tax_fees)}
-            </tbody>
-          </table>
-        </div>
-      );
-    };
-
-    const renderMovers = () => {
-      const top = moversData.slice(0, 5);
-      const bottom = [...moversData].reverse().slice(0, 5);
-
-      const formatMetric = (v) => (moversMetric.includes('count') ? formatCount(v) : formatCurrency(v));
-
-      if (!moversData.length) {
-        return <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>Select start/end months that contain data.</div>;
-      }
-
-      return (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div style={{ background: 'white', borderRadius: 10, padding: 10 }}>
-            <h3 style={{ margin: '6px 0 10px 0' }}>🚀 Top Movers</h3>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-              <b>Metric:</b> {moversMetric} &nbsp; | &nbsp; <b>{rangeStartMonth}</b> → <b>{rangeEndMonth}</b>
-            </div>
-            <table className={styles.ticketsTable}>
-              <thead>
-                <tr>
-                  <th>Office</th>
-                  <th>Δ</th>
-                  <th>Δ%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {top.map((r) => (
-                  <tr key={r.office}>
-                    <td style={{ fontWeight: 800 }}>{r.office}</td>
-                    <td style={{ fontWeight: 800, color: r.diff >= 0 ? '#27ae60' : '#c0392b' }}>
-                      {r.diff >= 0 ? '+' : ''}
-                      {formatMetric(r.diff)}
-                    </td>
-                    <td>{formatPct(r.pct)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{ background: 'white', borderRadius: 10, padding: 10 }}>
-            <h3 style={{ margin: '6px 0 10px 0' }}>📉 Bottom Movers</h3>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-              <b>Metric:</b> {moversMetric} &nbsp; | &nbsp; <b>{rangeStartMonth}</b> → <b>{rangeEndMonth}</b>
-            </div>
-            <table className={styles.ticketsTable}>
-              <thead>
-                <tr>
-                  <th>Office</th>
-                  <th>Δ</th>
-                  <th>Δ%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bottom.map((r) => (
-                  <tr key={r.office}>
-                    <td style={{ fontWeight: 800 }}>{r.office}</td>
-                    <td style={{ fontWeight: 800, color: r.diff >= 0 ? '#27ae60' : '#c0392b' }}>
-                      {r.diff >= 0 ? '+' : ''}
-                      {formatMetric(r.diff)}
-                    </td>
-                    <td>{formatPct(r.pct)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{ gridColumn: '1 / -1', background: 'white', borderRadius: 10, padding: 10 }}>
-            <h3 style={{ margin: '6px 0 10px 0' }}>All Offices (Sorted by Δ)</h3>
-            <table className={styles.ticketsTable}>
-              <thead>
-                <tr>
-                  <th style={{ width: 160 }}>Office</th>
-                  <th>Region</th>
-                  <th>{rangeStartMonth}</th>
-                  <th>{rangeEndMonth}</th>
-                  <th>Δ</th>
-                  <th>Δ%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {moversData.map((r) => (
-                  <tr key={r.office}>
-                    <td style={{ fontWeight: 800 }}>{r.office}</td>
-                    <td>{r.region}</td>
-                    <td>{formatMetric(r.startVal)}</td>
-                    <td>{formatMetric(r.endVal)}</td>
-                    <td style={{ fontWeight: 800, color: r.diff >= 0 ? '#27ae60' : '#c0392b' }}>
-                      {r.diff >= 0 ? '+' : ''}
-                      {formatMetric(r.diff)}
-                    </td>
-                    <td>{formatPct(r.pct)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    };
-
-    const renderMixShift = () => {
-      const { rows } = mixShiftData;
-
-      if (!rows.length) {
-        return <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>Select start/end months that contain data.</div>;
-      }
-
-      const seg = (pct, color) => <div style={{ width: `${Math.max(0, pct)}%`, background: color, height: 10, borderRadius: 6 }} />;
-
-      return (
-        <div style={{ background: 'white', borderRadius: 10, padding: 10 }}>
-          <h3 style={{ margin: '6px 0 10px 0' }}>Revenue Mix Shift</h3>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-            Compare composition from <b>{rangeStartMonth}</b> → <b>{rangeEndMonth}</b>
-          </div>
-
-          <table className={styles.ticketsTable}>
-            <thead>
-              <tr>
-                <th style={{ width: 160 }}>Office</th>
-                <th>Start Mix</th>
-                <th>End Mix</th>
-                <th>Shift (NB / Ren / End / DMV)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.office}>
-                  <td style={{ fontWeight: 800 }}>{r.office}</td>
-
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      {seg(r.start.nbPct, '#c0392b')}
-                      {seg(r.start.rnPct, '#f1c40f')}
-                      {seg(r.start.enPct, '#3498db')}
-                      {seg(r.start.dmvPct, '#2ecc71')}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                      NB {r.start.nbPct.toFixed(0)}% • Ren {r.start.rnPct.toFixed(0)}% • End {r.start.enPct.toFixed(0)}% • DMV {r.start.dmvPct.toFixed(0)}%
-                    </div>
-                  </td>
-
-                  <td>
-                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      {seg(r.end.nbPct, '#c0392b')}
-                      {seg(r.end.rnPct, '#f1c40f')}
-                      {seg(r.end.enPct, '#3498db')}
-                      {seg(r.end.dmvPct, '#2ecc71')}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                      NB {r.end.nbPct.toFixed(0)}% • Ren {r.end.rnPct.toFixed(0)}% • End {r.end.enPct.toFixed(0)}% • DMV {r.end.dmvPct.toFixed(0)}%
-                    </div>
-                  </td>
-
-                  <td style={{ fontSize: 12 }}>
-                    <span style={{ color: r.shift.nb >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      NB {r.shift.nb >= 0 ? '+' : ''}
-                      {r.shift.nb.toFixed(1)}%
-                    </span>{' '}
-                    |{' '}
-                    <span style={{ color: r.shift.rn >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      Ren {r.shift.rn >= 0 ? '+' : ''}
-                      {r.shift.rn.toFixed(1)}%
-                    </span>{' '}
-                    |{' '}
-                    <span style={{ color: r.shift.en >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      End {r.shift.en >= 0 ? '+' : ''}
-                      {r.shift.en.toFixed(1)}%
-                    </span>{' '}
-                    |{' '}
-                    <span style={{ color: r.shift.dmv >= 0 ? '#27ae60' : '#c0392b', fontWeight: 800 }}>
-                      DMV {r.shift.dmv >= 0 ? '+' : ''}
-                      {r.shift.dmv.toFixed(1)}%
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div style={{ fontSize: 12, color: '#666', marginTop: 10 }}>
-            <b>Legend:</b> <span style={{ color: '#c0392b' }}>New Biz</span> • <span style={{ color: '#f1c40f' }}>Renewal</span> •{' '}
-            <span style={{ color: '#3498db' }}>Endorse</span> • <span style={{ color: '#2ecc71' }}>DMV</span>
-          </div>
-        </div>
-      );
-    };
-
-    const renderCategoryReport = () => {
-      const { total, rows } = categoryReportData;
-
-      if (!rows.length) {
-        return (
-          <div style={{ background: 'white', borderRadius: 10, padding: 14, color: '#888' }}>
-            No data for that selection.
-          </div>
-        );
-      }
-
-      const selectedGroups = CATEGORY_GROUPS.filter((g) => selectedCategoryGroups.includes(g.key));
-
-      return (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {total && (
-            <div className={styles.grandTotalContainer} style={{ cursor: 'default' }}>
-              <div className={styles.grandTotalLabel}>
-                MULTI-MONTH PRODUCTION TOTAL
-                <span style={{ fontSize: '0.7rem', display: 'block', color: '#bdc3c7', fontWeight: 'normal' }}>
-                  {rangeStartMonth} → {rangeEndMonth}
-                </span>
-              </div>
-
-              <div className={styles.gtGridSummary}>
-                <div>
-                  <span>Total Fees:</span> {formatCurrency(total.total_fees)}
-                </div>
-                <div>
-                  <span>New Biz #:</span> {formatCount(total.new_business_count)}
-                </div>
-                <div>
-                  <span>Renewal #:</span> {formatCount(total.renewal_count)}
-                </div>
-                <div>
-                  <span>DMV #:</span> {formatCount(total.dmv_count)}
-                </div>
-                <div>
-                  <span>Tax #:</span> {formatCount(total.taxes_count)}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div style={{ background: 'white', borderRadius: 10, padding: 10, overflowX: 'auto' }}>
-            <h3 style={{ margin: '6px 0 10px 0' }}>Multi-Month Production Report</h3>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 10 }}>
-              <b>Range:</b> {rangeStartMonth} → {rangeEndMonth}
-            </div>
-
-            <table className={styles.ticketsTable}>
-              <thead>
-                <tr>
-                  <th className={styles.stickyCol}>Office</th>
-                  <th>Region</th>
-                  <th>Month</th> {/* <-- Added Month Column */}
-                  {selectedGroups.map((group) => (
-                    <React.Fragment key={group.key}>
-                      <th>{group.label} #</th>
-                      <th>{group.label} Fees</th>
-                      <th>{group.avgLabel}</th>
-                    </React.Fragment>
-                  ))}
-                  <th>Total Fees</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.office}-${row.month_start_date}-${index}`}>
-                    <td className={styles.stickyCol} style={{ fontWeight: 800 }}>
-                      {row.office}
-                    </td>
-                    <td>{row.region}</td>
-                    <td>
-                      {/* Render the formatted month */}
-                      {new Date(row.month_start_date).toLocaleString('default', { 
-                        month: 'short', 
-                        year: 'numeric', 
-                        timeZone: 'UTC' 
-                      })}
-                    </td>
-
-                    {selectedGroups.map((group) => (
-                      <React.Fragment key={group.key}>
-                        <td>{formatCount(row[group.countKey])}</td>
-                        <td>{formatCurrency(row[group.feesKey])}</td>
-                        <td>{formatAvg(row[group.feesKey], row[group.countKey])}</td>
-                      </React.Fragment>
-                    ))}
-
-                    <td style={{ fontWeight: 800 }}>{formatCurrency(row.total_fees)}</td>
-                  </tr>
-                ))}
-
-                {total && (
-                  <tr style={{ background: '#f8f9fa', fontWeight: 800 }}>
-                    <td className={styles.stickyCol}>TOTAL</td>
-                    <td>—</td>
-                    <td>—</td> {/* <-- Empty cell for the total row's month column */}
-
-                    {selectedGroups.map((group) => (
-                      <React.Fragment key={group.key}>
-                        <td>{formatCount(total[group.countKey])}</td>
-                        <td>{formatCurrency(total[group.feesKey])}</td>
-                        <td>{formatAvg(total[group.feesKey], total[group.countKey])}</td>
-                      </React.Fragment>
-                    ))}
-
-                    <td>{formatCurrency(total.total_fees)}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      );
-    };
-
-    return (
-      <div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-          <div style={pillStyle(customReportType === 'rollup')} onClick={() => setCustomReportType('rollup')}>
-            📊 Multi-Office Rollup
-          </div>
-          <div style={pillStyle(customReportType === 'comparison')} onClick={() => setCustomReportType('comparison')}>
-            🔄 Period Comparison
-          </div>
-          <div style={pillStyle(customReportType === 'movers')} onClick={() => setCustomReportType('movers')}>
-            🚀 Top / Bottom Movers
-          </div>
-          <div style={pillStyle(customReportType === 'mix')} onClick={() => setCustomReportType('mix')}>
-            🧠 Revenue Mix Shift
-          </div>
-          <div style={pillStyle(customReportType === 'category')} onClick={() => setCustomReportType('category')}>
-            📋 Multi-Month Production Report
-          </div>
-        </div>
-
-        {renderScopeControls()}
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-          <div style={chipStyle(true)}>
-            <b>Scope:</b> {scopeLabel()}
-          </div>
-          <div style={chipStyle(true)}>
-            <b>Range:</b> {rangeStartMonth} → {rangeEndMonth}
-          </div>
-          {customReportType === 'comparison' && (
-            <div style={chipStyle(true)}>
-              <b>Compare:</b> {compareStartMonth} → {compareEndMonth}
-            </div>
-          )}
-        </div>
-
-        {customReportType === 'rollup' && renderRollup()}
-        {customReportType === 'comparison' && renderComparison()}
-        {customReportType === 'movers' && renderMovers()}
-        {customReportType === 'mix' && renderMixShift()}
-        {customReportType === 'category' && renderCategoryReport()}
-      </div>
-    );
-  };
-
-  // --- MAIN RETURN ---
-  if (loading) return <h2>Loading...</h2>;
-  if (error) return <h2>Error: {error}</h2>;
-
-  return (
-    <div>
-      {renderDrillDownModal()}
-
-      <div className={styles.pageHeader}>
-        <h1>Office Performance</h1>
-        <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className={styles.monthSelector}>
-          {monthOptions.map((month) => (
-            <option key={month} value={month}>
-              {new Date(month).toLocaleString('default', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className={styles.tabContainer}>
-        <button onClick={() => setActiveView('summary')} className={activeView === 'summary' ? styles.activeTab : styles.inactiveTab}>
-          📊 Summary
-        </button>
-        <button onClick={() => setActiveView('trends')} className={activeView === 'trends' ? styles.activeTab : styles.inactiveTab}>
-          📈 KPI & Trends
-        </button>
-        <button onClick={() => setActiveView('detailed')} className={activeView === 'detailed' ? styles.activeTab : styles.inactiveTab}>
-          📑 Full Detail
-        </button>
-        <button onClick={() => setActiveView('ranking')} className={activeView === 'ranking' ? styles.activeTab : styles.inactiveTab}>
-          🏆 Leaderboard
-        </button>
-        <button onClick={() => setActiveView('custom')} className={activeView === 'custom' ? styles.activeTab : styles.inactiveTab}>
-          🧩 Custom Reports
-        </button>
-      </div>
-
-      {activeView !== 'custom' && renderGrandTotalRow()}
-
-      {activeView === 'custom' && renderCustomReports()}
-
-      {activeView === 'ranking' && renderRankingsTable(processedData.flatList)}
-
-      {activeView !== 'ranking' &&
-        activeView !== 'custom' &&
-        Object.keys(processedData.grouped)
-          .sort()
-          .map((region) => (
-            <div key={region} className={styles.regionTableContainer}>
-              <h2 style={{ borderBottom: '2px solid #c0392b', paddingBottom: '5px' }}>{region}</h2>
-              {activeView === 'summary' && renderSummaryTable(processedData.grouped[region])}
-              {activeView === 'trends' && renderTrendsTable(processedData.grouped[region])}
-              {activeView === 'detailed' && renderDetailedTable(processedData.grouped[region])}
-            </div>
-          ))}
-    </div>
-  );
+};
+
+
+const SummaryCard = ({ label, value, subtext }) => (
+  <div style={styles.summaryCard}>
+    <div style={styles.summaryLabel}>{label}</div>
+    <div style={styles.summaryValue}>{value}</div>
+    {subtext && <div style={styles.summarySubtext}>{subtext}</div>}
+  </div>
+);
+
+const styles = {
+  page: {
+    minHeight: '100vh',
+    padding: 28,
+    backgroundColor: '#f8fafc',
+    color: '#0f172a',
+    fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 20,
+    marginBottom: 24,
+  },
+  title: { margin: 0, fontSize: 30, fontWeight: 850 },
+  subtitle: { maxWidth: 900, margin: '8px 0 0', color: '#64748b', lineHeight: 1.5 },
+  monthSelector: { display: 'flex', flexDirection: 'column', gap: 6 },
+  monthLabel: { color: '#475569', fontSize: 13, fontWeight: 800 },
+  monthInput: {
+    padding: '10px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 8,
+    background: '#fff',
+    fontSize: 15,
+  },
+  controlBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 18,
+    marginBottom: 20,
+  },
+  monthTitle: { margin: 0, fontSize: 22 },
+  monthDescription: { margin: '5px 0 0', color: '#64748b', fontSize: 14 },
+  controlsRight: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 },
+  feeSelectorWrap: { display: 'flex', alignItems: 'center', gap: 8 },
+  feeSelectorLabel: { color: '#475569', fontSize: 13, fontWeight: 800 },
+  feeSelector: {
+    minWidth: 175,
+    padding: '9px 11px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 8,
+    background: '#fff',
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: 800,
+  },
+  checkboxLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: 800,
+  },
+  primaryButton: {
+    padding: '9px 14px',
+    border: 0,
+    borderRadius: 8,
+    background: '#2563eb',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  segmentedControl: {
+    display: 'inline-flex', padding: 3, border: '1px solid #cbd5e1',
+    borderRadius: 10, background: '#fff',
+  },
+  segmentButton: {
+    padding: '8px 13px', border: 0, borderRadius: 7,
+    background: 'transparent', color: '#475569', cursor: 'pointer', fontWeight: 800,
+  },
+  segmentButtonActive: { background: '#2563eb', color: '#fff' },
+  commissionPanel: {
+    padding: 14, marginBottom: 20, border: '1px solid #e2e8f0',
+    borderRadius: 12, background: '#fff',
+  },
+  commissionPanelTitle: { marginBottom: 10, fontSize: 15, fontWeight: 900 },
+  ruleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 },
+  ruleCard: { padding: 12, border: '1px solid #dbe3ef', borderRadius: 10, background: '#f8fafc' },
+  ruleTitle: { marginBottom: 6, color: '#475569', fontSize: 12, fontWeight: 900 },
+  ruleText: { color: '#0f172a', fontSize: 13, fontWeight: 800, lineHeight: 1.45 },
+  ruleNote: { marginTop: 10, padding: 11, border: '1px solid #dbe3ef', borderRadius: 9, background: '#f8fafc', fontSize: 12, lineHeight: 1.5 },
+  warningNote: { marginTop: 8, color: '#92400e', fontSize: 12, fontWeight: 700 },
+  weeklyTargetLabel: { display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 14, fontWeight: 900 },
+  weeklyTargetInput: { width: 100, padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: 7, fontWeight: 800 },
+  summaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(165px, 1fr))',
+    gap: 10,
+    marginBottom: 16,
+  },
+  summaryCard: {
+    padding: 14,
+    border: '1px solid #e2e8f0',
+    borderRadius: 10,
+    background: '#fff',
+    boxShadow: '0 1px 3px rgba(15,23,42,.05)',
+  },
+  summaryLabel: { marginBottom: 8, color: '#64748b', fontSize: 13, fontWeight: 800 },
+  summaryValue: { fontSize: 21, fontWeight: 900 },
+  summarySubtext: { marginTop: 6, color: '#64748b', fontSize: 12, fontWeight: 700 },
+  errorBox: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 16,
+    padding: 15,
+    marginBottom: 20,
+    border: '1px solid #fecdd3',
+    borderRadius: 10,
+    background: '#fff1f2',
+    color: '#9f1239',
+  },
+  retryButton: {
+    padding: '8px 14px',
+    border: 0,
+    borderRadius: 7,
+    background: '#be123c',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 800,
+  },
+  tableCard: {
+    overflow: 'hidden',
+    border: '1px solid #e2e8f0',
+    borderRadius: 12,
+    background: '#fff',
+    boxShadow: '0 1px 3px rgba(15,23,42,.05)',
+  },
+  tableWrapper: { overflowX: 'auto' },
+  table: {
+    width: '100%',
+    minWidth: 1040,
+    borderCollapse: 'collapse',
+    textAlign: 'left',
+    tableLayout: 'auto',
+  },
+  tableHeader: {
+    padding: '9px 8px',
+    borderBottom: '1px solid #e2e8f0',
+    background: '#f8fafc',
+    color: '#475569',
+    fontSize: 9,
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '.025em',
+    whiteSpace: 'nowrap',
+  },
+  officeCell: {
+    minWidth: 150,
+    maxWidth: 220,
+    padding: '10px 8px',
+    borderBottom: '1px solid #f1f5f9',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+  },
+  regionCell: {
+    minWidth: 105,
+    maxWidth: 135,
+    padding: '8px 6px',
+    borderBottom: '1px solid #f1f5f9',
+  },
+  numberCell: {
+    padding: '10px 8px',
+    borderBottom: '1px solid #f1f5f9',
+    whiteSpace: 'nowrap',
+    fontSize: 12,
+  },
+  goalCell: {
+    minWidth: 95,
+    maxWidth: 120,
+    padding: '8px 6px',
+    borderBottom: '1px solid #f1f5f9',
+  },
+  strongCell: {
+    padding: '10px 8px',
+    borderBottom: '1px solid #f1f5f9',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+    fontSize: 12,
+  },
+  progressCell: {
+    minWidth: 95,
+    maxWidth: 115,
+    padding: '10px 8px',
+    borderBottom: '1px solid #f1f5f9',
+  },
+  progressText: { marginBottom: 4, fontSize: 10, fontWeight: 800 },
+  progressTrack: { height: 7, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0' },
+  progressFill: { height: '100%', borderRadius: 999, background: '#2563eb' },
+  accessNote: {
+    marginTop: 8,
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  readOnlyInput: {
+    background: '#f1f5f9',
+    color: '#64748b',
+    cursor: 'not-allowed',
+  },
+  editFieldRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  savedFieldRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    minHeight: 34,
+  },
+  savedFieldText: {
+    color: '#0f172a',
+    fontSize: 13,
+    fontWeight: 800,
+  },
+  savedGoalValue: {
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: 900,
+  },
+  editMiniButton: {
+    padding: '3px 5px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 6,
+    background: '#fff',
+    color: '#475569',
+    cursor: 'pointer',
+    fontSize: 10,
+    fontWeight: 900,
+  },
+  saveMiniButton: {
+    padding: '6px 8px',
+    border: 0,
+    borderRadius: 6,
+    background: '#2563eb',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 10,
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+  },
+  cancelMiniButton: {
+    padding: '6px 8px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 6,
+    background: '#fff',
+    color: '#64748b',
+    cursor: 'pointer',
+    fontSize: 10,
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+  },
+  inlineInput: {
+    width: '100%',
+    minWidth: 72,
+    boxSizing: 'border-box',
+    padding: '6px 7px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 6,
+    background: '#fff',
+    fontSize: 11,
+  },
+  goalInput: {
+    width: '100%',
+    minWidth: 62,
+    boxSizing: 'border-box',
+    padding: '6px 7px',
+    border: '1px solid #cbd5e1',
+    borderRadius: 6,
+    background: '#fff',
+    fontSize: 11,
+    fontWeight: 800,
+  },
+  agentName: {
+    fontSize: 13,
+    fontWeight: 900,
+    color: '#0f172a',
+    lineHeight: 1.25,
+  },
+  smallMuted: {
+    marginTop: 3,
+    color: '#64748b',
+    fontSize: 9,
+    fontWeight: 700,
+    lineHeight: 1.2,
+  },
+  onTrackBadge: {
+    display: 'inline-block',
+    padding: '5px 9px',
+    borderRadius: 999,
+    background: '#d1fae5',
+    color: '#047857',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  behindBadge: {
+    display: 'inline-block',
+    padding: '5px 9px',
+    borderRadius: 999,
+    background: '#ffe4e6',
+    color: '#be123c',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  noGoalBadge: {
+    display: 'inline-block',
+    padding: '5px 9px',
+    borderRadius: 999,
+    background: '#e2e8f0',
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  difference: { marginTop: 5, fontSize: 12, fontWeight: 800 },
+  regionHeaderCell: {
+    padding: '9px 10px',
+    borderTop: '2px solid #94a3b8',
+    borderBottom: '1px solid #cbd5e1',
+    background: '#e2e8f0',
+  },
+  regionColumnHeaderCell: {
+    padding: '7px 8px',
+    borderBottom: '1px solid #d4b106',
+    background: '#fff59d',
+    color: '#3f3f00',
+    fontSize: 9,
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '.02em',
+    whiteSpace: 'nowrap',
+  },
+
+  metricCurrentCell: {
+    background: '#f5f9ff',
+  },
+  metricGoalCell: {
+    background: '#fff8dc',
+  },
+  metricProjectedCell: {
+    background: '#eef7ff',
+  },
+  metricCurrentHeaderCell: {
+    background: '#dbeafe',
+  },
+  metricGoalHeaderCell: {
+    background: '#fde68a',
+  },
+  metricProjectedHeaderCell: {
+    background: '#dbeafe',
+  },
+  regionHeaderContent: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 10,
+    color: '#334155',
+  },
+  regionTotalCell: {
+    padding: '10px 8px',
+    borderTop: '2px solid #93c5fd',
+    borderBottom: '2px solid #60a5fa',
+    background: '#dbeafe',
+    color: '#0f172a',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+    fontSize: 11,
+  },
+  footerCell: {
+    padding: '10px 8px',
+    borderTop: '2px solid #0f172a',
+    background: '#f1f5f9',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+    fontSize: 11,
+  },
+  loading: { padding: '50px 24px', color: '#64748b', textAlign: 'center', fontWeight: 700 },
 };
 
 export default OfficeNumbers;
