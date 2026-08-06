@@ -304,99 +304,96 @@ const EODReport = () => {
       );
     }
 
-    // --- START OF MODIFIED PRE-CALCULATION BLOCK ---
-    // Pre-calculate net fees AND unique reference numbers per receipt
-    const receiptFeeTotals = {};
-    const receiptRefTotals = {}; // <-- NEW: To track unique refs
+    // Pre-calculate net fees and unique credit-card reference numbers by receipt.
+const receiptFeeTotals = {};
+const receiptRefTotals = {};
 
-    transactions.forEach(t => {
-      const receipt = t.Receipt;
-      if (!receipt) return;
+transactions.forEach(t => {
+  const receipt = (t.Receipt || '').trim();
+  if (!receipt) return;
 
-      // --- Fee Totals (existing) ---
-      if (!receiptFeeTotals[receipt]) {
-        receiptFeeTotals[receipt] = {
-          paymentFee: 0,
-          convenienceFee: 0,
-          cashConvenienceFee: 0,
-        };
-      }
-      const fee = parseFloat(t.Fee) || 0;
-      const company = t.Company || '';
-      const method = t.Method || '';
+  if (!receiptFeeTotals[receipt]) {
+    receiptFeeTotals[receipt] = {
+      paymentFee: 0,
+      convenienceFee: 0,
+    };
+  }
 
-      if (company.includes('Payment Fee')) {
-        receiptFeeTotals[receipt].paymentFee += fee;
-      }
-      if (company.includes('Convenience Fee')) {
-        receiptFeeTotals[receipt].convenienceFee += fee;
-        if (method.includes('Cash')) {
-          receiptFeeTotals[receipt].cashConvenienceFee += fee;
-        }
-      }
-      
-      // --- NEW: Reference # Totals ---
-      // We only care about unique refs from Credit Card transactions
-      const reference = (t['Reference #'] || '').trim();
-      const isCC = (t.Method || '').includes('Credit Card');
+  if (!receiptRefTotals[receipt]) {
+    receiptRefTotals[receipt] = new Set();
+  }
 
-      if (!receiptRefTotals[receipt]) {
-        receiptRefTotals[receipt] = new Set(); // Use a Set to store unique refs
-      }
-      if (reference && isCC) { // Only add non-empty refs from CC payments
-        receiptRefTotals[receipt].add(reference);
-      }
-    });
-    // --- END OF MODIFIED PRE-CALCULATION BLOCK ---
+  const fee = parseFloat(t.Fee) || 0;
+  const company = t.Company || '';
+  const method = t.Method || '';
+  const reference = (t['Reference #'] || '').trim();
 
-    // New validation alerts for payment rules
-    transactions.forEach((t, index) => {
-      const fee = parseFloat(t.Fee) || 0;
-      const company = t.Company || '';
-      const method = t.Method || '';
-      const receipt = t.Receipt;
+  if (company.includes('Payment Fee')) {
+    receiptFeeTotals[receipt].paymentFee += fee;
+  }
 
-      // 1. Alert for Installment fee > $10, only if not fully voided
-      if (company.includes('Payment Fee') && fee > 10) {
-        if (receipt && Math.abs(receiptFeeTotals[receipt]?.paymentFee) > 0.01) {
-          alerts.push(`Receipt #${receipt}: Installment fee of $${fee.toFixed(2)} is over the $10 limit.`);
-          errorRowIndices.add(index);
-        }
-      }
+  if (company.includes('Convenience Fee')) {
+    receiptFeeTotals[receipt].convenienceFee += fee;
+  }
 
-      // Checks specific to Convenience Fees
-      if (company.includes('Convenience Fee')) {
-        const isMonetaryVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.convenienceFee) < 0.01;
-        const isCashErrorVoided = receipt && Math.abs(receiptFeeTotals[receipt]?.cashConvenienceFee) < 0.01;
+  // Reference numbers are counted only from Credit Card transaction rows.
+  if (method.includes('Credit Card') && reference) {
+    receiptRefTotals[receipt].add(reference);
+  }
+});
 
-        // --- START OF MODIFIED ALERT LOGIC ---
-        // 2. Alert for CC fee > $7, with new exemption for $14
-        if (fee > 7 && !isMonetaryVoided) {
-          let isExempt = false;
-          
-          // Check for the $14 exemption
-          if (fee === 14) {
-            const uniqueRefs = receiptRefTotals[receipt] ? receiptRefTotals[receipt].size : 0;
-            if (uniqueRefs > 1) {
-              isExempt = true; // $14 is allowed if there are 2+ unique card refs
-            }
-          }
+// Validate Payment Fees and Convenience Fees.
+transactions.forEach((t, index) => {
+  const fee = parseFloat(t.Fee) || 0;
+  const company = t.Company || '';
+  const receipt = (t.Receipt || '').trim();
 
-          // Only push the alert if the transaction is not exempt
-          if (!isExempt) {
-            alerts.push(`Receipt #${receipt}: Convenience fee of $${fee.toFixed(2)} is over the $7 limit.`);
-            errorRowIndices.add(index);
-          }
-        }
-        // --- END OF MODIFIED ALERT LOGIC ---
+  // Payment/Installment Fee may not exceed $10.
+  // Do not alert when all Payment Fee rows for the receipt fully cancel out.
+  if (company.includes('Payment Fee') && fee > 10) {
+    const netPaymentFee = receiptFeeTotals[receipt]?.paymentFee || 0;
+    const isPaymentFeeVoided = Math.abs(netPaymentFee) < 0.01;
 
-        // 3. Alert for CC fee with Cash payment, only if not fully voided
-        if (method.includes('Cash') && !isCashErrorVoided) {
-          alerts.push(`Receipt #${receipt}: Convenience fee was incorrectly charged with a Cash payment.`);
-          errorRowIndices.add(index);
-        }
-      }
-    });
+    if (!isPaymentFeeVoided) {
+      alerts.push(
+        `Receipt #${receipt}: Installment fee of $${fee.toFixed(2)} is over the $10 limit.`
+      );
+      errorRowIndices.add(index);
+    }
+  }
+
+  if (company.includes('Convenience Fee')) {
+    const netConvenienceFee =
+      receiptFeeTotals[receipt]?.convenienceFee || 0;
+
+    const isConvenienceFeeVoided =
+      Math.abs(netConvenienceFee) < 0.01;
+
+    // Fully voided Convenience Fees do not create an alert.
+    if (isConvenienceFeeVoided) {
+      return;
+    }
+
+    const uniqueCreditCardReferences =
+      receiptRefTotals[receipt]?.size || 0;
+
+    const isStandardFee = Math.abs(fee - 7) < 0.001;
+
+    const isTwoCardFee =
+      Math.abs(fee - 14) < 0.001 &&
+      uniqueCreditCardReferences >= 2;
+
+    // Convenience Fee must be exactly $7.
+    // Exactly $14 is permitted only when two or more unique card
+    // reference numbers exist on the same receipt.
+    if (!isStandardFee && !isTwoCardFee) {
+      alerts.push(
+        `Receipt #${receipt}: Convenience fee must be exactly $7, or exactly $14 when two credit cards with different Reference #s are used.`
+      );
+      errorRowIndices.add(index);
+    }
+  }
+});
 
     setVerifyAlerts(alerts);
     setInvalidRowIdx(errorRowIndices);
