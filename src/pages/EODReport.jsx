@@ -304,96 +304,161 @@ const EODReport = () => {
       );
     }
 
-    // Pre-calculate net fees and unique credit-card reference numbers by receipt.
-const receiptFeeTotals = {};
-const receiptRefTotals = {};
+        // Pre-calculate fee totals, credit-card references, and reversal activity by receipt.
+    const receiptFeeTotals = {};
+    const receiptRefTotals = {};
+    const receiptHasReversalActivity = {};
 
-transactions.forEach(t => {
-  const receipt = (t.Receipt || '').trim();
-  if (!receipt) return;
+    transactions.forEach(t => {
+      const receipt = (t.Receipt || '').trim();
+      if (!receipt) return;
 
-  if (!receiptFeeTotals[receipt]) {
-    receiptFeeTotals[receipt] = {
-      paymentFee: 0,
-      convenienceFee: 0,
-    };
-  }
+      if (!receiptFeeTotals[receipt]) {
+        receiptFeeTotals[receipt] = {
+          paymentFee: 0,
+          convenienceFee: 0,
+        };
+      }
 
-  if (!receiptRefTotals[receipt]) {
-    receiptRefTotals[receipt] = new Set();
-  }
+      if (!receiptRefTotals[receipt]) {
+        receiptRefTotals[receipt] = new Set();
+      }
 
-  const fee = parseFloat(t.Fee) || 0;
-  const company = t.Company || '';
-  const method = t.Method || '';
-  const reference = (t['Reference #'] || '').trim();
+      if (receiptHasReversalActivity[receipt] === undefined) {
+        receiptHasReversalActivity[receipt] = false;
+      }
 
-  if (company.includes('Payment Fee')) {
-    receiptFeeTotals[receipt].paymentFee += fee;
-  }
+      const fee = parseFloat(t.Fee) || 0;
+      const premium = parseFloat(t.Premium) || 0;
+      const total = parseFloat(t.Total) || 0;
+      const company = t.Company || '';
+      const method = t.Method || '';
+      const reference = (t['Reference #'] || '').trim();
 
-  if (company.includes('Convenience Fee')) {
-    receiptFeeTotals[receipt].convenienceFee += fee;
-  }
+      // Track Payment Fees by receipt.
+      if (company.includes('Payment Fee')) {
+        receiptFeeTotals[receipt].paymentFee += fee;
+      }
 
-  // Reference numbers are counted only from Credit Card transaction rows.
-  if (method.includes('Credit Card') && reference) {
-    receiptRefTotals[receipt].add(reference);
-  }
-});
+      // Track Convenience Fees by receipt.
+      if (company.includes('Convenience Fee')) {
+        receiptFeeTotals[receipt].convenienceFee += fee;
+      }
 
-// Validate Payment Fees and Convenience Fees.
-transactions.forEach((t, index) => {
-  const fee = parseFloat(t.Fee) || 0;
-  const company = t.Company || '';
-  const receipt = (t.Receipt || '').trim();
+      // Track unique card reference numbers.
+      if (method.includes('Credit Card') && reference) {
+        receiptRefTotals[receipt].add(reference);
+      }
 
-  // Payment/Installment Fee may not exceed $10.
-  // Do not alert when all Payment Fee rows for the receipt fully cancel out.
-  if (company.includes('Payment Fee') && fee > 10) {
-    const netPaymentFee = receiptFeeTotals[receipt]?.paymentFee || 0;
-    const isPaymentFeeVoided = Math.abs(netPaymentFee) < 0.01;
+      /*
+       * CORPORATE REVERSAL DETECTION
+       *
+       * A negative Convenience Fee by itself is NOT enough to classify
+       * the receipt as a reversal.
+       *
+       * We require another non-Convenience-Fee transaction on the same
+       * receipt to contain a negative Premium, Fee, or Total.
+       *
+       * Example:
+       *   RWR Premium       -165.11
+       *   Convenience Fee     -7.00
+       *   Broker Fee        -210.00
+       *
+       * That receipt is a legitimate corporate reversal.
+       */
+      if (!company.includes('Convenience Fee')) {
+        if (premium < 0 || fee < 0 || total < 0) {
+          receiptHasReversalActivity[receipt] = true;
+        }
+      }
+    });
 
-    if (!isPaymentFeeVoided) {
-      alerts.push(
-        `Receipt #${receipt}: Installment fee of $${fee.toFixed(2)} is over the $10 limit.`
-      );
-      errorRowIndices.add(index);
-    }
-  }
+    // Validate Payment Fees and Convenience Fees.
+    transactions.forEach((t, index) => {
+      const fee = parseFloat(t.Fee) || 0;
+      const company = t.Company || '';
+      const receipt = (t.Receipt || '').trim();
 
-  if (company.includes('Convenience Fee')) {
-    const netConvenienceFee =
-      receiptFeeTotals[receipt]?.convenienceFee || 0;
+      // ------------------------------------------------------------
+      // PAYMENT / INSTALLMENT FEE RULE
+      // ------------------------------------------------------------
+      // Payment Fee may not exceed $10.
+      // Fully voided Payment Fees are ignored.
+      if (company.includes('Payment Fee') && fee > 10) {
+        const netPaymentFee =
+          receiptFeeTotals[receipt]?.paymentFee || 0;
 
-    const isConvenienceFeeVoided =
-      Math.abs(netConvenienceFee) < 0.01;
+        const isPaymentFeeVoided =
+          Math.abs(netPaymentFee) < 0.01;
 
-    // Fully voided Convenience Fees do not create an alert.
-    if (isConvenienceFeeVoided) {
-      return;
-    }
+        if (!isPaymentFeeVoided) {
+          alerts.push(
+            `Receipt #${receipt}: Installment fee of $${fee.toFixed(2)} is over the $10 limit.`
+          );
+          errorRowIndices.add(index);
+        }
+      }
 
-    const uniqueCreditCardReferences =
-      receiptRefTotals[receipt]?.size || 0;
+      // ------------------------------------------------------------
+      // CONVENIENCE FEE RULES
+      // ------------------------------------------------------------
+      if (company.includes('Convenience Fee')) {
+        const netConvenienceFee =
+          receiptFeeTotals[receipt]?.convenienceFee || 0;
 
-    const isStandardFee = Math.abs(fee - 7) < 0.001;
+        const isConvenienceFeeVoided =
+          Math.abs(netConvenienceFee) < 0.01;
 
-    const isTwoCardFee =
-      Math.abs(fee - 14) < 0.001 &&
-      uniqueCreditCardReferences >= 2;
+        // If positive and negative Convenience Fees on the same
+        // receipt completely cancel each other out, do not alert.
+        if (isConvenienceFeeVoided) {
+          return;
+        }
 
-    // Convenience Fee must be exactly $7.
-    // Exactly $14 is permitted only when two or more unique card
-    // reference numbers exist on the same receipt.
-    if (!isStandardFee && !isTwoCardFee) {
-      alerts.push(
-        `Receipt #${receipt}: Convenience fee must be exactly $7, or exactly $14 when two credit cards with different Reference #s are used.`
-      );
-      errorRowIndices.add(index);
-    }
-  }
-});
+        const uniqueCreditCardReferences =
+          receiptRefTotals[receipt]?.size || 0;
+
+        const hasReversalActivity =
+          receiptHasReversalActivity[receipt] === true;
+
+        // Normal Convenience Fee must be exactly +$7.
+        const isStandardFee =
+          Math.abs(fee - 7) < 0.001;
+
+        // Corporate reversal of a normal $7 Convenience Fee.
+        // Only allowed if another transaction on this receipt
+        // confirms negative/reversal activity.
+        const isStandardReversalFee =
+          Math.abs(fee + 7) < 0.001 &&
+          hasReversalActivity;
+
+        // Normal two-card transaction:
+        // exactly +$14 and at least two unique CC references.
+        const isTwoCardFee =
+          Math.abs(fee - 14) < 0.001 &&
+          uniqueCreditCardReferences >= 2;
+
+        // Corporate reversal of a $14 two-card Convenience Fee.
+        // Historical corporate reversals may not preserve both
+        // original card references in the current transaction log.
+        const isTwoCardReversalFee =
+          Math.abs(fee + 14) < 0.001 &&
+          hasReversalActivity;
+
+        const isValidConvenienceFee =
+          isStandardFee ||
+          isStandardReversalFee ||
+          isTwoCardFee ||
+          isTwoCardReversalFee;
+
+        if (!isValidConvenienceFee) {
+          alerts.push(
+            `Receipt #${receipt}: Convenience fee must be $7, $14 for a valid two-card transaction, or a matching -$7/-$14 corporate reversal.`
+          );
+          errorRowIndices.add(index);
+        }
+      }
+    });
 
     setVerifyAlerts(alerts);
     setInvalidRowIdx(errorRowIndices);
