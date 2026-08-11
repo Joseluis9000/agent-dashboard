@@ -5,7 +5,6 @@ import styles from '../MarketingOps.module.css';
 import MarketingMap from './components/MarketingMap';
 import MarketingSidebar from './components/MarketingSidebar';
 import CampaignSelector from './components/CampaignSelector';
-import { splitOfficeAndMarketingLocations } from './utils/locationTypeHelpers';
 import { getMarketingPhotosByLocations } from './services/photoService';
 
 const EMPTY_FORM = {
@@ -44,7 +43,7 @@ const EMPTY_FORM = {
   notes: '',
 };
 
-const REGION_OPTIONS = [
+const FALLBACK_REGION_OPTIONS = [
   'Bay Area',
   'Cen-Cal',
   'Kern County',
@@ -52,12 +51,28 @@ const REGION_OPTIONS = [
   'Southern Cali',
 ];
 
-const TYPE_OPTIONS = [
-  { value: 'billboard', label: 'Billboard' },
-  { value: 'event', label: 'Event' },
-  { value: 'office', label: 'Office' },
-  { value: 'sponsorship', label: 'Sponsorship' },
+const FALLBACK_TYPE_OPTIONS = [
+  { value: 'billboard', label: 'Billboard', icon: '📍', mapMode: 'physical' },
+  { value: 'event', label: 'Event', icon: '🎪', mapMode: 'physical' },
+  { value: 'office', label: 'Office', icon: '🏢', mapMode: 'physical' },
+  { value: 'sponsorship', label: 'Sponsorship', icon: '🤝', mapMode: 'physical' },
+  { value: 'dmv_video', label: 'DMV Video Advertising', icon: '📺', mapMode: 'physical' },
+  { value: 'tv_commercial', label: 'TV Commercial', icon: '🎬', mapMode: 'area' },
+  { value: 'geofencing', label: 'Geofencing / Digital Ads', icon: '🎯', mapMode: 'area' },
 ];
+
+const getTypeMeta = (type) =>
+  FALLBACK_TYPE_OPTIONS.find((option) => option.value === type) || {
+    value: type || 'other',
+    label: type || 'Marketing Asset',
+    icon: '📣',
+    mapMode: 'physical',
+  };
+
+const isAreaOnlyType = (type) => getTypeMeta(type).mapMode === 'area';
+
+const hasMapCoordinates = (item) =>
+  Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lng));
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
@@ -251,11 +266,15 @@ const MarketingLocations = () => {
   const [regionFilter, setRegionFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [locationGroupFilter, setLocationGroupFilter] = useState('all');
-  const [assetTypeFilter, setAssetTypeFilter] = useState('all');
+  const [locationGroupFilter] = useState('all');
+  const [assetTypeFilter] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
 
   const [locations, setLocations] = useState([]);
+  const [settingsRegions, setSettingsRegions] = useState([]);
+  const [settingsOffices, setSettingsOffices] = useState([]);
+  const [settingsVendors, setSettingsVendors] = useState([]);
+  const [settingsActivityTypes, setSettingsActivityTypes] = useState([]);
   const [relatedData, setRelatedData] = useState({
     contracts: {},
     assets: {},
@@ -263,6 +282,7 @@ const MarketingLocations = () => {
     tasks: {},
     notes: {},
     photos: {},
+    mediaCampaigns: {},
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -282,6 +302,7 @@ const MarketingLocations = () => {
         tasks: {},
         notes: {},
         photos: {},
+        mediaCampaigns: {},
       });
       return;
     }
@@ -293,6 +314,8 @@ const MarketingLocations = () => {
       tasksResult,
       notesResult,
       photosByLocation,
+      mediaCampaignsResult,
+      mediaAssetsResult,
     ] = await Promise.all([
       supabase
         .from('marketing_contracts')
@@ -320,6 +343,16 @@ const MarketingLocations = () => {
         .in('location_id', locationIds)
         .order('created_at', { ascending: false }),
       getMarketingPhotosByLocations(locationIds),
+      supabase
+        .from('marketing_location_campaigns')
+        .select('*')
+        .in('location_id', locationIds)
+        .order('start_date', { ascending: false, nullsFirst: false }),
+      supabase
+        .from('marketing_location_campaign_assets')
+        .select('*')
+        .in('location_id', locationIds)
+        .order('sort_order', { ascending: true }),
     ]);
 
     const errors = [
@@ -328,9 +361,25 @@ const MarketingLocations = () => {
       eventsResult.error,
       tasksResult.error,
       notesResult.error,
+      mediaCampaignsResult.error,
+      mediaAssetsResult.error,
     ].filter(Boolean);
 
     if (errors.length > 0) throw errors[0];
+
+    const campaignAssetsByCampaign = (mediaAssetsResult.data || []).reduce((acc, asset) => {
+      if (!asset.campaign_id) return acc;
+      if (!acc[asset.campaign_id]) acc[asset.campaign_id] = [];
+      acc[asset.campaign_id].push(asset);
+      return acc;
+    }, {});
+
+    const mediaCampaignsByLocation = groupByLocationId(
+      (mediaCampaignsResult.data || []).map((campaign) => ({
+        ...campaign,
+        mediaAssets: campaignAssetsByCampaign[campaign.id] || [],
+      }))
+    );
 
     setRelatedData({
       contracts: groupByLocationId(contractsResult.data || []),
@@ -339,6 +388,7 @@ const MarketingLocations = () => {
       tasks: groupByLocationId(tasksResult.data || []),
       notes: groupByLocationId(notesResult.data || []),
       photos: photosByLocation || {},
+      mediaCampaigns: mediaCampaignsByLocation,
     });
   };
 
@@ -347,32 +397,49 @@ const MarketingLocations = () => {
     setLoadError('');
 
     try {
-      const { data, error } = await supabase
-        .from('marketing_locations')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [locationsResult, regionsResult, officesResult, vendorsResult, activityTypesResult] =
+        await Promise.all([
+          supabase.from('marketing_locations').select('*').order('created_at', { ascending: false }),
+          supabase.from('marketing_regions').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('name', { ascending: true }),
+          supabase.from('marketing_offices_with_regions').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('office_code', { ascending: true }),
+          supabase.from('marketing_vendors').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('vendor_name', { ascending: true }),
+          supabase.from('marketing_activity_types').select('*').eq('is_active', true).order('sort_order', { ascending: true }).order('label', { ascending: true }),
+        ]);
 
-      if (error) throw error;
+      const firstError = [
+        locationsResult.error,
+        regionsResult.error,
+        officesResult.error,
+        vendorsResult.error,
+        activityTypesResult.error,
+      ].find(Boolean);
 
-      const mapped = (data || []).map(dbToLocation);
+      if (firstError) throw firstError;
+
+      const mapped = (locationsResult.data || []).map(dbToLocation);
       setLocations(mapped);
+      setSettingsRegions(regionsResult.data || []);
+      setSettingsOffices(officesResult.data || []);
+      setSettingsVendors(vendorsResult.data || []);
+      setSettingsActivityTypes(activityTypesResult.data || []);
 
       await fetchRelatedData(mapped.map((item) => item.id));
 
-      if (!selectedId && mapped.length > 0) {
-        setSelectedId(mapped[0].id);
+      if (!selectedId) {
+        const firstOffice = (officesResult.data || [])[0];
+        const firstSelectableId = mapped[0]?.id || (firstOffice?.id ? `settings-office:${firstOffice.id}` : null);
+        if (firstSelectableId) setSelectedId(firstSelectableId);
       }
     } catch (error) {
-      console.error('Error loading marketing data:', error);
+      console.error('Error loading marketing data/settings:', error);
       setLoadError(error?.message || 'Could not load marketing data.');
       setLocations([]);
+      setSettingsRegions([]);
+      setSettingsOffices([]);
+      setSettingsVendors([]);
+      setSettingsActivityTypes([]);
       setRelatedData({
-        contracts: {},
-        assets: {},
-        events: {},
-        tasks: {},
-        notes: {},
-        photos: {},
+        contracts: {}, assets: {}, events: {}, tasks: {}, notes: {}, photos: {}, mediaCampaigns: {},
       });
     } finally {
       setIsLoading(false);
@@ -383,6 +450,61 @@ const MarketingLocations = () => {
     fetchLocations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const regionOptions = useMemo(() => {
+    const names = settingsRegions.map((region) => region.name).filter(Boolean);
+    return names.length > 0 ? names : FALLBACK_REGION_OPTIONS;
+  }, [settingsRegions]);
+
+  const vendorOptions = useMemo(
+    () => settingsVendors.map((vendor) => vendor.vendor_name).filter(Boolean),
+    [settingsVendors]
+  );
+
+  const typeOptions = useMemo(() => {
+    const configured = settingsActivityTypes
+      .filter((activityType) => activityType.key !== 'office')
+      .map((activityType) => ({
+        value: activityType.key,
+        label: activityType.label,
+        icon: activityType.icon_key === 'billboard' ? '📍' : activityType.icon_key === 'dmv' ? '📺' : '📣',
+        mapMode: activityType.map_behavior === 'area' ? 'area' : activityType.map_behavior === 'none' ? 'none' : 'physical',
+      }));
+
+    return configured.length > 0
+      ? configured
+      : FALLBACK_TYPE_OPTIONS.filter((option) => option.value !== 'office');
+  }, [settingsActivityTypes]);
+
+  const settingsOfficeLocations = useMemo(
+    () => settingsOffices.map((office) => ({
+      id: `settings-office:${office.id}`,
+      settingsOfficeId: office.id,
+      sourceId: office.id,
+      sourceType: 'office',
+      source: 'settings_office',
+      type: 'office',
+      name: office.office_name || office.office_code || 'Office',
+      office: office.office_code || '',
+      city: office.city || '',
+      region: office.region_name || '',
+      status: 'active',
+      address: office.address || '',
+      lat: office.latitude,
+      lng: office.longitude,
+      streetviewLat: office.streetview_lat,
+      streetviewLng: office.streetview_lng,
+      streetviewHeading: office.streetview_heading,
+      streetviewPitch: office.streetview_pitch,
+      streetviewZoom: office.streetview_zoom,
+      contactPhone: office.phone || '',
+      notes: office.notes || '',
+      monthlyCost: 0,
+      photos: [],
+      primaryPhoto: null,
+    })),
+    [settingsOffices]
+  );
 
   const enrichedLocations = useMemo(() => {
     return locations.map((location) => {
@@ -421,10 +543,39 @@ const MarketingLocations = () => {
     });
   }, [locations, relatedData]);
 
+  const displayLocations = useMemo(() => {
+    const settingsOfficeCodes = new Set(
+      settingsOfficeLocations
+        .map((office) => String(office.office || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    const marketingRows = enrichedLocations.filter((location) => {
+      if (location.type !== 'office') return true;
+      const code = String(location.office || location.name || '').trim().toLowerCase();
+      return !code || !settingsOfficeCodes.has(code);
+    });
+
+    return [...settingsOfficeLocations, ...marketingRows];
+  }, [enrichedLocations, settingsOfficeLocations]);
+
   const filteredLocations = useMemo(() => {
     const searchText = search.trim().toLowerCase();
 
-    return enrichedLocations.filter((item) => {
+    return displayLocations.filter((item) => {
+      const mediaCampaigns = relatedData.mediaCampaigns[item.id] || [];
+      const campaignSearchText = mediaCampaigns
+        .flatMap((campaign) => [
+          campaign.campaign_name,
+          campaign.vendor,
+          campaign.market_name,
+          campaign.network_name,
+          campaign.area_label,
+          campaign.notes,
+        ])
+        .filter(Boolean)
+        .join(' ');
+
       const haystack = [
         item.name,
         item.city,
@@ -432,8 +583,11 @@ const MarketingLocations = () => {
         item.office,
         item.vendor,
         item.campaign,
+        getTypeMeta(item.type).label,
         item.type,
         item.status,
+        item.address,
+        campaignSearchText,
       ].join(' ').toLowerCase();
 
       const matchesSearch = !searchText || haystack.includes(searchText);
@@ -443,11 +597,68 @@ const MarketingLocations = () => {
 
       return matchesSearch && matchesRegion && matchesType && matchesStatus;
     });
-  }, [enrichedLocations, search, regionFilter, typeFilter, statusFilter]);
+  }, [displayLocations, relatedData.mediaCampaigns, search, regionFilter, typeFilter, statusFilter]);
+
+  const activityTypeMetaByKey = useMemo(() => {
+    return typeOptions.reduce((acc, option) => {
+      acc[option.value] = option;
+      return acc;
+    }, {});
+  }, [typeOptions]);
+
+  const isConfiguredAreaType = (type) =>
+    activityTypeMetaByKey[type]?.mapMode === 'area' ||
+    (!activityTypeMetaByKey[type] && isAreaOnlyType(type));
+
+  const isConfiguredNoMapType = (type) =>
+    activityTypeMetaByKey[type]?.mapMode === 'none';
+
+  const mapLocations = useMemo(
+    () =>
+      filteredLocations.filter((item) => {
+        const mapMode = activityTypeMetaByKey[item.type]?.mapMode;
+        const isArea =
+          mapMode === 'area' ||
+          (!activityTypeMetaByKey[item.type] && isAreaOnlyType(item.type));
+        const isNoMap = mapMode === 'none';
+
+        return !isArea && !isNoMap;
+      }),
+    [filteredLocations, activityTypeMetaByKey]
+  );
+
+  const areaCampaignLocations = useMemo(
+    () =>
+      filteredLocations.filter((item) => {
+        const mapMode = activityTypeMetaByKey[item.type]?.mapMode;
+        return (
+          mapMode === 'area' ||
+          (!activityTypeMetaByKey[item.type] && isAreaOnlyType(item.type))
+        );
+      }),
+    [filteredLocations, activityTypeMetaByKey]
+  );
 
   const selectedLocation = useMemo(() => {
     return filteredLocations.find((item) => item.id === selectedId) || filteredLocations[0] || null;
   }, [filteredLocations, selectedId]);
+
+  const selectedMapLocation = useMemo(() => {
+    if (selectedLocation) {
+      const mapMode = activityTypeMetaByKey[selectedLocation.type]?.mapMode;
+      const isArea =
+        mapMode === 'area' ||
+        (!activityTypeMetaByKey[selectedLocation.type] &&
+          isAreaOnlyType(selectedLocation.type));
+      const isNoMap = mapMode === 'none';
+
+      if (!isArea && !isNoMap) {
+        return selectedLocation;
+      }
+    }
+
+    return mapLocations[0] || null;
+  }, [selectedLocation, mapLocations, activityTypeMetaByKey]);
 
   useEffect(() => {
     if (selectedLocation?.id && selectedLocation.id !== selectedId) {
@@ -466,6 +677,7 @@ const MarketingLocations = () => {
         tasks: [],
         notes: [],
         photos: [],
+        mediaCampaigns: [],
       };
     }
 
@@ -476,8 +688,27 @@ const MarketingLocations = () => {
       tasks: relatedData.tasks[locationId] || [],
       notes: relatedData.notes[locationId] || [],
       photos: relatedData.photos[locationId] || [],
+      mediaCampaigns: relatedData.mediaCampaigns[locationId] || [],
     };
   }, [selectedLocation, relatedData]);
+
+  const mapSelectedRelated = useMemo(() => {
+    const locationId = selectedMapLocation?.id;
+    if (!locationId) {
+      return {
+        contracts: [], assets: [], events: [], tasks: [], notes: [], photos: [], mediaCampaigns: [],
+      };
+    }
+    return {
+      contracts: relatedData.contracts[locationId] || [],
+      assets: relatedData.assets[locationId] || [],
+      events: relatedData.events[locationId] || [],
+      tasks: relatedData.tasks[locationId] || [],
+      notes: relatedData.notes[locationId] || [],
+      photos: relatedData.photos[locationId] || [],
+      mediaCampaigns: relatedData.mediaCampaigns[locationId] || [],
+    };
+  }, [selectedMapLocation, relatedData]);
 
   const kpis = useMemo(() => {
     const activeBillboards = enrichedLocations.filter(
@@ -494,7 +725,16 @@ const MarketingLocations = () => {
         return days !== null && days >= 0 && days <= 90;
       }).length;
 
-    const monthlySpend = enrichedLocations.reduce((sum, item) => sum + Number(item.monthlyCost || 0), 0);
+    const monthlySpend = enrichedLocations.reduce((sum, item) => {
+      if (['dmv_video', 'tv_commercial', 'geofencing'].includes(item.type)) {
+        const campaigns = relatedData.mediaCampaigns[item.id] || [];
+        const activeCampaignSpend = campaigns
+          .filter((campaign) => campaign.status === 'active')
+          .reduce((campaignSum, campaign) => campaignSum + Number(campaign.monthly_cost || 0), 0);
+        return sum + activeCampaignSpend;
+      }
+      return sum + Number(item.monthlyCost || 0);
+    }, 0);
 
     const officesWithMarketing = new Set(
       enrichedLocations
@@ -503,9 +743,7 @@ const MarketingLocations = () => {
     );
 
     const officesTotal = new Set(
-      enrichedLocations
-        .filter((item) => item.office)
-        .map((item) => item.office)
+      settingsOffices.map((office) => office.office_code).filter(Boolean)
     );
 
     const openTasks = Object.values(relatedData.tasks)
@@ -526,7 +764,7 @@ const MarketingLocations = () => {
       openTasks,
       coverageScore,
     };
-  }, [enrichedLocations, relatedData]);
+  }, [enrichedLocations, relatedData, settingsOffices]);
 
   const calendarItems = useMemo(() => {
     const locationCalendarItems = filteredLocations
@@ -569,13 +807,29 @@ const MarketingLocations = () => {
   }, [filteredLocations, relatedData, enrichedLocations]);
 
   const handleSelectLocation = (item) => {
+    if (!item?.id) return;
+    setSelectedId(item.id);
+  };
+
+  const handleOpenFromCalendar = (item) => {
+    if (!item?.id) return;
+    setSelectedId(item.id);
+    setViewMode(isConfiguredAreaType(item.type) || isConfiguredNoMapType(item.type) ? 'list' : 'map');
+  };
+
+  const handleViewOnMap = (item) => {
+    if (!item?.id || isConfiguredAreaType(item.type) || isConfiguredNoMapType(item.type)) return;
     setSelectedId(item.id);
     setViewMode('map');
   };
 
   const openCreateForm = () => {
     setEditingLocation(null);
-    setFormData(EMPTY_FORM);
+    setFormData({
+      ...EMPTY_FORM,
+      region: regionOptions[0] || EMPTY_FORM.region,
+      type: typeOptions[0]?.value || EMPTY_FORM.type,
+    });
     setFormError('');
     setShowForm(true);
   };
@@ -630,32 +884,51 @@ const MarketingLocations = () => {
     return data?.publicUrl || '';
   };
 
-  const handleSaveLocation = async (event) => {
+  const handleSaveLocation = async (event, submittedFormData = formData) => {
     event.preventDefault();
 
-    if (!formData.name.trim()) {
+    // The modal keeps its own local draft so typing does not rerender the
+    // entire Marketing page/map on every keystroke. Use that draft here.
+    const activeFormData = submittedFormData || formData;
+
+    if (!activeFormData.name.trim()) {
       setFormError('Location name is required.');
       return;
     }
 
-    if (!formData.city.trim()) {
+    if (!activeFormData.city.trim()) {
       setFormError('City is required.');
       return;
     }
 
-    if ((formData.lat && !formData.lng) || (!formData.lat && formData.lng)) {
+    if ((activeFormData.lat && !activeFormData.lng) || (!activeFormData.lat && activeFormData.lng)) {
       setFormError('Latitude and longitude must both be filled in, or both left blank.');
       return;
+    }
+
+    if (activeFormData.lat || activeFormData.lng) {
+      const latitude = Number(activeFormData.lat);
+      const longitude = Number(activeFormData.lng);
+
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+        setFormError('Latitude must be a valid number between -90 and 90.');
+        return;
+      }
+
+      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        setFormError('Longitude must be a valid number between -180 and 180.');
+        return;
+      }
     }
 
     setIsSaving(true);
     setFormError('');
 
     try {
-      let nextFormData = { ...formData };
+      let nextFormData = { ...activeFormData };
 
-      if (formData.photoFile) {
-        const uploadedPhotoUrl = await uploadMarketingPhoto(formData.photoFile);
+      if (activeFormData.photoFile) {
+        const uploadedPhotoUrl = await uploadMarketingPhoto(activeFormData.photoFile);
         nextFormData = {
           ...nextFormData,
           photoUrl: uploadedPhotoUrl || nextFormData.photoUrl,
@@ -752,8 +1025,44 @@ const MarketingLocations = () => {
       notes: form.notes?.trim() || null,
     };
 
-    const { error } = await supabase.from('marketing_contracts').insert(payload);
+    // If this is a renewal/new active contract, close out any prior active
+    // contract rows first so the newest active contract becomes the source
+    // used by the dashboard.
+    if (payload.status === 'active') {
+      const { error: closeError } = await supabase
+        .from('marketing_contracts')
+        .update({ status: 'expired' })
+        .eq('location_id', locationId)
+        .eq('status', 'active');
+
+      if (closeError) throw closeError;
+    }
+
+    const { error } = await supabase
+      .from('marketing_contracts')
+      .insert(payload);
+
     if (error) throw error;
+
+    // Keep the main marketing_locations record synchronized with the newest
+    // contract so list/map status and pricing also refresh correctly.
+    if (payload.status === 'active') {
+      const { error: locationUpdateError } = await supabase
+        .from('marketing_locations')
+        .update({
+          vendor: payload.vendor,
+          contract_start: payload.start_date,
+          contract_end: payload.end_date,
+          renewal_date: payload.renewal_date,
+          monthly_cost: payload.monthly_cost,
+          contract_url: payload.contract_pdf,
+          status: 'active',
+        })
+        .eq('id', locationId);
+
+      if (locationUpdateError) throw locationUpdateError;
+    }
+
     await fetchLocations();
   };
 
@@ -864,6 +1173,103 @@ const MarketingLocations = () => {
     }
   };
 
+  const uploadMarketingMediaFile = async (file, locationId) => {
+    if (!file) return '';
+
+    const fileExt = file.name.split('.').pop() || 'bin';
+    const safeName = file.name
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[^a-z0-9-_]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+
+    const filePath = `campaigns/${locationId}/${Date.now()}-${safeName || 'media'}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('marketing-assets')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type || undefined,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+      .from('marketing-assets')
+      .getPublicUrl(filePath);
+
+    return data?.publicUrl || '';
+  };
+
+  const handleAddMediaCampaign = async (locationId, form) => {
+    const payload = {
+      location_id: locationId,
+      campaign_name: form.campaignName?.trim() || 'Marketing Campaign',
+      campaign_type: form.campaignType || 'dmv_video',
+      status: form.status || 'active',
+      vendor: form.vendor?.trim() || null,
+      start_date: form.startDate || null,
+      end_date: form.endDate || null,
+      renewal_date: form.renewalDate || null,
+      monthly_cost: Number(form.monthlyCost || 0),
+      total_cost: Number(form.totalCost || 0),
+      contract_url: form.contractUrl?.trim() || null,
+      market_name: form.marketName?.trim() || null,
+      network_name: form.networkName?.trim() || null,
+      spots_purchased: form.spotsPurchased ? Number(form.spotsPurchased) : null,
+      area_label: form.areaLabel?.trim() || null,
+      radius_miles: form.radiusMiles ? Number(form.radiusMiles) : null,
+      notes: form.notes?.trim() || null,
+    };
+
+    const { data: campaign, error } = await supabase
+      .from('marketing_location_campaigns')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    const files = Array.from(form.files || []);
+    const assetRows = [];
+
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const fileUrl = await uploadMarketingMediaFile(file, locationId);
+      assetRows.push({
+        campaign_id: campaign.id,
+        location_id: locationId,
+        asset_type: file.type?.startsWith('video/') ? 'video' : 'image',
+        title: file.name,
+        file_url: fileUrl,
+        sort_order: index,
+      });
+    }
+
+    if (assetRows.length > 0) {
+      const { error: assetError } = await supabase
+        .from('marketing_location_campaign_assets')
+        .insert(assetRows);
+      if (assetError) throw assetError;
+    }
+
+    await fetchLocations();
+  };
+
+  const handleDeleteMediaCampaign = async (campaignId) => {
+    const confirmed = window.confirm('Delete this campaign and its media assets?');
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from('marketing_location_campaigns')
+      .delete()
+      .eq('id', campaignId);
+
+    if (error) throw error;
+    await fetchLocations();
+  };
+
   const handleDeleteRelatedRow = async (table, id) => {
     const confirmed = window.confirm('Delete this item?');
     if (!confirmed) return;
@@ -878,32 +1284,6 @@ const MarketingLocations = () => {
     await fetchLocations();
   };
 
-  const groupedLocationCounts = useMemo(() => {
-    const grouped = splitOfficeAndMarketingLocations(locations);
-    return {
-      offices: grouped.officeLocations.length,
-      marketing: grouped.marketingAssets.length,
-    };
-  }, [locations]);
-
-  const assetTypeCounts = useMemo(() => {
-    return locations.reduce(
-      (acc, location) => {
-        if (location.type !== 'office') {
-          acc.all += 1;
-          acc[location.type] = (acc[location.type] || 0) + 1;
-        }
-
-        return acc;
-      },
-      {
-        all: 0,
-        billboard: 0,
-        event: 0,
-        sponsorship: 0,
-      }
-    );
-  }, [locations]);
 
   return (
     <main className={styles.mainContent}>
@@ -975,20 +1355,20 @@ const MarketingLocations = () => {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search city, office, vendor..."
+            placeholder="Search location, market, station, target area, vendor..."
           />
 
           <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)}>
             <option value="all">All Regions</option>
-            {REGION_OPTIONS.map((region) => (
+            {regionOptions.map((region) => (
               <option key={region} value={region}>{region}</option>
             ))}
           </select>
 
           <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
             <option value="all">All Layers</option>
-            {TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}s</option>
+            {typeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
 
@@ -1034,8 +1414,8 @@ const MarketingLocations = () => {
           {viewMode === 'map' && (
             <section className={styles.mapLayout}>
               <MarketingMap
-                locations={filteredLocations}
-                selectedLocation={selectedLocation}
+                locations={mapLocations}
+                selectedLocation={selectedMapLocation}
                 onLocationSelect={handleSelectLocation}
                 isLoading={isLoading}
             activeLocationGroupFilter={locationGroupFilter}
@@ -1044,7 +1424,185 @@ const MarketingLocations = () => {
               />
 
               <MarketingSidebar
-                item={selectedLocation}
+                selectedLocation={selectedMapLocation}
+                locations={mapLocations}
+                related={mapSelectedRelated}
+                onLocationSelect={handleSelectLocation}
+                onEdit={openEditForm}
+                onDelete={handleDeleteLocation}
+                onAddContract={handleAddContract}
+                onAddAsset={handleAddAsset}
+                onAddEvent={handleAddEvent}
+                onAddTask={handleAddTask}
+                onAddNote={handleAddNote}
+                onToggleTask={handleToggleTask}
+                onDeleteRelatedRow={handleDeleteRelatedRow}
+                onPhotosChange={handlePhotosChange}
+                onAddMediaCampaign={handleAddMediaCampaign}
+                onDeleteMediaCampaign={handleDeleteMediaCampaign}
+
+              />
+            </section>
+          )}
+
+          {viewMode === 'list' && (
+            <section className={styles.mapLayout}>
+              <div className={styles.card} style={{ minWidth: 0, overflow: 'hidden' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                    padding: '14px 16px',
+                    borderBottom: '1px solid #e2e8f0',
+                  }}
+                >
+                  <div>
+                    <strong style={{ display: 'block', color: '#0f172a' }}>
+                      Marketing Directory
+                    </strong>
+                    <small style={{ color: '#64748b', fontWeight: 800 }}>
+                      {mapLocations.length} physical/map locations • {areaCampaignLocations.length} area campaigns
+                    </small>
+                  </div>
+                  <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                    <span style={{ background: '#e0f2fe', color: '#075985', borderRadius: 999, padding: '5px 8px', fontSize: 10, fontWeight: 900 }}>
+                      📍 Physical
+                    </span>
+                    <span style={{ background: '#ede9fe', color: '#5b21b6', borderRadius: 999, padding: '5px 8px', fontSize: 10, fontWeight: 900 }}>
+                      ◉ Area / Market
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table className={styles.dataTable}>
+                    <thead>
+                      <tr>
+                        <th>Name / Channel</th>
+                        <th>Coverage</th>
+                        <th>Status</th>
+                        <th>Campaigns</th>
+                        <th>Monthly Spend</th>
+                        <th>Renewal / Event</th>
+                        <th>Map</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredLocations.length === 0 ? (
+                        <tr>
+                          <td colSpan="7">No marketing records match the selected filters.</td>
+                        </tr>
+                      ) : (
+                        filteredLocations.map((item) => {
+                          const status = getStatus(item.status);
+                          const typeMeta = getTypeMeta(item.type);
+                          const mediaCampaigns = relatedData.mediaCampaigns[item.id] || [];
+                          const activeMediaCampaigns = mediaCampaigns.filter((campaign) => campaign.status === 'active');
+                          const campaignCount = mediaCampaigns.length;
+                          const activeCampaignCount = activeMediaCampaigns.length;
+                          const mediaMonthlySpend = activeMediaCampaigns.reduce(
+                            (sum, campaign) => sum + Number(campaign.monthly_cost || 0),
+                            0
+                          );
+                          const monthlySpend = ['dmv_video', 'tv_commercial', 'geofencing'].includes(item.type)
+                            ? mediaMonthlySpend
+                            : Number(item.monthlyCost || 0);
+
+                          const primaryCampaign =
+                            activeMediaCampaigns[0] || mediaCampaigns[0] || null;
+
+                          const coverageLabel = item.type === 'tv_commercial'
+                            ? primaryCampaign?.market_name || item.address || item.region || 'Area-based'
+                            : item.type === 'geofencing'
+                              ? [primaryCampaign?.area_label || item.address, primaryCampaign?.radius_miles ? `${primaryCampaign.radius_miles} mi radius` : '']
+                                  .filter(Boolean)
+                                  .join(' • ') || 'Area-based'
+                              : item.type === 'dmv_video'
+                                ? item.address || item.city || 'Physical DMV location'
+                                : item.office || item.city || item.address || item.region || '—';
+
+                          const renewalDate =
+                            primaryCampaign?.renewal_date ||
+                            item.eventDate ||
+                            item.renewalDate ||
+                            item.contractEnd ||
+                            '—';
+
+                          const canMap = !isAreaOnlyType(item.type) && hasMapCoordinates(item);
+                          const isSelected = selectedLocation?.id === item.id;
+
+                          return (
+                            <tr
+                              key={item.id}
+                              onClick={() => handleSelectLocation(item)}
+                              style={{
+                                cursor: 'pointer',
+                                background: isSelected ? '#f0f9ff' : undefined,
+                              }}
+                            >
+                              <td>
+                                <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
+                                  <span style={{ fontSize: 18, lineHeight: 1 }}>{typeMeta.icon}</span>
+                                  <div>
+                                    <strong>{item.name}</strong>
+                                    <small>{typeMeta.label} • {item.region || item.city || '—'}</small>
+                                    <small style={{ color: typeMeta.mapMode === 'area' ? '#7c3aed' : '#0284c7' }}>
+                                      {typeMeta.mapMode === 'area' ? 'Area / market campaign' : 'Physical location'}
+                                    </small>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{coverageLabel}</td>
+                              <td>
+                                <span className={`${styles.statusPill} ${styles[status.className]}`}>
+                                  {status.label}
+                                </span>
+                              </td>
+                              <td>
+                                {['dmv_video', 'tv_commercial', 'geofencing'].includes(item.type) ? (
+                                  <div>
+                                    <strong>{campaignCount}</strong>
+                                    <small>{activeCampaignCount} active</small>
+                                  </div>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                              <td>{formatCurrency(monthlySpend)}</td>
+                              <td>{renewalDate}</td>
+                              <td>
+                                {canMap ? (
+                                  <button
+                                    type="button"
+                                    className={styles.secondaryBtn}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleViewOnMap(item);
+                                    }}
+                                    style={{ padding: '6px 8px', fontSize: 10 }}
+                                  >
+                                    View Map
+                                  </button>
+                                ) : (
+                                  <span style={{ color: '#7c3aed', fontSize: 10, fontWeight: 900 }}>
+                                    {isAreaOnlyType(item.type) ? 'List / area' : 'No coordinates'}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <MarketingSidebar
+                selectedLocation={selectedLocation}
                 locations={filteredLocations}
                 related={selectedRelated}
                 onLocationSelect={handleSelectLocation}
@@ -1058,59 +1616,9 @@ const MarketingLocations = () => {
                 onToggleTask={handleToggleTask}
                 onDeleteRelatedRow={handleDeleteRelatedRow}
                 onPhotosChange={handlePhotosChange}
+                onAddMediaCampaign={handleAddMediaCampaign}
+                onDeleteMediaCampaign={handleDeleteMediaCampaign}
               />
-            </section>
-          )}
-
-          {viewMode === 'list' && (
-            <section className={styles.card}>
-              <table className={styles.dataTable}>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Region</th>
-                    <th>Office</th>
-                    <th>Status</th>
-                    <th>Renewal / Event Date</th>
-                    <th>Cost</th>
-                    <th>Tasks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLocations.length === 0 ? (
-                    <tr>
-                      <td colSpan="8">No marketing locations match the selected filters.</td>
-                    </tr>
-                  ) : (
-                    filteredLocations.map((item) => {
-                      const status = getStatus(item.status);
-                      const tasks = relatedData.tasks[item.id] || [];
-                      const openTasks = tasks.filter((task) => !task.completed).length;
-
-                      return (
-                        <tr key={item.id} onClick={() => handleSelectLocation(item)}>
-                          <td>
-                            <strong>{item.name}</strong>
-                            <small>{item.city}</small>
-                          </td>
-                          <td>{item.type}</td>
-                          <td>{item.region}</td>
-                          <td>{item.office}</td>
-                          <td>
-                            <span className={`${styles.statusPill} ${styles[status.className]}`}>
-                              {status.label}
-                            </span>
-                          </td>
-                          <td>{item.eventDate || item.renewalDate || item.contractEnd || '—'}</td>
-                          <td>{formatCurrency(item.monthlyCost)}</td>
-                          <td>{openTasks}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
             </section>
           )}
 
@@ -1138,7 +1646,7 @@ const MarketingLocations = () => {
                             key={item.id}
                             type="button"
                             className={`${styles.calendarItem} ${styles[status.className]}`}
-                            onClick={() => location && handleSelectLocation(location)}
+                            onClick={() => location && handleOpenFromCalendar(location)}
                           >
                             {item.name}
                           </button>
@@ -1162,6 +1670,11 @@ const MarketingLocations = () => {
           updateForm={updateForm}
           onClose={closeForm}
           onSubmit={handleSaveLocation}
+          regionOptions={regionOptions}
+          officeOptions={settingsOffices}
+          vendorOptions={vendorOptions}
+          vendorRecords={settingsVendors}
+          typeOptions={typeOptions}
         />
       )}
     </main>
@@ -1176,10 +1689,62 @@ const MarketingLocationModal = ({
   updateForm,
   onClose,
   onSubmit,
+  regionOptions = FALLBACK_REGION_OPTIONS,
+  officeOptions = [],
+  vendorOptions = [],
+  vendorRecords = [],
+  typeOptions = FALLBACK_TYPE_OPTIONS,
 }) => {
+  // Keep the form draft LOCAL to the modal.
+  // This prevents MarketingMap / MarketingSidebar from rerendering on every
+  // keystroke, which was causing inputs to repeatedly lose focus.
+  const [draft, setDraft] = useState(() => ({ ...formData }));
+
+  const updateDraft = (field, value) => {
+    setDraft((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const handleLocalSubmit = (event) => {
+    onSubmit(event, draft);
+  };
+
+  const handleOverlayClick = (event) => {
+    // Only close when the user clicks the actual dark backdrop.
+    // Clicks on inputs, labels, selects, textarea controls, scrollbars,
+    // date pickers, number controls, etc. must never close the modal.
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+
+  const handleFormKeyDown = (event) => {
+    // Prevent Enter in regular form fields from accidentally submitting and
+    // closing the modal while data is still being entered.
+    // Textareas keep their normal Enter/new-line behavior.
+    if (
+      event.key === 'Enter' &&
+      event.target?.tagName !== 'TEXTAREA' &&
+      event.target?.tagName !== 'BUTTON'
+    ) {
+      event.preventDefault();
+    }
+  };
+
   return (
-    <div className={styles.modalOverlay} onClick={onClose}>
-      <form className={styles.locationModal} onSubmit={onSubmit} onClick={(event) => event.stopPropagation()}>
+    <div
+      className={styles.modalOverlay}
+      onMouseDown={handleOverlayClick}
+    >
+      <form
+        className={styles.locationModal}
+        onSubmit={handleLocalSubmit}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleFormKeyDown}
+      >
         <div className={styles.modalHeader}>
           <div>
             <h2>{editingLocation ? 'Edit Marketing Location' : 'Add Marketing Location'}</h2>
@@ -1200,8 +1765,8 @@ const MarketingLocationModal = ({
         <div className={styles.formGrid}>
           <label>
             Marketing Type
-            <select value={formData.type} onChange={(event) => updateForm('type', event.target.value)}>
-              {TYPE_OPTIONS.map((option) => (
+            <select value={draft.type} onChange={(event) => updateDraft('type', event.target.value)}>
+              {typeOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
@@ -1209,7 +1774,7 @@ const MarketingLocationModal = ({
 
           <label>
             Status
-            <select value={formData.status} onChange={(event) => updateForm('status', event.target.value)}>
+            <select value={draft.status} onChange={(event) => updateDraft('status', event.target.value)}>
               {STATUS_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
@@ -1217,48 +1782,69 @@ const MarketingLocationModal = ({
           </label>
 
           <label>
-            {formData.type === 'event' ? 'Event Name' : formData.type === 'office' ? 'Office / Location Name' : formData.type === 'sponsorship' ? 'Sponsorship Name' : 'Billboard Name'}
+            {draft.type === 'event' ? 'Event Name' : draft.type === 'office' ? 'Office / Location Name' : draft.type === 'sponsorship' ? 'Sponsorship Name' : draft.type === 'dmv_video' ? 'DMV Location Name' : draft.type === 'tv_commercial' ? 'TV Campaign / Market Name' : draft.type === 'geofencing' ? 'Geofencing Area Name' : 'Billboard Name'}
             <input
-              value={formData.name}
-              onChange={(event) => updateForm('name', event.target.value)}
-              placeholder={formData.type === 'event' ? 'Community Event' : formData.type === 'office' ? 'CA117 Office Marketing' : formData.type === 'sponsorship' ? 'Team Sponsorship' : 'Highway 99 Digital Billboard'}
+              value={draft.name}
+              onChange={(event) => updateDraft('name', event.target.value)}
+              placeholder={draft.type === 'event' ? 'Community Event' : draft.type === 'office' ? 'CA117 Office Marketing' : draft.type === 'sponsorship' ? 'Team Sponsorship' : draft.type === 'dmv_video' ? 'Turlock DMV' : draft.type === 'tv_commercial' ? 'Central Valley TV Commercial' : draft.type === 'geofencing' ? 'Turlock Geofence Campaign' : 'Highway 99 Digital Billboard'}
             />
           </label>
 
           <label>
             City
             <input
-              value={formData.city}
-              onChange={(event) => updateForm('city', event.target.value)}
+              value={draft.city}
+              onChange={(event) => updateDraft('city', event.target.value)}
               placeholder="Modesto"
             />
           </label>
 
           <label>
             Region
-            <select value={formData.region} onChange={(event) => updateForm('region', event.target.value)}>
-              {REGION_OPTIONS.map((region) => (
+            <select value={draft.region} onChange={(event) => updateDraft('region', event.target.value)}>
+              {regionOptions.map((region) => (
                 <option key={region} value={region}>{region}</option>
               ))}
             </select>
           </label>
 
-          {(formData.type === 'billboard' || formData.type === 'office') && (
+          {(['billboard', 'dmv_video'].includes(draft.type)) && (
             <label>
               Office
-              <input
-                value={formData.office}
-                onChange={(event) => updateForm('office', event.target.value)}
-                placeholder="CA117"
-              />
+              <select
+                value={draft.office}
+                onChange={(event) => {
+                  const officeCode = event.target.value;
+                  const selectedOffice = officeOptions.find(
+                    (office) => office.office_code === officeCode
+                  );
+
+                  updateDraft('office', officeCode);
+                  if (selectedOffice?.region_name) {
+                    updateDraft('region', selectedOffice.region_name);
+                  }
+                }}
+              >
+                <option value="">No office / not assigned</option>
+                {draft.office && !officeOptions.some((office) => office.office_code === draft.office) && (
+                  <option value={draft.office}>{draft.office} (existing)</option>
+                )}
+                {officeOptions.map((office) => (
+                  <option key={office.id} value={office.office_code}>
+                    {office.office_code}
+                    {office.office_name ? ` — ${office.office_name}` : ''}
+                    {office.region_name ? ` (${office.region_name})` : ''}
+                  </option>
+                ))}
+              </select>
             </label>
           )}
 
           <label className={styles.fullWidth}>
-            {formData.type === 'billboard' ? 'Billboard Address / Cross Streets' : formData.type === 'event' ? 'Event Address / Venue' : formData.type === 'office' ? 'Office Address' : 'Sponsorship Location'}
+            {draft.type === 'billboard' ? 'Billboard Address / Cross Streets' : draft.type === 'event' ? 'Event Address / Venue' : draft.type === 'office' ? 'Office Address' : draft.type === 'dmv_video' ? 'DMV Address' : draft.type === 'tv_commercial' ? 'Market / Coverage Area' : draft.type === 'geofencing' ? 'Target Area / Description' : 'Sponsorship Location'}
             <input
-              value={formData.address || ''}
-              onChange={(event) => updateForm('address', event.target.value)}
+              value={draft.address || ''}
+              onChange={(event) => updateDraft('address', event.target.value)}
               placeholder="Street, city, or nearest cross streets"
             />
           </label>
@@ -1266,10 +1852,11 @@ const MarketingLocationModal = ({
           <label>
             Latitude
             <input
-              type="number"
-              step="any"
-              value={formData.lat}
-              onChange={(event) => updateForm('lat', event.target.value)}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={draft.lat}
+              onChange={(event) => updateDraft('lat', event.target.value)}
               placeholder="37.5582128"
             />
           </label>
@@ -1277,23 +1864,24 @@ const MarketingLocationModal = ({
           <label>
             Longitude
             <input
-              type="number"
-              step="any"
-              value={formData.lng}
-              onChange={(event) => updateForm('lng', event.target.value)}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={draft.lng}
+              onChange={(event) => updateDraft('lng', event.target.value)}
               placeholder="-120.9178763"
             />
           </label>
 
-          {formData.type === 'billboard' && (
+          {draft.type === 'billboard' && (
             <>
               <label>
                 Billboard Width
                 <input
                   type="number"
                   step="any"
-                  value={formData.billboardWidth || ''}
-                  onChange={(event) => updateForm('billboardWidth', event.target.value)}
+                  value={draft.billboardWidth || ''}
+                  onChange={(event) => updateDraft('billboardWidth', event.target.value)}
                   placeholder="48"
                 />
               </label>
@@ -1303,8 +1891,8 @@ const MarketingLocationModal = ({
                 <input
                   type="number"
                   step="any"
-                  value={formData.billboardHeight || ''}
-                  onChange={(event) => updateForm('billboardHeight', event.target.value)}
+                  value={draft.billboardHeight || ''}
+                  onChange={(event) => updateDraft('billboardHeight', event.target.value)}
                   placeholder="14"
                 />
               </label>
@@ -1312,8 +1900,8 @@ const MarketingLocationModal = ({
               <label>
                 Size Unit
                 <select
-                  value={formData.billboardSizeUnit || 'ft'}
-                  onChange={(event) => updateForm('billboardSizeUnit', event.target.value)}
+                  value={draft.billboardSizeUnit || 'ft'}
+                  onChange={(event) => updateDraft('billboardSizeUnit', event.target.value)}
                 >
                   <option value="ft">Feet</option>
                   <option value="in">Inches</option>
@@ -1325,8 +1913,8 @@ const MarketingLocationModal = ({
               <label>
                 Placement Type
                 <input
-                  value={formData.placementType || ''}
-                  onChange={(event) => updateForm('placementType', event.target.value)}
+                  value={draft.placementType || ''}
+                  onChange={(event) => updateDraft('placementType', event.target.value)}
                   placeholder="Static, digital, wallscape, poster..."
                 />
               </label>
@@ -1334,19 +1922,47 @@ const MarketingLocationModal = ({
           )}
 
           <label>
-            {formData.type === 'event' ? 'Organizer' : 'Vendor / Organizer'}
-            <input
-              value={formData.vendor}
-              onChange={(event) => updateForm('vendor', event.target.value)}
-              placeholder={formData.type === 'billboard' ? 'Lamar' : 'Vendor or organizer'}
-            />
+            {draft.type === 'event' ? 'Organizer / Vendor' : 'Vendor'}
+            <select
+              value={draft.vendor}
+              onChange={(event) => {
+                const vendorName = event.target.value;
+                const vendorRecord = vendorRecords.find(
+                  (vendor) => vendor.vendor_name === vendorName
+                );
+
+                updateDraft('vendor', vendorName);
+
+                if (vendorRecord) {
+                  if (vendorRecord.contact_name) {
+                    updateDraft('contactName', vendorRecord.contact_name);
+                  }
+                  if (vendorRecord.contact_phone) {
+                    updateDraft('contactPhone', vendorRecord.contact_phone);
+                  }
+                  if (vendorRecord.contact_email) {
+                    updateDraft('contactEmail', vendorRecord.contact_email);
+                  }
+                }
+              }}
+            >
+              <option value="">No vendor selected</option>
+              {draft.vendor && !vendorOptions.includes(draft.vendor) && (
+                <option value={draft.vendor}>{draft.vendor} (existing)</option>
+              )}
+              {vendorOptions.map((vendorName) => (
+                <option key={vendorName} value={vendorName}>
+                  {vendorName}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label>
             Contact Name
             <input
-              value={formData.contactName || ''}
-              onChange={(event) => updateForm('contactName', event.target.value)}
+              value={draft.contactName || ''}
+              onChange={(event) => updateDraft('contactName', event.target.value)}
               placeholder="Vendor rep"
             />
           </label>
@@ -1354,8 +1970,8 @@ const MarketingLocationModal = ({
           <label>
             Contact Phone
             <input
-              value={formData.contactPhone || ''}
-              onChange={(event) => updateForm('contactPhone', event.target.value)}
+              value={draft.contactPhone || ''}
+              onChange={(event) => updateDraft('contactPhone', event.target.value)}
               placeholder="555-555-5555"
             />
           </label>
@@ -1363,30 +1979,30 @@ const MarketingLocationModal = ({
           <label>
             Contact Email
             <input
-              value={formData.contactEmail || ''}
-              onChange={(event) => updateForm('contactEmail', event.target.value)}
+              value={draft.contactEmail || ''}
+              onChange={(event) => updateDraft('contactEmail', event.target.value)}
               placeholder="rep@email.com"
             />
           </label>
 
           <label>
-            {formData.type === 'event' ? 'Estimated Event Cost' : formData.type === 'sponsorship' ? 'Sponsorship Cost' : 'Monthly / Event Cost'}
+            {draft.type === 'event' ? 'Estimated Event Cost' : draft.type === 'sponsorship' ? 'Sponsorship Cost' : 'Monthly / Event Cost'}
             <input
               type="number"
-              value={formData.monthlyCost}
-              onChange={(event) => updateForm('monthlyCost', event.target.value)}
+              value={draft.monthlyCost}
+              onChange={(event) => updateDraft('monthlyCost', event.target.value)}
               placeholder="1850"
             />
           </label>
 
-          {formData.type !== 'event' && (
+          {!['event', 'dmv_video', 'tv_commercial', 'geofencing'].includes(draft.type) && (
             <>
               <label>
                 Contract Start
                 <input
                   type="date"
-                  value={formData.contractStart}
-                  onChange={(event) => updateForm('contractStart', event.target.value)}
+                  value={draft.contractStart}
+                  onChange={(event) => updateDraft('contractStart', event.target.value)}
                 />
               </label>
 
@@ -1394,8 +2010,8 @@ const MarketingLocationModal = ({
                 Contract End
                 <input
                   type="date"
-                  value={formData.contractEnd}
-                  onChange={(event) => updateForm('contractEnd', event.target.value)}
+                  value={draft.contractEnd}
+                  onChange={(event) => updateDraft('contractEnd', event.target.value)}
                 />
               </label>
 
@@ -1403,41 +2019,41 @@ const MarketingLocationModal = ({
                 Renewal Date
                 <input
                   type="date"
-                  value={formData.renewalDate}
-                  onChange={(event) => updateForm('renewalDate', event.target.value)}
+                  value={draft.renewalDate}
+                  onChange={(event) => updateDraft('renewalDate', event.target.value)}
                 />
               </label>
             </>
           )}
 
-          {formData.type === 'event' && (
+          {draft.type === 'event' && (
             <>
               <label>
                 Event Date
                 <input
                   type="date"
-                  value={formData.eventDate}
-                  onChange={(event) => updateForm('eventDate', event.target.value)}
+                  value={draft.eventDate}
+                  onChange={(event) => updateDraft('eventDate', event.target.value)}
                 />
               </label>
 
               <label>
                 Expected Attendance
                 <input
-                  value={formData.traffic}
-                  onChange={(event) => updateForm('traffic', event.target.value)}
+                  value={draft.traffic}
+                  onChange={(event) => updateDraft('traffic', event.target.value)}
                   placeholder="500 attendees"
                 />
               </label>
             </>
           )}
 
-          {formData.type !== 'event' && (
+          {draft.type !== 'event' && (
             <label>
-              {formData.type === 'billboard' ? 'Traffic / Impressions' : 'Reach / Attendance'}
+              {draft.type === 'billboard' ? 'Traffic / Impressions' : 'Reach / Attendance'}
               <input
-                value={formData.traffic}
-                onChange={(event) => updateForm('traffic', event.target.value)}
+                value={draft.traffic}
+                onChange={(event) => updateDraft('traffic', event.target.value)}
                 placeholder="91,000/day"
               />
             </label>
@@ -1446,8 +2062,8 @@ const MarketingLocationModal = ({
           <label>
             Campaign Name
             <input
-              value={formData.campaign}
-              onChange={(event) => updateForm('campaign', event.target.value)}
+              value={draft.campaign}
+              onChange={(event) => updateDraft('campaign', event.target.value)}
               placeholder="Instant Placas Summer"
             />
           </label>
@@ -1455,8 +2071,8 @@ const MarketingLocationModal = ({
           <label>
             Linked Campaign
             <CampaignSelector
-              value={formData.campaignId || ''}
-              onChange={(value) => updateForm('campaignId', value)}
+              value={draft.campaignId || ''}
+              onChange={(value) => updateDraft('campaignId', value)}
               emptyLabel="No Linked Campaign"
             />
           </label>
@@ -1466,22 +2082,22 @@ const MarketingLocationModal = ({
             <input
               type="file"
               accept="image/*"
-              onChange={(event) => updateForm('photoFile', event.target.files?.[0] || null)}
+              onChange={(event) => updateDraft('photoFile', event.target.files?.[0] || null)}
             />
           </label>
 
-          {(formData.photoFile || formData.photoUrl || formData.graphicUrl) && (
+          {(draft.photoFile || draft.photoUrl || draft.graphicUrl) && (
             <div className={styles.fullWidth} style={{ display: 'grid', gap: 8 }}>
               <strong style={{ color: '#334155', fontSize: 12 }}>Photo Preview</strong>
-              {formData.photoFile ? (
+              {draft.photoFile ? (
                 <img
-                  src={URL.createObjectURL(formData.photoFile)}
+                  src={URL.createObjectURL(draft.photoFile)}
                   alt="Selected upload preview"
                   style={{ width: '100%', maxHeight: 220, objectFit: 'contain', borderRadius: 12, border: '1px solid #e2e8f0' }}
                 />
               ) : (
                 <img
-                  src={formData.photoUrl || formData.graphicUrl}
+                  src={draft.photoUrl || draft.graphicUrl}
                   alt="Marketing preview"
                   style={{ width: '100%', maxHeight: 220, objectFit: 'contain', borderRadius: 12, border: '1px solid #e2e8f0' }}
                 />
@@ -1492,10 +2108,10 @@ const MarketingLocationModal = ({
           <label className={styles.fullWidth}>
             Photo / Graphic URL
             <input
-              value={formData.photoUrl || formData.graphicUrl}
+              value={draft.photoUrl || draft.graphicUrl}
               onChange={(event) => {
-                updateForm('photoUrl', event.target.value);
-                updateForm('graphicUrl', event.target.value);
+                updateDraft('photoUrl', event.target.value);
+                updateDraft('graphicUrl', event.target.value);
               }}
               placeholder="https://..."
             />
@@ -1504,8 +2120,8 @@ const MarketingLocationModal = ({
           <label className={styles.fullWidth}>
             Graphic Text
             <input
-              value={formData.graphicText}
-              onChange={(event) => updateForm('graphicText', event.target.value)}
+              value={draft.graphicText}
+              onChange={(event) => updateDraft('graphicText', event.target.value)}
               placeholder="INSTANT! PLACAS"
             />
           </label>
@@ -1513,8 +2129,8 @@ const MarketingLocationModal = ({
           <label className={styles.fullWidth}>
             Contract URL
             <input
-              value={formData.contractUrl}
-              onChange={(event) => updateForm('contractUrl', event.target.value)}
+              value={draft.contractUrl}
+              onChange={(event) => updateDraft('contractUrl', event.target.value)}
               placeholder="https://..."
             />
           </label>
@@ -1522,11 +2138,28 @@ const MarketingLocationModal = ({
           <label className={styles.fullWidth}>
             Notes
             <textarea
-              value={formData.notes}
-              onChange={(event) => updateForm('notes', event.target.value)}
-              placeholder={formData.type === 'billboard' ? 'Board direction, creative due dates, material specs, vendor notes...' : 'Contract terms, rep contact, renewal notes...'}
-              rows={4}
+              value={draft.notes}
+              onChange={(event) => updateDraft('notes', event.target.value)}
+              placeholder={draft.type === 'billboard' ? 'Board direction, creative due dates, material specs, vendor notes...' : 'Contract terms, rep contact, renewal notes...'}
+              rows={7}
+              maxLength={10000}
+              style={{
+                minHeight: 150,
+                resize: 'vertical',
+              }}
             />
+            <small
+              style={{
+                display: 'block',
+                marginTop: 4,
+                color: '#64748b',
+                fontWeight: 700,
+                fontSize: 11,
+                textAlign: 'right',
+              }}
+            >
+              {(draft.notes || '').length.toLocaleString()} / 10,000
+            </small>
           </label>
         </div>
         <div className={styles.modalActions}>

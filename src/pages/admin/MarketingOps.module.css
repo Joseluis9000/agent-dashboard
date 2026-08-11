@@ -1261,3 +1261,97 @@ section > div[style*="grid-template-columns: minmax(0, 1fr) 360px"] {
     white-space: normal !important;
   }
 }
+
+
+/* =========================================================
+   Sidebar contract / renewal form fit fixes
+   ========================================================= */
+
+.detailsCard {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.detailsCard .formGrid {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  gap: 10px;
+}
+
+.detailsCard .formSection,
+.detailsCard .typeSection,
+.detailsCard .modalSection,
+.detailsCard .billboardFields,
+.detailsCard .eventFields,
+.detailsCard .officeFields,
+.detailsCard .sponsorshipFields {
+  grid-template-columns: minmax(0, 1fr);
+  grid-column: 1;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.detailsCard .formGrid label,
+.detailsCard form label,
+.detailsCard .formGrid input,
+.detailsCard .formGrid select,
+.detailsCard .formGrid textarea,
+.detailsCard form input,
+.detailsCard form select,
+.detailsCard form textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.detailsCard .fullWidth {
+  grid-column: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.detailsCard input,
+.detailsCard select,
+.detailsCard textarea,
+.detailsCard a,
+.detailsCard p,
+.detailsCard strong,
+.detailsCard span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.detailsCard form .detailsActions {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  gap: 8px;
+}
+
+.detailsCard form .detailsActions button {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.detailsCard form button[type="submit"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (min-width: 1401px) {
+  .mapLayout {
+    grid-template-columns: minmax(0, 1.25fr) minmax(400px, 0.75fr);
+  }
+}
+
+@media (max-width: 1400px) {
+  .detailsCard .formGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

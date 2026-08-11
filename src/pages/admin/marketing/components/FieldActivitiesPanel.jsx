@@ -46,8 +46,6 @@ const STATUS_OPTIONS = [
   { value: ACTIVITY_STATUS.CANCELLED, label: 'Cancelled' },
 ];
 
-const PRIORITY_OPTIONS = ['Low', 'Normal', 'High', 'Urgent'];
-
 const FieldActivitiesPanel = ({
   initialOffice = '',
   initialRegion = '',
@@ -138,6 +136,16 @@ const FieldActivitiesPanel = ({
       status: activity.status || ACTIVITY_STATUS.COMPLETED,
       priority: activity.priority || 'Normal',
       quantity: activity.quantity || '',
+      purchasedQuantity: activity.purchasedQuantity || '',
+      inventoryItemId: activity.inventoryItemId || '',
+      inventoryLocationId: activity.inventoryLocationId || '',
+      distributedQuantity: activity.distributedQuantity || activity.quantity || '',
+      productionCost: activity.productionCost || '',
+      productionNotes: activity.productionNotes || '',
+      distributionCost: activity.distributionCost || '',
+      distributionNotes: activity.distributionNotes || '',
+      otherCost: activity.otherCost || '',
+      otherCostNotes: activity.otherCostNotes || '',
       cost: activity.cost || '',
       estimatedReach: activity.estimatedReach || '',
       city: activity.city || '',
@@ -162,14 +170,68 @@ const FieldActivitiesPanel = ({
   };
 
   const updateForm = (field, value) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData((prev) => {
+      const next = {
+        ...prev,
+        [field]: value,
+      };
+
+      if (field === 'distributedQuantity' && next.activityType === ACTIVITY_TYPES.MAILER) {
+        next.quantity = value;
+      }
+
+      if (field === 'activityType' && value === ACTIVITY_TYPES.MAILER) {
+        next.distributedQuantity = next.distributedQuantity || next.quantity || '';
+        next.quantity = next.distributedQuantity || '';
+      }
+
+      if (['productionCost', 'distributionCost', 'otherCost', 'inventoryItemId'].includes(field)) {
+        const production = next.inventoryItemId ? 0 : Number(next.productionCost || 0);
+        const distribution = Number(next.distributionCost || 0);
+        const other = Number(next.otherCost || 0);
+
+        next.cost = (
+          (Number.isFinite(production) ? production : 0) +
+          (Number.isFinite(distribution) ? distribution : 0) +
+          (Number.isFinite(other) ? other : 0)
+        ).toFixed(2);
+      }
+
+      return next;
+    });
   };
 
   const handleSave = async (event) => {
     event.preventDefault();
+
+    const inventoryTypes = [
+      ACTIVITY_TYPES.MAILER,
+      ACTIVITY_TYPES.GORILLA_STREET_FLYERS,
+      ACTIVITY_TYPES.CAR_TO_CAR_FLYERS,
+      ACTIVITY_TYPES.BUSINESS_TO_BUSINESS_FLYERS,
+      ACTIVITY_TYPES.BUSINESS_CARDS,
+      ACTIVITY_TYPES.DOOR_HANGERS,
+    ];
+
+    if (inventoryTypes.includes(formData.activityType)) {
+      if (!formData.inventoryItemId) {
+        setFormError('Select the Inventory Item used for this activity.');
+        return;
+      }
+      if (!formData.inventoryLocationId) {
+        setFormError('Select the inventory location the items are coming from.');
+        return;
+      }
+      const usedQuantity = Number(
+        formData.activityType === ACTIVITY_TYPES.MAILER
+          ? formData.distributedQuantity
+          : formData.quantity
+      );
+      if (!Number.isFinite(usedQuantity) || usedQuantity <= 0) {
+        setFormError('Enter the quantity used for this activity.');
+        return;
+      }
+    }
 
     const errors = validateMarketingActivity(formData);
     if (errors.length > 0) {
@@ -255,7 +317,7 @@ const FieldActivitiesPanel = ({
       <div className={styles.kpiGrid}>
         <ActivityKpi label="Activities" value={summary.totalActivities} helper="Filtered records" />
         <ActivityKpi label="Quantity" value={formatQuantity(summary.totalQuantity)} helper="Pieces / items distributed" />
-        <ActivityKpi label="Spend" value={formatActivityCost(summary.totalCost)} helper="Logged cost" />
+        <ActivityKpi label="Spend" value={formatActivityCost(summary.totalCost)} helper={`Prod ${formatActivityCost(summary.totalProductionCost)} • Dist ${formatActivityCost(summary.totalDistributionCost)}`} />
         <ActivityKpi label="Estimated Reach" value={formatQuantity(summary.totalEstimatedReach)} helper="Optional reach estimate" />
       </div>
 
@@ -394,12 +456,38 @@ const ActivityCard = ({ activity, onEdit, onDelete }) => {
         }}
       >
         <MiniStat label="Type" value={typeMeta.label} />
-        <MiniStat label="Quantity" value={formatQuantity(activity.quantity)} />
-        <MiniStat label="Cost" value={formatActivityCost(activity.cost)} />
+        <MiniStat
+          label={activity.activityType === ACTIVITY_TYPES.MAILER ? 'Distributed' : 'Quantity'}
+          value={formatQuantity(activity.activityType === ACTIVITY_TYPES.MAILER ? (activity.distributedQuantity || activity.quantity) : activity.quantity)}
+        />
+        <MiniStat label="Total Cost" value={formatActivityCost(activity.cost)} />
         <MiniStat label="Reach" value={formatQuantity(activity.estimatedReach)} />
       </div>
 
       <div style={{ color: '#475569', fontWeight: 750, fontSize: 12, lineHeight: 1.45 }}>
+        {activity.inventoryItemId && (
+          <div><strong>Inventory Used:</strong> {formatQuantity(activity.activityType === ACTIVITY_TYPES.MAILER ? (activity.distributedQuantity || activity.quantity) : activity.quantity)} items</div>
+        )}
+        {(Number(activity.productionCost || 0) > 0 || Number(activity.distributionCost || 0) > 0 || Number(activity.otherCost || 0) > 0) && (
+          <div>
+            <strong>Cost Breakdown:</strong>{' '}
+            Production {formatActivityCost(activity.productionCost)} • Distribution {formatActivityCost(activity.distributionCost)} • Other {formatActivityCost(activity.otherCost)}
+          </div>
+        )}
+        {activity.activityType === ACTIVITY_TYPES.MAILER ? (() => {
+          const purchased = Number(activity.purchasedQuantity || 0);
+          const distributed = Number(activity.distributedQuantity || activity.quantity || 0);
+          const production = Number(activity.productionCost || 0);
+          const distribution = Number(activity.distributionCost || 0);
+          const other = Number(activity.otherCost || 0);
+          const productionPerPiece = purchased > 0 ? production / purchased : 0;
+          const runCost = (productionPerPiece * distributed) + distribution + other;
+          return distributed > 0 ? (
+            <div><strong>True Cost / Mailed Piece:</strong> {formatActivityCost(runCost / distributed)}</div>
+          ) : null;
+        })() : (activity.quantity > 0 && activity.cost > 0 && (
+          <div><strong>Cost / Item:</strong> {formatActivityCost(Number(activity.cost) / Number(activity.quantity))}</div>
+        ))}
         {activity.areaDescription && <div><strong>Area:</strong> {activity.areaDescription}</div>}
         {activity.zipCodes?.length > 0 && <div><strong>ZIPs:</strong> {activity.zipCodes.join(', ')}</div>}
         {activity.supervisorName && <div><strong>Supervisor:</strong> {activity.supervisorName}</div>}

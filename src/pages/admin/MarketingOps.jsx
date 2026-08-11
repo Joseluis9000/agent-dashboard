@@ -6,6 +6,7 @@ import styles from './MarketingOps.module.css';
 import MarketingDashboard from './marketing/MarketingDashboard';
 import MarketingLocations from './marketing/MarketingLocations';
 import MarketingActivities from './marketing/MarketingActivities';
+import MarketingInventory from './marketing/MarketingInventory';
 import MarketingCampaigns from './marketing/MarketingCampaigns';
 import MarketingAnalytics from './marketing/MarketingAnalytics';
 import MarketingAssets from './marketing/MarketingAssets';
@@ -33,6 +34,14 @@ const WORKSPACE_SECTIONS = [
     description: 'Mailers, flyers, business cards, gorilla marketing, and proof photos.',
     component: MarketingActivities,
   },
+{
+  key: 'inventory',
+  label: 'Inventory',
+  icon: '📦',
+  description:
+    'Marketing stock, warehouse inventory, office assignments, transfers, and item history.',
+  component: MarketingInventory,
+},
   {
     key: 'campaigns',
     label: 'Campaigns',

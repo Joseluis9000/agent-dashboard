@@ -1,17 +1,20 @@
 // src/pages/admin/marketing/components/CampaignWorkspacePanel.jsx
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import styles from '../../MarketingOps.module.css';
 import { getCampaignWorkspaceData } from '../services/campaignWorkspaceService';
 import { formatCampaignBudget, formatCampaignDate, getCampaignStatusMeta } from '../utils/campaignHelpers';
 import { formatActivityCost, formatActivityDate, formatActivityType, formatQuantity, getActivityTypeMeta } from '../utils/activityHelpers';
+import CampaignTimelinePanel from './CampaignTimelinePanel';
 
 const TABS = [
   { key: 'overview', label: 'Overview' },
   { key: 'activities', label: 'Activities' },
-  { key: 'locations', label: 'Locations' },
+  { key: 'locations', label: 'Offices & Locations' },
+  { key: 'inventory', label: 'Inventory' },
   { key: 'mailers', label: 'Mailers' },
   { key: 'photos', label: 'Photos' },
+  { key: 'history', label: 'History' },
   { key: 'calls', label: 'Calls' },
   { key: 'analytics', label: 'Analytics' },
   { key: 'settings', label: 'Settings' },
@@ -23,24 +26,25 @@ const CampaignWorkspacePanel = ({ campaignId, onBack, onEditCampaign, onNavigate
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const loadWorkspace = async () => {
-    if (!campaignId) return;
-    setIsLoading(true);
-    setError('');
+  const loadWorkspace = useCallback(async () => {
+  if (!campaignId) return;
 
-    try {
-      setWorkspaceData(await getCampaignWorkspaceData(campaignId));
-    } catch (loadError) {
-      console.error('Error loading campaign workspace:', loadError);
-      setError(loadError?.message || 'Could not load campaign workspace.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  setIsLoading(true);
+  setError('');
 
-  useEffect(() => {
-    loadWorkspace();
-  }, [campaignId]);
+  try {
+    setWorkspaceData(await getCampaignWorkspaceData(campaignId));
+  } catch (loadError) {
+    console.error('Error loading campaign workspace:', loadError);
+    setError(loadError?.message || 'Could not load campaign workspace.');
+  } finally {
+    setIsLoading(false);
+  }
+}, [campaignId]);
+
+useEffect(() => {
+  loadWorkspace();
+}, [loadWorkspace]);
 
   const typeBreakdown = useMemo(() => {
     if (!workspaceData?.activitiesByType) return [];
@@ -143,9 +147,11 @@ const CampaignWorkspacePanel = ({ campaignId, onBack, onEditCampaign, onNavigate
 
       {activeTab === 'overview' && <OverviewTab data={workspaceData} typeBreakdown={typeBreakdown} onNavigate={onNavigate} />}
       {activeTab === 'activities' && <ActivitiesTab activities={workspaceData.activities} onNavigate={onNavigate} />}
-      {activeTab === 'locations' && <LocationsTab locations={workspaceData.locations} onNavigate={onNavigate} />}
+      {activeTab === 'locations' && <LocationsTab locations={workspaceData.locations} offices={workspaceData.offices} onNavigate={onNavigate} />}
+      {activeTab === 'inventory' && <InventoryTab data={workspaceData} onNavigate={onNavigate} />}
       {activeTab === 'mailers' && <MailersTab mailerRoutes={workspaceData.mailerRoutes} activities={workspaceData.activities} onNavigate={onNavigate} />}
       {activeTab === 'photos' && <PhotosTab photos={workspaceData.photos} />}
+      {activeTab === 'history' && <CampaignTimelinePanel campaign={campaign} data={workspaceData} />}
       {activeTab === 'calls' && <ComingSoonTab title="Calls" text="Twilio call tracking will plug into this tab after Phase 7. This campaign will show calls, missed calls, average duration, cost per call, and tracking numbers." />}
       {activeTab === 'analytics' && <AnalyticsTab data={workspaceData} typeBreakdown={typeBreakdown} />}
       {activeTab === 'settings' && <SettingsTab campaign={campaign} onEditCampaign={onEditCampaign} />}
@@ -170,7 +176,7 @@ const SectionCard = ({ title, actionLabel, onAction, children }) => (
 const OverviewTab = ({ data, typeBreakdown, onNavigate }) => (
   <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(320px, 0.75fr)', gap: 16 }}>
     <div style={{ display: 'grid', gap: 16 }}>
-      <SectionCard title="Activity Mix" actionLabel="Open Activities" onAction={() => onNavigate?.('activities')}>
+      <SectionCard title="Activity Summary" actionLabel="Open Activities" onAction={() => onNavigate?.('activities')}>
         {typeBreakdown.length === 0 ? <SmallEmpty text="No activities linked to this campaign yet." /> : (
           <div style={{ display: 'grid', gap: 8 }}>{typeBreakdown.map((item) => <ActivityTypeRow key={item.type} item={item} />)}</div>
         )}
@@ -190,6 +196,17 @@ const OverviewTab = ({ data, typeBreakdown, onNavigate }) => (
           </div>
         )}
       </SectionCard>
+      <SectionCard title="Inventory Snapshot" actionLabel="Open Inventory" onAction={() => onNavigate?.('inventory')}>
+        {data.inventoryByItem.length === 0 ? (
+          <SmallEmpty text="No inventory purchases or usage linked to this campaign yet." />
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {data.inventoryByItem.slice(0, 5).map((item) => (
+              <InventoryItemRow key={item.itemId} item={item} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
       <SectionCard title="Recent Photos">
         {data.photos.length === 0 ? <SmallEmpty text="No campaign photos yet." /> : <PhotoGrid photos={data.photos.slice(0, 9)} />}
       </SectionCard>
@@ -205,19 +222,135 @@ const ActivitiesTab = ({ activities, onNavigate }) => (
   </SectionCard>
 );
 
-const LocationsTab = ({ locations, onNavigate }) => (
-  <SectionCard title="Campaign Locations" actionLabel="Open Locations" onAction={() => onNavigate?.('locations')}>
-    {locations.length === 0 ? <SmallEmpty text="No locations linked to this campaign yet." /> : (
-      <div style={{ display: 'grid', gap: 8 }}>
-        {locations.map((location) => (
-          <div key={location.id} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 12, background: '#ffffff', display: 'grid', gap: 4 }}>
-            <strong style={{ color: '#0f172a' }}>📍 {location.name || location.office || 'Marketing Location'}</strong>
-            <small style={{ color: '#64748b', fontWeight: 850 }}>{location.type || 'location'} • {location.office || 'No office'} • {location.city || 'No city'}</small>
-          </div>
-        ))}
+const LocationsTab = ({ locations, offices, onNavigate }) => (
+  <div style={{ display: 'grid', gap: 16 }}>
+    <SectionCard title="Participating Offices">
+      {!offices || offices.length === 0 ? (
+        <SmallEmpty text="No participating offices are linked to this campaign yet." />
+      ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))',
+            gap: 8,
+          }}
+        >
+          {offices.map((office) => (
+            <div
+              key={office}
+              style={{
+                border: '1px solid #bfdbfe',
+                borderRadius: 12,
+                padding: 10,
+                background: '#eff6ff',
+                color: '#1d4ed8',
+                fontWeight: 950,
+              }}
+            >
+              🏢 {office}
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+
+    <SectionCard
+      title="Marketing Locations"
+      actionLabel="Open Locations"
+      onAction={() => onNavigate?.('locations')}
+    >
+      {locations.length === 0 ? (
+        <SmallEmpty text="No billboards, events, sponsorships, DMV video locations, or other marketing locations are linked to this campaign yet." />
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {locations.map((location) => (
+            <div
+              key={location.id}
+              style={{
+                border: '1px solid #e2e8f0',
+                borderRadius: 14,
+                padding: 12,
+                background: '#ffffff',
+                display: 'grid',
+                gap: 4,
+              }}
+            >
+              <strong style={{ color: '#0f172a' }}>
+                📍 {location.name || location.office || 'Marketing Location'}
+              </strong>
+              <small style={{ color: '#64748b', fontWeight: 850 }}>
+                {location.type || 'location'} • {location.office || 'No office'} •{' '}
+                {location.city || 'No city'}
+              </small>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  </div>
+);
+
+const InventoryTab = ({ data, onNavigate }) => (
+  <div style={{ display: 'grid', gap: 16 }}>
+    <SectionCard title="Inventory Financials" actionLabel="Open Inventory" onAction={() => onNavigate?.('inventory')}>
+      <div className={styles.kpiGrid}>
+        <WorkspaceKpi label="Purchased for Campaign" value={formatCampaignBudget(data.summary.campaignInventoryPurchaseCost)} helper={`${formatQuantity(data.summary.inventoryQuantityPurchased)} units purchased`} />
+        <WorkspaceKpi label="Inventory Value Used" value={formatCampaignBudget(data.summary.allocatedInventoryUsedCost)} helper={`${formatQuantity(data.summary.inventoryQuantityUsed)} units consumed`} />
+        <WorkspaceKpi label="Purchase Records" value={data.summary.inventoryPurchaseCount} helper="Dedicated inventory purchases" />
+        <WorkspaceKpi label="Inventory Items" value={data.summary.inventoryItemCount} helper="Purchased or consumed items" />
       </div>
-    )}
-  </SectionCard>
+    </SectionCard>
+
+    <SectionCard title="Inventory by Item">
+      {data.inventoryByItem.length === 0 ? (
+        <SmallEmpty text="No inventory is linked to this campaign yet." />
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {data.inventoryByItem.map((item) => <InventoryItemRow key={item.itemId} item={item} detailed />)}
+        </div>
+      )}
+    </SectionCard>
+
+    <SectionCard title="Purchases Made for This Campaign">
+      {data.inventoryPurchases.length === 0 ? (
+        <SmallEmpty text="No inventory purchases were marked as purchased specifically for this campaign." />
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {data.inventoryPurchases.map((purchase) => (
+            <article key={purchase.batchId} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 12, background: '#fff', display: 'grid', gap: 5 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <strong style={{ color: '#0f172a' }}>📦 {purchase.itemName} {purchase.sku ? `· ${purchase.sku}` : ''}</strong>
+                <strong style={{ color: '#0369a1' }}>{formatCampaignBudget(purchase.totalPurchaseCost)}</strong>
+              </div>
+              <small style={{ color: '#64748b', fontWeight: 850 }}>
+                {purchase.purchaseDate || 'No date'} • Qty {formatQuantity(purchase.quantityPurchased)} • {purchase.destinationName || 'No destination'}{purchase.vendorName ? ` • ${purchase.vendorName}` : ''}
+              </small>
+            </article>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+
+    <SectionCard title="Inventory Consumed by Campaign Activities">
+      {data.inventoryUsage.length === 0 ? (
+        <SmallEmpty text="No inventory consumption has been attributed to this campaign yet." />
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {data.inventoryUsage.map((usage) => (
+            <article key={usage.movementId} style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 12, background: '#fff', display: 'grid', gap: 5 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <strong style={{ color: '#0f172a' }}>📤 {usage.itemName} {usage.sku ? `· ${usage.sku}` : ''}</strong>
+                <strong style={{ color: '#7e22ce' }}>{formatCampaignBudget(usage.allocatedInventoryCost)}</strong>
+              </div>
+              <small style={{ color: '#64748b', fontWeight: 850 }}>
+                Qty {formatQuantity(usage.quantityUsed)} • Avg {formatCampaignBudget(usage.weightedUnitCost)}/unit • From {usage.fromLocationName || 'Unknown'}
+              </small>
+            </article>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  </div>
 );
 
 const MailersTab = ({ mailerRoutes, activities, onNavigate }) => {
@@ -254,10 +387,10 @@ const AnalyticsTab = ({ data, typeBreakdown }) => {
     <div style={{ display: 'grid', gap: 16 }}>
       <SectionCard title="Campaign Analytics Foundation">
         <div className={styles.kpiGrid}>
-          <WorkspaceKpi label="Known Spend" value={formatCampaignBudget(data.summary.knownSpend)} helper="Activities + locations" />
+          <WorkspaceKpi label="Known Spend" value={formatCampaignBudget(data.summary.knownSpend)} helper="Activities + locations + dedicated inventory purchases" />
+          <WorkspaceKpi label="Inventory Purchased" value={formatCampaignBudget(data.summary.campaignInventoryPurchaseCost)} helper="Purchased specifically for campaign" />
+          <WorkspaceKpi label="Inventory Value Used" value={formatCampaignBudget(data.summary.allocatedInventoryUsedCost)} helper="Allocated value consumed" />
           <WorkspaceKpi label="Activity Spend" value={formatActivityCost(spendByActivity)} helper="Field activity cost" />
-          <WorkspaceKpi label="Mailer Cost" value={formatCampaignBudget(data.summary.mailerCost)} helper="Selected EDDM routes" />
-          <WorkspaceKpi label="Pieces" value={formatQuantity(data.summary.mailerPieces)} helper="Selected mailer route pieces" />
         </div>
       </SectionCard>
       <SectionCard title="Coming Next"><SmallEmpty text="Interactive charts, call attribution, USPS live data, and cost-per-call metrics will plug into this workspace." /></SectionCard>
@@ -300,21 +433,120 @@ const ActivityRow = ({ activity }) => {
   );
 };
 
-const MailerRouteRow = ({ route }) => (
-  <article style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 12, background: '#ffffff' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-      <div>
-        <strong style={{ color: '#0f172a' }}>📬 {route.zipCode} • {route.routeId}</strong>
-        <small style={{ display: 'block', color: '#64748b', fontWeight: 850, marginTop: 3 }}>{route.office || 'No office'} • {route.facilityName || 'No facility'}</small>
+const InventoryItemRow = ({ item, detailed = false }) => (
+  <article style={{ border: '1px solid #dbeafe', borderRadius: 14, padding: 11, background: '#f8fbff', display: 'grid', gap: 7 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+      <strong style={{ color: '#0f172a' }}>📦 {item.itemName} {item.sku ? `· ${item.sku}` : ''}</strong>
+      <strong style={{ color: '#0369a1' }}>{formatCampaignBudget(item.purchaseCost)}</strong>
+    </div>
+    <small style={{ color: '#64748b', fontWeight: 850 }}>
+      Purchased {formatQuantity(item.purchasedQuantity)} • Used {formatQuantity(item.usedQuantity)} • Used value {formatCampaignBudget(item.allocatedUsedCost)}
+    </small>
+    {detailed && item.purchasedQuantity > 0 && (
+      <div style={{ height: 7, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${Math.min(100, Math.round((item.usedQuantity / item.purchasedQuantity) * 100))}%`, background: '#0ea5e9' }} />
       </div>
-      <strong style={{ color: '#0f172a' }}>{formatCampaignBudget(route.estimatedTotalCost)}</strong>
+    )}
+  </article>
+);
+
+const ROUTE_TYPE_LABELS = {
+  C: 'City Route',
+  R: 'Rural Route',
+  H: 'Highway Contract Route',
+  B: 'PO Box',
+  G: 'General Delivery',
+};
+
+const MailerRouteRow = ({ route }) => (
+  <article
+    style={{
+      border: '1px solid #e2e8f0',
+      borderRadius: 14,
+      padding: 12,
+      background: '#ffffff',
+      display: 'grid',
+      gap: 10,
+    }}
+  >
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+      }}
+    >
+      <div>
+        <strong style={{ color: '#0f172a' }}>
+          📬 {route.zipCode || 'No ZIP'} • {route.routeId || 'No Route'}
+        </strong>
+        <small
+          style={{
+            display: 'block',
+            color: '#64748b',
+            fontWeight: 850,
+            marginTop: 3,
+          }}
+        >
+          {ROUTE_TYPE_LABELS[route.routeType] || route.routeType || 'Carrier Route'}
+          {' • '}
+          {route.office || 'No office'}
+        </small>
+      </div>
+
+      {route.averageHouseholdIncome > 0 && (
+        <strong style={{ color: '#166534' }}>
+          Avg Income {formatCampaignBudget(route.averageHouseholdIncome)}
+        </strong>
+      )}
     </div>
-    <div className={styles.detailGrid} style={{ marginTop: 10 }}>
-      <div><span>Residential</span><strong>{formatQuantity(route.residentialCount)}</strong></div>
-      <div><span>Business</span><strong>{formatQuantity(route.businessCount)}</strong></div>
-      <div><span>Total Pieces</span><strong>{formatQuantity(route.totalCount)}</strong></div>
-      <div><span>Postage</span><strong>{formatCampaignBudget(route.estimatedPostage)}</strong></div>
+
+    <div className={styles.detailGrid}>
+      <div>
+        <span>Route Type</span>
+        <strong>
+          {route.routeType || '—'}
+          {route.routeType
+            ? ` — ${ROUTE_TYPE_LABELS[route.routeType] || ''}`
+            : ''}
+        </strong>
+      </div>
+
+      <div>
+        <span>Route Number</span>
+        <strong>{route.routeNumber || '—'}</strong>
+      </div>
+
+      <div>
+        <span>Mail Pieces</span>
+        <strong>
+          {formatQuantity(route.mailPieces || route.totalCount)}
+        </strong>
+      </div>
+
+      <div>
+        <span>Avg Household Income</span>
+        <strong>
+          {route.averageHouseholdIncome > 0
+            ? formatCampaignBudget(route.averageHouseholdIncome)
+            : '—'}
+        </strong>
+      </div>
     </div>
+
+    {route.routeNotes && (
+      <p
+        style={{
+          margin: 0,
+          color: '#64748b',
+          fontWeight: 750,
+          fontSize: 12,
+        }}
+      >
+        {route.routeNotes}
+      </p>
+    )}
   </article>
 );
 
