@@ -185,7 +185,19 @@ export const validateMarketingActivity = (activity = {}) => {
   if (!activity.activityType) errors.push('Activity type is required.');
   if (!activity.activityDate) errors.push('Activity date is required.');
   if (Number(activity.quantity || 0) < 0) errors.push('Quantity cannot be negative.');
-  if (Number(activity.cost || 0) < 0) errors.push('Cost cannot be negative.');
+  if (Number(activity.purchasedQuantity || 0) < 0) errors.push('Purchased quantity cannot be negative.');
+  if (Number(activity.distributedQuantity || 0) < 0) errors.push('Distributed quantity cannot be negative.');
+  if (activity.activityType === ACTIVITY_TYPES.MAILER) {
+    const purchased = Number(activity.purchasedQuantity || 0);
+    const distributed = Number(activity.distributedQuantity || 0);
+    if (distributed > purchased && purchased > 0) {
+      errors.push('Distributed quantity cannot be greater than purchased quantity.');
+    }
+  }
+  if (Number(activity.productionCost || 0) < 0) errors.push('Production cost cannot be negative.');
+  if (Number(activity.distributionCost || 0) < 0) errors.push('Distribution cost cannot be negative.');
+  if (Number(activity.otherCost || 0) < 0) errors.push('Other cost cannot be negative.');
+  if (Number(activity.cost || 0) < 0) errors.push('Total cost cannot be negative.');
   return errors;
 };
 

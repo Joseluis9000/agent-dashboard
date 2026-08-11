@@ -613,20 +613,7 @@ const formatDateTime = (value) => {
   return parsed.toLocaleString();
 };
 
-const formatShortDateTime = (value) => {
-  if (!value || value === '—') return '—';
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-
-  return parsed.toLocaleString([], {
-    month: 'numeric',
-    day: 'numeric',
-    year: '2-digit',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-};
 
 const getReportAuditMeta = (report) => {
   if (!report) {

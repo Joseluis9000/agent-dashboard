@@ -11,13 +11,42 @@ import {
   splitOfficeAndMarketingLocations,
 } from '../utils/locationTypeHelpers';
 
+const LegendIcon = ({ src, alt }) => (
+  <img
+    src={src}
+    alt={alt}
+    style={{
+      width: 22,
+      height: 22,
+      objectFit: 'contain',
+      flex: '0 0 auto',
+    }}
+  />
+);
+
+const StatusDot = ({ color }) => (
+  <i
+    style={{
+      width: 9,
+      height: 9,
+      borderRadius: 999,
+      background: color,
+      display: 'inline-block',
+      flex: '0 0 auto',
+    }}
+  />
+);
+
 const Legend = () => (
   <div className={styles.legend}>
-    <span><i className={styles.blueDot} /> Office Location</span>
-    <span><i className={styles.greenDot} /> Active billboard</span>
-    <span><i className={styles.yellowDot} /> Renewal soon</span>
-    <span><i className={styles.redDot} /> Expired</span>
-    <span><i className={styles.purpleDot} /> Event / Sponsorship</span>
+    <span><LegendIcon src="/marketing-icons/office.png" alt="" /> Office Location</span>
+    <span><LegendIcon src="/marketing-icons/billboard.png" alt="" /> Billboard</span>
+    <span><LegendIcon src="/marketing-icons/dmv.png" alt="" /> DMV Video Location</span>
+    <span style={{ marginTop: 3, paddingTop: 7, borderTop: '1px solid #e2e8f0' }}>
+      <StatusDot color="#22c55e" /> Active
+    </span>
+    <span><StatusDot color="#d97706" /> Renewal Soon</span>
+    <span><StatusDot color="#ef4444" /> Expired</span>
   </div>
 );
 
@@ -26,6 +55,13 @@ const SelectedMapBadge = ({ selectedLocation }) => {
 
   const status = getStatusMeta(selectedLocation.status);
   const isOffice = isOfficeLocation(selectedLocation);
+  const selectedIcon = isOffice
+    ? '/marketing-icons/office.png'
+    : selectedLocation.type === 'dmv_video'
+      ? '/marketing-icons/dmv.png'
+      : selectedLocation.type === 'billboard'
+        ? '/marketing-icons/billboard.png'
+        : null;
 
   return (
     <div
@@ -46,15 +82,37 @@ const SelectedMapBadge = ({ selectedLocation }) => {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: 999,
-            background: isOffice ? '#0ea5e9' : status.color,
-            flex: '0 0 auto',
-          }}
-        />
+        {selectedIcon ? (
+          <span
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              border: `3px solid ${isOffice ? '#0ea5e9' : status.color}`,
+              background: '#ffffff',
+              display: 'grid',
+              placeItems: 'center',
+              flex: '0 0 auto',
+              boxShadow: '0 4px 12px rgba(15,23,42,0.14)',
+            }}
+          >
+            <img
+              src={selectedIcon}
+              alt=""
+              style={{ width: 24, height: 24, objectFit: 'contain' }}
+            />
+          </span>
+        ) : (
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 999,
+              background: isOffice ? '#0ea5e9' : status.color,
+              flex: '0 0 auto',
+            }}
+          />
+        )}
         <strong style={{ color: '#0f172a', fontSize: 13, lineHeight: 1.2 }}>
           {selectedLocation.name || selectedLocation.office || 'Selected Location'}
         </strong>
@@ -106,6 +164,7 @@ const ActiveFilterPill = ({ activeLocationGroupFilter, activeAssetTypeFilter }) 
     billboard: 'Billboards',
     event: 'Events',
     sponsorship: 'Sponsorships',
+    dmv_video: 'DMV Video',
   }[activeAssetTypeFilter] || 'All Asset Types';
 
   return (

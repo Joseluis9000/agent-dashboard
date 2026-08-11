@@ -1,8 +1,6 @@
 // src/pages/admin/marketing/components/CampaignTimelinePanel.jsx
 
-import React, { useEffect, useMemo, useState } from 'react';
-import styles from '../../MarketingOps.module.css';
-import { getCampaignRollup } from '../services/campaignService';
+import React, { useMemo, useState } from 'react';
 import {
   formatActivityCost,
   formatActivityType,
@@ -15,6 +13,8 @@ const TYPE_META = {
   campaign: { icon: '🎯', color: '#0369a1', background: '#eff6ff', border: '#bfdbfe' },
   location: { icon: '📍', color: '#166534', background: '#ecfdf5', border: '#bbf7d0' },
   activity: { icon: '🏃', color: '#7e22ce', background: '#faf5ff', border: '#e9d5ff' },
+  inventory_purchase: { icon: '📦', color: '#0f766e', background: '#f0fdfa', border: '#99f6e4' },
+  inventory_usage: { icon: '📤', color: '#7c3aed', background: '#f5f3ff', border: '#ddd6fe' },
   photo: { icon: '📸', color: '#92400e', background: '#fffbeb', border: '#fde68a' },
   renewal: { icon: '🔁', color: '#be123c', background: '#fff1f2', border: '#fecdd3' },
 };
@@ -22,8 +22,10 @@ const TYPE_META = {
 const FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'campaign', label: 'Campaign' },
-  { value: 'location', label: 'Locations' },
   { value: 'activity', label: 'Activities' },
+  { value: 'inventory_purchase', label: 'Inventory Purchases' },
+  { value: 'inventory_usage', label: 'Inventory Used' },
+  { value: 'location', label: 'Locations' },
   { value: 'photo', label: 'Photos' },
   { value: 'renewal', label: 'Renewals' },
 ];
@@ -54,7 +56,7 @@ const getSortDate = (item) => {
 const photoTypeLabel = (type = '') =>
   String(type || 'photo').replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 
-const buildTimelineItems = ({ campaign, rollup }) => {
+const buildTimelineItems = ({ campaign, data }) => {
   const items = [];
 
   if (campaign?.startDate) {
@@ -79,135 +81,258 @@ const buildTimelineItems = ({ campaign, rollup }) => {
     });
   }
 
-  (rollup.locations || []).forEach((location) => {
-    if (location.created_at) {
+  (data.locations || []).forEach((location) => {
+    const createdDate =
+      location.createdAt ||
+      location.created_at ||
+      '';
+
+    const contractStart =
+      location.contractStart ||
+      location.contract_start ||
+      '';
+
+    const contractEnd =
+      location.contractEnd ||
+      location.contract_end ||
+      '';
+
+    const renewalDate =
+      location.renewalDate ||
+      location.renewal_date ||
+      '';
+
+    const monthlyCost =
+      location.monthlyCost ??
+      location.monthly_cost ??
+      0;
+
+    const vendorName =
+      location.vendorName ||
+      location.vendor ||
+      '';
+
+    if (createdDate) {
       items.push({
         id: `location-created-${location.id}`,
         type: 'location',
-        date: location.created_at,
-        title: location.name || location.office || 'Marketing Location Added',
-        subtitle: [location.type, location.office, location.city].filter(Boolean).join(' • '),
+        date: createdDate,
+        title:
+          location.name ||
+          location.office ||
+          'Marketing Location Added',
+        subtitle: [
+          location.type,
+          location.office,
+          location.city,
+        ]
+          .filter(Boolean)
+          .join(' • '),
         details: [
-          location.vendor ? `Vendor: ${location.vendor}` : '',
-          location.monthly_cost ? `Monthly: ${formatCampaignBudget(location.monthly_cost)}` : '',
-        ].filter(Boolean).join(' • '),
+          vendorName ? `Vendor: ${vendorName}` : '',
+          Number(monthlyCost || 0) > 0
+            ? `Monthly: ${formatCampaignBudget(monthlyCost)}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' • '),
       });
     }
 
-    if (location.contract_start) {
+    if (contractStart) {
       items.push({
         id: `location-contract-start-${location.id}`,
         type: 'location',
-        date: location.contract_start,
+        date: contractStart,
         title: 'Location Contract Started',
-        subtitle: location.name || location.office || 'Marketing Location',
-        details: location.vendor || '',
+        subtitle:
+          location.name ||
+          location.office ||
+          'Marketing Location',
+        details: vendorName,
       });
     }
 
-    if (location.contract_end) {
+    if (contractEnd) {
       items.push({
         id: `location-contract-end-${location.id}`,
         type: 'renewal',
-        date: location.contract_end,
+        date: contractEnd,
         title: 'Location Contract Ends',
-        subtitle: location.name || location.office || 'Marketing Location',
+        subtitle:
+          location.name ||
+          location.office ||
+          'Marketing Location',
         details: 'Review renewal or replacement plan.',
       });
     }
 
-    if (location.renewal_date) {
+    if (renewalDate) {
       items.push({
         id: `location-renewal-${location.id}`,
         type: 'renewal',
-        date: location.renewal_date,
+        date: renewalDate,
         title: 'Renewal Date',
-        subtitle: location.name || location.office || 'Marketing Location',
-        details: location.vendor || '',
+        subtitle:
+          location.name ||
+          location.office ||
+          'Marketing Location',
+        details: vendorName,
       });
     }
   });
 
-  (rollup.activities || []).forEach((activity) => {
-    const typeMeta = getActivityTypeMeta(activity.activity_type);
+  (data.activities || []).forEach((activity) => {
+    const activityType =
+      activity.activityType ||
+      activity.activity_type ||
+      'other';
+
+    const activityDate =
+      activity.activityDate ||
+      activity.activity_date ||
+      activity.createdAt ||
+      activity.created_at ||
+      '';
+
+    const campaignName =
+      activity.campaignName ||
+      activity.campaign_name ||
+      '';
+
+    const estimatedReach =
+      activity.estimatedReach ??
+      activity.estimated_reach ??
+      0;
+
+    const typeMeta = getActivityTypeMeta(activityType);
 
     items.push({
       id: `activity-${activity.id}`,
       type: 'activity',
-      date: activity.activity_date || activity.created_at,
-      title: activity.campaign_name || formatActivityType(activity.activity_type),
-      subtitle: [typeMeta.label, activity.office, activity.city].filter(Boolean).join(' • '),
+      date: activityDate,
+      title:
+        campaignName ||
+        formatActivityType(activityType),
+      subtitle: [
+        typeMeta.label,
+        activity.office,
+        activity.city,
+      ]
+        .filter(Boolean)
+        .join(' • '),
       details: [
-        activity.quantity ? `Qty: ${formatQuantity(activity.quantity)}` : '',
-        activity.cost ? `Cost: ${formatActivityCost(activity.cost)}` : '',
-        activity.estimated_reach ? `Reach: ${formatQuantity(activity.estimated_reach)}` : '',
+        Number(activity.quantity || 0) > 0
+          ? `Qty: ${formatQuantity(activity.quantity)}`
+          : '',
+        Number(activity.cost || 0) > 0
+          ? `Cost: ${formatActivityCost(activity.cost)}`
+          : '',
+        Number(estimatedReach || 0) > 0
+          ? `Reach: ${formatQuantity(estimatedReach)}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' • '),
+    });
+  });
+
+  (data.inventoryPurchases || []).forEach((purchase) => {
+    items.push({
+      id: `inventory-purchase-${purchase.batchId}`,
+      type: 'inventory_purchase',
+      date: purchase.purchaseDate,
+      title: purchase.itemName || 'Inventory Purchase',
+      subtitle: [
+        purchase.sku,
+        purchase.destinationName,
+        purchase.vendorName,
+      ].filter(Boolean).join(' • '),
+      details: [
+        purchase.quantityPurchased ? `Purchased: ${formatQuantity(purchase.quantityPurchased)}` : '',
+        purchase.totalPurchaseCost ? `Cost: ${formatCampaignBudget(purchase.totalPurchaseCost)}` : '',
+        purchase.invoiceNumber ? `Invoice: ${purchase.invoiceNumber}` : '',
       ].filter(Boolean).join(' • '),
     });
   });
 
-  (rollup.locationPhotos || []).forEach((photo) => {
+  (data.inventoryUsage || []).forEach((usage) => {
     items.push({
-      id: `location-photo-${photo.id}`,
-      type: 'photo',
-      date: photo.created_at,
-      title: photo.title || photoTypeLabel(photo.photo_type),
-      subtitle: `Location Photo • ${photoTypeLabel(photo.photo_type)}`,
-      details: photo.description || '',
-      image: photo.photo_url,
-      href: photo.photo_url,
+      id: `inventory-usage-${usage.movementId}`,
+      type: 'inventory_usage',
+      date: usage.movementDate,
+      title: usage.itemName || 'Inventory Used',
+      subtitle: [
+        usage.sku,
+        usage.fromLocationName ? `From ${usage.fromLocationName}` : '',
+      ].filter(Boolean).join(' • '),
+      details: [
+        usage.quantityUsed ? `Used: ${formatQuantity(usage.quantityUsed)}` : '',
+        usage.allocatedInventoryCost
+          ? `Allocated value: ${formatCampaignBudget(usage.allocatedInventoryCost)}`
+          : '',
+        usage.distributionCost
+          ? `Distribution: ${formatCampaignBudget(usage.distributionCost)}`
+          : '',
+      ].filter(Boolean).join(' • '),
     });
   });
 
-  (rollup.activityPhotos || []).forEach((photo) => {
+  const normalizedPhotos = Array.isArray(data.photos)
+    ? data.photos
+    : [
+        ...(data.locationPhotos || []).map((photo) => ({
+          ...photo,
+          source: photo.source || 'location',
+        })),
+        ...(data.activityPhotos || []).map((photo) => ({
+          ...photo,
+          source: photo.source || 'activity',
+        })),
+      ];
+
+  normalizedPhotos.forEach((photo) => {
+    const photoType =
+      photo.photoType ||
+      photo.photo_type ||
+      'photo';
+
+    const photoDate =
+      photo.createdAt ||
+      photo.created_at ||
+      '';
+
+    const photoUrl =
+      photo.photoUrl ||
+      photo.photo_url ||
+      '';
+
+    const sourceLabel =
+      photo.source === 'activity'
+        ? 'Activity Photo'
+        : photo.source === 'location'
+          ? 'Location Photo'
+          : 'Campaign Photo';
+
     items.push({
-      id: `activity-photo-${photo.id}`,
+      id: `${photo.source || 'photo'}-photo-${photo.id}`,
       type: 'photo',
-      date: photo.created_at,
-      title: photo.title || photoTypeLabel(photo.photo_type),
-      subtitle: `Activity Photo • ${photoTypeLabel(photo.photo_type)}`,
+      date: photoDate,
+      title: photo.title || photoTypeLabel(photoType),
+      subtitle: `${sourceLabel} • ${photoTypeLabel(photoType)}`,
       details: photo.description || '',
-      image: photo.photo_url,
-      href: photo.photo_url,
+      image: photoUrl,
+      href: photoUrl,
     });
   });
 
   return items.sort((a, b) => getSortDate(b) - getSortDate(a));
 };
 
-const CampaignTimelinePanel = ({ campaign }) => {
-  const [rollup, setRollup] = useState({ locations: [], activities: [], locationPhotos: [], activityPhotos: [] });
+const CampaignTimelinePanel = ({ campaign, data }) => {
   const [filter, setFilter] = useState('all');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadRollup = async () => {
-      if (!campaign?.id) return;
-
-      setIsLoading(true);
-      setError('');
-
-      try {
-        const nextRollup = await getCampaignRollup(campaign.id);
-        if (isMounted) setRollup(nextRollup);
-      } catch (timelineError) {
-        console.error('Error loading campaign timeline:', timelineError);
-        if (isMounted) setError(timelineError?.message || 'Could not load campaign timeline.');
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
-    loadRollup();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [campaign?.id]);
-
-  const allItems = useMemo(() => buildTimelineItems({ campaign, rollup }), [campaign, rollup]);
+  const allItems = useMemo(() => buildTimelineItems({ campaign, data: data || {} }), [campaign, data]);
 
   const timelineItems = useMemo(() => {
     if (filter === 'all') return allItems;
@@ -233,20 +358,12 @@ const CampaignTimelinePanel = ({ campaign }) => {
 
   if (!campaign) return null;
 
-  if (isLoading) {
-    return <div className={styles.emptyState}>Loading campaign timeline...</div>;
-  }
-
-  if (error) {
-    return <div className={styles.errorBanner}>{error}</div>;
-  }
-
   return (
     <section style={{ display: 'grid', gap: 12 }}>
       <div>
-        <h3 style={{ margin: 0 }}>Campaign Timeline</h3>
+        <h3 style={{ margin: 0 }}>Campaign History</h3>
         <p style={{ margin: '4px 0 0', color: '#64748b', fontWeight: 800, fontSize: 12 }}>
-          Chronological history of campaign dates, linked locations, activities, renewals, and photos.
+          Complete chronological history of campaign activity, inventory purchases and usage, locations, renewals, and photos.
         </p>
       </div>
 
@@ -275,7 +392,7 @@ const CampaignTimelinePanel = ({ campaign }) => {
 
       {timelineItems.length === 0 ? (
         <div style={{ border: '1px dashed #cbd5e1', borderRadius: 14, background: '#f8fafc', padding: 16, color: '#64748b', fontWeight: 850, textAlign: 'center' }}>
-          No campaign timeline activity yet.
+          No campaign history yet.
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 14 }}>
