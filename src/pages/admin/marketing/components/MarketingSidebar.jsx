@@ -121,13 +121,16 @@ const MarketingSidebar = ({
   onDeleteRelatedRow,
   onPhotosChange,
   onAddMediaCampaign,
+  onUpdateMediaCampaign,
   onDeleteMediaCampaign,
+  vendorOptions = [],
   coverageRadiusMiles = 25,
 }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [showRenewalForm, setShowRenewalForm] = useState(false);
   const [renewalSaving, setRenewalSaving] = useState(false);
   const [renewalError, setRenewalError] = useState('');
+  const [contractFormMode, setContractFormMode] = useState('renewal');
   const [renewalForm, setRenewalForm] = useState({
     vendor: '',
     contractNumber: '',
@@ -137,6 +140,7 @@ const MarketingSidebar = ({
     monthlyCost: '',
     annualCost: '',
     contractPdf: '',
+    contractFile: null,
     signedBy: '',
     status: 'active',
     notes: '',
@@ -216,26 +220,6 @@ const MarketingSidebar = ({
           </span>
         </div>
 
-        {!isOffice && (
-          <div className={styles.detailsActions}>
-            <button
-              type="button"
-              className={styles.primaryBtn}
-              onClick={() => onEdit?.(selectedLocation)}
-            >
-              Edit
-            </button>
-
-            <button
-              type="button"
-              className={styles.dangerBtn}
-              onClick={() => onDelete?.(selectedLocation)}
-            >
-              Delete
-            </button>
-          </div>
-        )}
-
         <div
           style={{
             display: 'flex',
@@ -277,7 +261,11 @@ const MarketingSidebar = ({
               onLocationSelect={onLocationSelect}
             />
           ) : (
-            <MarketingAssetOverview location={selectedLocation} />
+            <MarketingAssetOverview
+              location={selectedLocation}
+              photos={related.photos || []}
+              campaigns={related.mediaCampaigns || []}
+            />
           ))}
 
         {activeTab === 'campaigns' && isMediaPlacement && (
@@ -285,6 +273,7 @@ const MarketingSidebar = ({
             location={selectedLocation}
             campaigns={related.mediaCampaigns || []}
             onAddMediaCampaign={onAddMediaCampaign}
+            onUpdateMediaCampaign={onUpdateMediaCampaign}
             onDeleteMediaCampaign={onDeleteMediaCampaign}
           />
         )}
@@ -305,6 +294,9 @@ const MarketingSidebar = ({
               setRenewalSaving={setRenewalSaving}
               renewalError={renewalError}
               setRenewalError={setRenewalError}
+              contractFormMode={contractFormMode}
+              setContractFormMode={setContractFormMode}
+              vendorOptions={vendorOptions}
             />
           ))}
 
@@ -312,7 +304,7 @@ const MarketingSidebar = ({
           (isOffice ? (
             <OfficeContractsPlaceholder />
           ) : (
-            <ContractHistory contracts={related.contracts || []} />
+            <ContractHistory location={selectedLocation} contracts={related.contracts || []} />
           ))}
 
         {activeTab === 'photos' && (
@@ -348,6 +340,48 @@ const MarketingSidebar = ({
             selectedLocation={selectedLocation}
             onLocationSelect={onLocationSelect}
           />
+        )}
+
+        {!isOffice && (
+          <section
+            style={{
+              marginTop: 8,
+              paddingTop: 14,
+              borderTop: '1px solid #e2e8f0',
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            <small
+              style={{
+                color: '#94a3b8',
+                fontWeight: 900,
+                fontSize: 10,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              Location Actions
+            </small>
+
+            <div className={styles.detailsActions} style={{ margin: 0 }}>
+              <button
+                type="button"
+                className={styles.secondaryBtn}
+                onClick={() => onEdit?.(selectedLocation)}
+              >
+                Edit Location
+              </button>
+
+              <button
+                type="button"
+                className={styles.dangerBtn}
+                onClick={() => onDelete?.(selectedLocation)}
+              >
+                Delete Location
+              </button>
+            </div>
+          </section>
         )}
       </div>
     </aside>
@@ -467,71 +501,135 @@ const OfficeOverview = ({
   );
 };
 
-const MarketingAssetOverview = ({ location }) => {
+const MarketingAssetOverview = ({ location, photos = [], campaigns = [] }) => {
   const mediaMeta = MEDIA_TYPE_META[location.type] || null;
+  const primaryPhoto =
+    photos.find((photo) => photo.isPrimary || photo.is_primary) || null;
+  const primaryPhotoUrl =
+    primaryPhoto?.photoUrl || primaryPhoto?.photo_url || primaryPhoto?.url || '';
+
+  const sortedCampaigns = [...campaigns].sort((a, b) => {
+    if (a.status === 'active' && b.status !== 'active') return -1;
+    if (a.status !== 'active' && b.status === 'active') return 1;
+
+    return String(b.start_date || b.created_at || '').localeCompare(
+      String(a.start_date || a.created_at || '')
+    );
+  });
+
+  const primaryCampaign = sortedCampaigns[0] || null;
+
+  const primaryCampaignVideo =
+    location.type === 'dmv_video'
+      ? (primaryCampaign?.mediaAssets || []).find(
+          (asset) => asset.asset_type === 'video' && asset.file_url
+        ) || null
+      : null;
 
   return (
-  <div style={{ display: 'grid', gap: 14 }}>
-    {mediaMeta && (
+    <div style={{ display: 'grid', gap: 14 }}>
       <div
         style={{
-          border: mediaMeta.areaOnly ? '1px solid #ddd6fe' : '1px solid #bae6fd',
-          background: mediaMeta.areaOnly ? '#f5f3ff' : '#f0f9ff',
-          borderRadius: 12,
-          padding: 10,
-          display: 'flex',
-          gap: 9,
-          alignItems: 'flex-start',
+          height: 210,
+          borderRadius: 14,
+          overflow: 'hidden',
+          border: '1px solid #e2e8f0',
+          background: '#f8fafc',
+          display: 'grid',
+          placeItems: 'center',
         }}
       >
-        <span style={{ fontSize: 20 }}>{mediaMeta.icon}</span>
-        <div>
-          <strong style={{ display: 'block', color: '#0f172a', fontSize: 12 }}>
-            {mediaMeta.label}
-          </strong>
-          <small style={{ color: '#64748b', fontWeight: 800, lineHeight: 1.45 }}>
-            {mediaMeta.areaOnly
-              ? 'Area-based advertising. This record is managed from List/Campaigns and does not create a fake map pin.'
-              : 'Physical advertising location. This record can be shown on the map when coordinates are available.'}
-          </small>
+        {primaryCampaignVideo ? (
+          <video
+            src={primaryCampaignVideo.file_url}
+            controls
+            preload="metadata"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              display: 'block',
+              background: '#0f172a',
+            }}
+          />
+        ) : primaryPhotoUrl ? (
+          <img
+            src={primaryPhotoUrl}
+            alt={`${location.name || 'Marketing location'} primary`}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              display: 'block',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              padding: 18,
+              textAlign: 'center',
+              color: '#94a3b8',
+              fontWeight: 850,
+              fontSize: 12,
+            }}
+          >
+            {location.type === 'dmv_video'
+              ? 'No campaign video uploaded.'
+              : 'No primary photo uploaded.'}
+          </div>
+        )}
+      </div>
+
+      {mediaMeta && (
+        <div style={{ border: mediaMeta.areaOnly ? '1px solid #ddd6fe' : '1px solid #bae6fd', background: mediaMeta.areaOnly ? '#f5f3ff' : '#f0f9ff', borderRadius: 12, padding: 10, display: 'flex', gap: 9, alignItems: 'flex-start' }}>
+          <span style={{ fontSize: 20 }}>{mediaMeta.icon}</span>
+          <div>
+            <strong style={{ display: 'block', color: '#0f172a', fontSize: 12 }}>{mediaMeta.label}</strong>
+            <small style={{ color: '#64748b', fontWeight: 800, lineHeight: 1.45 }}>
+              {mediaMeta.areaOnly
+                ? 'Area-based advertising. This record is managed from List/Campaigns and does not create a fake map pin.'
+                : 'Physical advertising location. This record can be shown on the map when coordinates are available.'}
+            </small>
+          </div>
         </div>
-      </div>
-    )}
+      )}
 
-    <div className={styles.detailGrid}>
-      <div>
-        <span>Type</span>
-        <strong>{getDisplayTypeLabel(location.type)}</strong>
+      <div className={styles.detailGrid}>
+        <div><span>Type</span><strong>{getDisplayTypeLabel(location.type)}</strong></div>
+        <div><span>Status</span><strong>{location.status || '—'}</strong></div>
+        <div><span>Office</span><strong>{location.office || '—'}</strong></div>
+        <div><span>Region</span><strong>{location.region || '—'}</strong></div>
+        <div><span>Vendor</span><strong>{location.vendor || '—'}</strong></div>
+        <div><span>Monthly Cost</span><strong>{formatMoney(location.monthlyCost || location.eventCost || 0)}</strong></div>
+        <div><span>Contract Start</span><strong>{formatDate(location.contractStart)}</strong></div>
+        <div><span>Contract End</span><strong>{formatDate(location.contractEnd)}</strong></div>
+        <div><span>Renewal Date</span><strong>{formatDate(location.renewalDate)}</strong></div>
+        <div><span>Traffic / Impressions</span><strong>{location.traffic || '—'}</strong></div>
+        <div>
+  <span>Billboard Size</span>
+  <strong>
+    {location.billboardWidth && location.billboardHeight
+      ? `${location.billboardWidth} ${location.billboardSizeUnit || 'ft'} × ${location.billboardHeight} ${location.billboardSizeUnit || 'ft'}`
+      : '—'}
+  </strong>
+</div>
+        <div><span>Placement Type</span><strong>{location.placementType || '—'}</strong></div>
+        <div>
+  <span>Coordinates</span>
+  <strong>
+    {Number.isFinite(Number(location.lat)) &&
+    Number.isFinite(Number(location.lng))
+      ? `${Number(location.lat).toFixed(6)}, ${Number(location.lng).toFixed(6)}`
+      : '—'}
+  </strong>
+</div>
+        <div className={styles.fullWidth}><span>Campaign</span><strong>{location.campaign || '—'}</strong></div>
       </div>
-      <div>
-        <span>Status</span>
-        <strong>{location.status || '—'}</strong>
-      </div>
-      <div>
-        <span>Office</span>
-        <strong>{location.office || '—'}</strong>
-      </div>
-      <div>
-        <span>Region</span>
-        <strong>{location.region || '—'}</strong>
-      </div>
-      <div>
-        <span>Monthly / Event Cost</span>
-        <strong>
-          {formatMoney(location.monthlyCost || location.eventCost || 0)}
-        </strong>
-      </div>
-      <div>
-        <span>Campaign</span>
-        <strong>{location.campaign || '—'}</strong>
-      </div>
+
+      {location.notes && <p className={styles.notes}>{location.notes}</p>}
     </div>
-
-    {location.notes && <p className={styles.notes}>{location.notes}</p>}
-  </div>
   );
 };
-
 
 const MEDIA_CAMPAIGN_EMPTY = {
   campaignName: '',
@@ -556,15 +654,67 @@ const MediaCampaignManager = ({
   location,
   campaigns = [],
   onAddMediaCampaign,
+  onUpdateMediaCampaign,
   onDeleteMediaCampaign,
 }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingCampaignId, setEditingCampaignId] = useState(null);
   const [form, setForm] = useState(MEDIA_CAMPAIGN_EMPTY);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const update = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const resetForm = () => {
+    setForm(MEDIA_CAMPAIGN_EMPTY);
+    setEditingCampaignId(null);
+    setShowForm(false);
+    setError('');
+  };
+
+  const openAddForm = () => {
+    setEditingCampaignId(null);
+    setForm(MEDIA_CAMPAIGN_EMPTY);
+    setError('');
+    setShowForm(true);
+  };
+
+  const openEditForm = (campaign) => {
+    setEditingCampaignId(campaign.id);
+    setForm({
+      campaignName: campaign.campaign_name || '',
+      status: campaign.status || 'active',
+      vendor: campaign.vendor || '',
+      startDate: campaign.start_date || '',
+      endDate: campaign.end_date || '',
+      renewalDate: campaign.renewal_date || '',
+      monthlyCost:
+        campaign.monthly_cost === null || campaign.monthly_cost === undefined
+          ? ''
+          : campaign.monthly_cost,
+      totalCost:
+        campaign.total_cost === null || campaign.total_cost === undefined
+          ? ''
+          : campaign.total_cost,
+      contractUrl: campaign.contract_url || '',
+      marketName: campaign.market_name || '',
+      networkName: campaign.network_name || '',
+      spotsPurchased:
+        campaign.spots_purchased === null || campaign.spots_purchased === undefined
+          ? ''
+          : campaign.spots_purchased,
+      areaLabel: campaign.area_label || '',
+      radiusMiles:
+        campaign.radius_miles === null || campaign.radius_miles === undefined
+          ? ''
+          : campaign.radius_miles,
+      notes: campaign.notes || '',
+      files: [],
+    });
+    setError('');
+    setShowForm(true);
   };
 
   const submit = async (event) => {
@@ -577,15 +727,27 @@ const MediaCampaignManager = ({
     }
 
     setSaving(true);
+
     try {
-      await onAddMediaCampaign?.(location.id, {
+      const payload = {
         ...form,
         campaignType: location.type,
-      });
-      setForm(MEDIA_CAMPAIGN_EMPTY);
-      setShowForm(false);
+      };
+
+      if (editingCampaignId) {
+        await onUpdateMediaCampaign?.(location.id, editingCampaignId, payload);
+      } else {
+        await onAddMediaCampaign?.(location.id, payload);
+      }
+
+      resetForm();
     } catch (saveError) {
-      setError(saveError?.message || 'Could not save campaign.');
+      setError(
+        saveError?.message ||
+          (editingCampaignId
+            ? 'Could not update campaign.'
+            : 'Could not save campaign.')
+      );
     } finally {
       setSaving(false);
     }
@@ -594,12 +756,15 @@ const MediaCampaignManager = ({
   const sortedCampaigns = [...campaigns].sort((a, b) => {
     if (a.status === 'active' && b.status !== 'active') return -1;
     if (a.status !== 'active' && b.status === 'active') return 1;
+
     return String(b.start_date || b.created_at || '').localeCompare(
       String(a.start_date || a.created_at || '')
     );
   });
 
-  const activeCount = campaigns.filter((campaign) => campaign.status === 'active').length;
+  const activeCount = campaigns.filter(
+    (campaign) => campaign.status === 'active'
+  ).length;
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -620,6 +785,7 @@ const MediaCampaignManager = ({
                 ? 'TV Commercial Campaigns'
                 : 'Geofencing Campaigns'}
           </strong>
+
           <small style={{ color: '#64748b', fontWeight: 800 }}>
             {campaigns.length} total • {activeCount} active
           </small>
@@ -628,7 +794,13 @@ const MediaCampaignManager = ({
         <button
           type="button"
           className={styles.primaryBtn}
-          onClick={() => setShowForm((current) => !current)}
+          onClick={() => {
+            if (showForm) {
+              resetForm();
+            } else {
+              openAddForm();
+            }
+          }}
         >
           {showForm ? 'Close Form' : '+ Add Campaign'}
         </button>
@@ -646,6 +818,18 @@ const MediaCampaignManager = ({
             gap: 10,
           }}
         >
+          <div>
+            <strong style={{ display: 'block', color: '#0f172a' }}>
+              {editingCampaignId ? 'Edit Campaign' : 'Add Campaign'}
+            </strong>
+
+            {editingCampaignId && (
+              <small style={{ color: '#64748b', fontWeight: 750 }}>
+                Existing creative stays attached. New files selected below will be added to the campaign.
+              </small>
+            )}
+          </div>
+
           {error && <div className={styles.errorBanner}>{error}</div>}
 
           <div className={styles.formGrid}>
@@ -736,6 +920,7 @@ const MediaCampaignManager = ({
                     placeholder="Fresno–Visalia"
                   />
                 </label>
+
                 <label>
                   Station / Network
                   <input
@@ -744,12 +929,15 @@ const MediaCampaignManager = ({
                     placeholder="Univision / KFSN"
                   />
                 </label>
+
                 <label>
                   Spots Purchased
                   <input
                     type="number"
                     value={form.spotsPurchased}
-                    onChange={(event) => update('spotsPurchased', event.target.value)}
+                    onChange={(event) =>
+                      update('spotsPurchased', event.target.value)
+                    }
                   />
                 </label>
               </>
@@ -765,6 +953,7 @@ const MediaCampaignManager = ({
                     placeholder="2 miles around Turlock DMV"
                   />
                 </label>
+
                 <label>
                   Radius (miles)
                   <input
@@ -787,15 +976,21 @@ const MediaCampaignManager = ({
             </label>
 
             <label className={styles.fullWidth}>
-              Videos / Creative Files
+              {editingCampaignId
+                ? 'Add Videos / Creative Files'
+                : 'Videos / Creative Files'}
               <input
                 type="file"
                 accept="video/*,image/*"
                 multiple
-                onChange={(event) => update('files', Array.from(event.target.files || []))}
+                onChange={(event) =>
+                  update('files', Array.from(event.target.files || []))
+                }
               />
               <small style={{ color: '#64748b', fontWeight: 750 }}>
-                You can attach more than one video to the same campaign.
+                {editingCampaignId
+                  ? 'Optional. Any files selected here are added to the existing campaign.'
+                  : 'You can attach more than one video or creative file to the same campaign.'}
               </small>
             </label>
 
@@ -809,9 +1004,32 @@ const MediaCampaignManager = ({
             </label>
           </div>
 
-          <button type="submit" className={styles.primaryBtn} disabled={saving}>
-            {saving ? 'Saving Campaign...' : 'Save Campaign'}
-          </button>
+          <div className={styles.detailsActions}>
+            {editingCampaignId && (
+              <button
+                type="button"
+                className={styles.secondaryBtn}
+                disabled={saving}
+                onClick={resetForm}
+              >
+                Cancel Edit
+              </button>
+            )}
+
+            <button
+              type="submit"
+              className={styles.primaryBtn}
+              disabled={saving}
+            >
+              {saving
+                ? editingCampaignId
+                  ? 'Saving Changes...'
+                  : 'Saving Campaign...'
+                : editingCampaignId
+                  ? 'Save Changes'
+                  : 'Save Campaign'}
+            </button>
+          </div>
         </form>
       )}
 
@@ -820,118 +1038,337 @@ const MediaCampaignManager = ({
           No campaigns have been added to this location yet.
         </div>
       ) : (
-        sortedCampaigns.map((campaign) => (
-          <div
-            key={campaign.id}
-            style={{
-              border: '1px solid #e2e8f0',
-              borderRadius: 14,
-              padding: 12,
-              background: campaign.status === 'active' ? '#f0fdf4' : '#ffffff',
-              display: 'grid',
-              gap: 10,
-            }}
-          >
+        sortedCampaigns.map((campaign) => {
+          const mediaAssets = campaign.mediaAssets || [];
+          const videoCount = mediaAssets.filter(
+            (asset) => asset.asset_type === 'video'
+          ).length;
+          const imageCount = mediaAssets.filter(
+            (asset) => asset.asset_type !== 'video'
+          ).length;
+
+          return (
             <div
+              key={campaign.id}
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
+                border: '1px solid #e2e8f0',
+                borderRadius: 14,
+                padding: 12,
+                background:
+                  campaign.status === 'active' ? '#f0fdf4' : '#ffffff',
+                display: 'grid',
                 gap: 10,
-                alignItems: 'flex-start',
               }}
             >
-              <div>
-                <strong style={{ display: 'block', color: '#0f172a' }}>
-                  {campaign.campaign_name || 'Campaign'}
-                </strong>
-                <small style={{ color: '#64748b', fontWeight: 800 }}>
-                  {formatDate(campaign.start_date)} – {formatDate(campaign.end_date)}
-                </small>
-              </div>
-              <span
+              <div
                 style={{
-                  borderRadius: 999,
-                  padding: '4px 8px',
-                  fontSize: 10,
-                  fontWeight: 950,
-                  background: campaign.status === 'active' ? '#dcfce7' : '#f1f5f9',
-                  color: campaign.status === 'active' ? '#166534' : '#475569',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  alignItems: 'flex-start',
                 }}
               >
-                {campaign.status || '—'}
-              </span>
-            </div>
+                <div>
+                  <strong
+                    style={{
+                      display: 'block',
+                      color: '#0f172a',
+                    }}
+                  >
+                    {campaign.campaign_name || 'Campaign'}
+                  </strong>
 
-            <div className={styles.detailGrid}>
-              <div><span>Vendor</span><strong>{campaign.vendor || '—'}</strong></div>
-              <div><span>Monthly Rate</span><strong>{formatMoney(campaign.monthly_cost)}</strong></div>
-              <div><span>Total Cost</span><strong>{formatMoney(campaign.total_cost)}</strong></div>
-              <div><span>Renewal</span><strong>{formatDate(campaign.renewal_date)}</strong></div>
-              {campaign.market_name && <div><span>Market</span><strong>{campaign.market_name}</strong></div>}
-              {campaign.network_name && <div><span>Network</span><strong>{campaign.network_name}</strong></div>}
-              {campaign.spots_purchased !== null && campaign.spots_purchased !== undefined && (
-                <div><span>Spots Purchased</span><strong>{campaign.spots_purchased}</strong></div>
-              )}
-              {campaign.area_label && <div><span>Target Area</span><strong>{campaign.area_label}</strong></div>}
-              {campaign.radius_miles && <div><span>Radius</span><strong>{campaign.radius_miles} mi</strong></div>}
-            </div>
+                  <small style={{ color: '#64748b', fontWeight: 800 }}>
+                    {formatDate(campaign.start_date)} –{' '}
+                    {formatDate(campaign.end_date)}
+                  </small>
+                </div>
 
-            {(campaign.mediaAssets || []).length > 0 && (
-              <div style={{ display: 'grid', gap: 9 }}>
-                <strong style={{ color: '#0f172a', fontSize: 12 }}>Creative</strong>
-                {(campaign.mediaAssets || []).map((asset) => (
-                  <div key={asset.id} style={{ display: 'grid', gap: 6 }}>
-                    {asset.asset_type === 'video' ? (
-                      <video
-                        src={asset.file_url}
-                        controls
-                        preload="metadata"
-                        style={{ width: '100%', borderRadius: 12, background: '#0f172a' }}
-                      />
-                    ) : (
-                      <img
-                        src={asset.file_url}
-                        alt={asset.title || 'Campaign creative'}
-                        style={{ width: '100%', maxHeight: 260, objectFit: 'contain', borderRadius: 12 }}
-                      />
-                    )}
-                    <small style={{ color: '#64748b', fontWeight: 800 }}>
-                      {asset.title || asset.asset_type}
-                    </small>
-                  </div>
-                ))}
+                <span
+                  style={{
+                    borderRadius: 999,
+                    padding: '4px 8px',
+                    fontSize: 10,
+                    fontWeight: 950,
+                    background:
+                      campaign.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                    color:
+                      campaign.status === 'active' ? '#166534' : '#475569',
+                  }}
+                >
+                  {campaign.status || '—'}
+                </span>
               </div>
-            )}
 
-            {campaign.contract_url && (
-              <a
-                href={campaign.contract_url}
-                target="_blank"
-                rel="noreferrer"
-                className={styles.secondaryBtn}
-                style={{ textDecoration: 'none', width: 'fit-content' }}
+              <div className={styles.detailGrid}>
+                <div>
+                  <span>Vendor</span>
+                  <strong>{campaign.vendor || '—'}</strong>
+                </div>
+
+                <div>
+                  <span>Monthly Rate</span>
+                  <strong>{formatMoney(campaign.monthly_cost)}</strong>
+                </div>
+
+                <div>
+                  <span>Total Cost</span>
+                  <strong>{formatMoney(campaign.total_cost)}</strong>
+                </div>
+
+                <div>
+                  <span>Start Date</span>
+                  <strong>{formatDate(campaign.start_date)}</strong>
+                </div>
+
+                <div>
+                  <span>End Date</span>
+                  <strong>{formatDate(campaign.end_date)}</strong>
+                </div>
+
+                <div>
+                  <span>Renewal Date</span>
+                  <strong>{formatDate(campaign.renewal_date)}</strong>
+                </div>
+
+                <div>
+                  <span>Creative Files</span>
+                  <strong>{mediaAssets.length}</strong>
+                </div>
+
+                <div>
+                  <span>Videos / Images</span>
+                  <strong>
+                    {videoCount} video{videoCount === 1 ? '' : 's'}
+                    {' • '}
+                    {imageCount} image{imageCount === 1 ? '' : 's'}
+                  </strong>
+                </div>
+
+                {campaign.market_name && (
+                  <div>
+                    <span>Market</span>
+                    <strong>{campaign.market_name}</strong>
+                  </div>
+                )}
+
+                {campaign.network_name && (
+                  <div>
+                    <span>Network</span>
+                    <strong>{campaign.network_name}</strong>
+                  </div>
+                )}
+
+                {campaign.spots_purchased !== null &&
+                  campaign.spots_purchased !== undefined && (
+                    <div>
+                      <span>Spots Purchased</span>
+                      <strong>{campaign.spots_purchased}</strong>
+                    </div>
+                  )}
+
+                {campaign.area_label && (
+                  <div>
+                    <span>Target Area</span>
+                    <strong>{campaign.area_label}</strong>
+                  </div>
+                )}
+
+                {campaign.radius_miles !== null &&
+                  campaign.radius_miles !== undefined &&
+                  campaign.radius_miles !== '' && (
+                    <div>
+                      <span>Radius</span>
+                      <strong>{campaign.radius_miles} mi</strong>
+                    </div>
+                  )}
+
+                <div className={styles.fullWidth}>
+                  <span>Campaign Type</span>
+                  <strong>
+                    {getDisplayTypeLabel(
+                      campaign.campaign_type || location.type
+                    )}
+                  </strong>
+                </div>
+              </div>
+
+              {mediaAssets.length > 0 && (
+                <div style={{ display: 'grid', gap: 9 }}>
+                  <strong style={{ color: '#0f172a', fontSize: 12 }}>
+                    Creative
+                  </strong>
+
+                  {mediaAssets.map((asset) => (
+                    <div
+                      key={asset.id}
+                      style={{ display: 'grid', gap: 6 }}
+                    >
+                      {asset.asset_type === 'video' ? (
+                        <video
+                          src={asset.file_url}
+                          controls
+                          preload="metadata"
+                          style={{
+                            width: '100%',
+                            borderRadius: 12,
+                            background: '#0f172a',
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={asset.file_url}
+                          alt={asset.title || 'Campaign creative'}
+                          style={{
+                            width: '100%',
+                            maxHeight: 260,
+                            objectFit: 'contain',
+                            borderRadius: 12,
+                          }}
+                        />
+                      )}
+
+                      <small
+                        style={{
+                          color: '#64748b',
+                          fontWeight: 800,
+                        }}
+                      >
+                        {asset.title || asset.asset_type}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {campaign.contract_url && (
+                <a
+                  href={campaign.contract_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={styles.secondaryBtn}
+                  style={{
+                    textDecoration: 'none',
+                    width: 'fit-content',
+                  }}
+                >
+                  Open Contract
+                </a>
+              )}
+
+              {campaign.notes ? (
+                <div
+                  style={{
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                    borderRadius: 12,
+                    padding: 10,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'block',
+                      color: '#64748b',
+                      fontWeight: 900,
+                      fontSize: 10,
+                      textTransform: 'uppercase',
+                      marginBottom: 5,
+                    }}
+                  >
+                    Notes
+                  </span>
+                  <p className={styles.notes} style={{ margin: 0 }}>
+                    {campaign.notes}
+                  </p>
+                </div>
+              ) : null}
+
+              <div
+                className={styles.detailsActions}
+                style={{ justifyContent: 'flex-start' }}
               >
-                Open Contract
-              </a>
-            )}
+                <button
+                  type="button"
+                  className={styles.secondaryBtn}
+                  onClick={() => openEditForm(campaign)}
+                >
+                  Edit Campaign
+                </button>
 
-            {campaign.notes && <p className={styles.notes}>{campaign.notes}</p>}
-
-            <button
-              type="button"
-              className={styles.dangerBtn}
-              onClick={() => onDeleteMediaCampaign?.(campaign.id)}
-              style={{ width: 'fit-content' }}
-            >
-              Delete Campaign
-            </button>
-          </div>
-        ))
+                <button
+                  type="button"
+                  className={styles.dangerBtn}
+                  onClick={() => onDeleteMediaCampaign?.(campaign.id)}
+                >
+                  Delete Campaign
+                </button>
+              </div>
+            </div>
+          );
+        })
       )}
     </div>
   );
 };
 
+const buildOriginalLocationContract = (location) => {
+  if (!location) return null;
+
+  const hasContractData =
+    !!location.contractStart ||
+    !!location.contractEnd ||
+    !!location.renewalDate ||
+    !!location.vendor ||
+    !!location.contractUrl ||
+    Number(location.monthlyCost || 0) > 0;
+
+  if (!hasContractData) return null;
+
+  return {
+    id: `location-original:${location.id}`,
+    isLocationOriginal: true,
+    vendor: location.vendor || null,
+    contract_number: null,
+    start_date: location.contractStart || null,
+    end_date: location.contractEnd || null,
+    renewal_date: location.renewalDate || null,
+    monthly_cost: Number(location.monthlyCost || 0),
+    annual_cost: Number(location.monthlyCost || 0) * 12,
+    contract_pdf: location.contractUrl || null,
+    signed_by: null,
+    status: 'active',
+    notes: 'Original contract entered with the marketing location.',
+    created_at: location.createdAt || null,
+  };
+};
+
+const contractsMatch = (left, right) => {
+  if (!left || !right) return false;
+
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  const money = (value) => Number(value || 0).toFixed(2);
+
+  return (
+    normalize(left.vendor) === normalize(right.vendor) &&
+    normalize(left.start_date) === normalize(right.start_date) &&
+    normalize(left.end_date) === normalize(right.end_date) &&
+    money(left.monthly_cost) === money(right.monthly_cost)
+  );
+};
+
+const getContractsWithOriginal = (location, contracts = []) => {
+  const originalContract = buildOriginalLocationContract(location);
+  const nextContracts = [...contracts];
+
+  if (
+    originalContract &&
+    !nextContracts.some((contract) => contractsMatch(contract, originalContract))
+  ) {
+    nextContracts.push(originalContract);
+  }
+
+  return nextContracts;
+};
 
 const ContractManagement = ({
   location,
@@ -945,15 +1382,23 @@ const ContractManagement = ({
   setRenewalSaving,
   renewalError,
   setRenewalError,
+  contractFormMode,
+  setContractFormMode,
+  vendorOptions = [],
 }) => {
+  const originalContract = buildOriginalLocationContract(location);
   const sortedContracts = [...contracts].sort((a, b) => {
     const aDate = a.start_date || a.created_at || '';
     const bDate = b.start_date || b.created_at || '';
     return String(bDate).localeCompare(String(aDate));
   });
 
+  const activeDatabaseContract =
+    sortedContracts.find((contract) => contract.status === 'active') || null;
+
   const currentContract =
-    sortedContracts.find((contract) => contract.status === 'active') ||
+    activeDatabaseContract ||
+    originalContract ||
     sortedContracts[0] ||
     null;
 
@@ -962,6 +1407,7 @@ const ContractManagement = ({
   };
 
   const openRenewalForm = () => {
+    setContractFormMode('renewal');
     setRenewalError('');
     setRenewalForm({
       vendor: currentContract?.vendor || location.vendor || '',
@@ -972,6 +1418,7 @@ const ContractManagement = ({
       monthlyCost: currentContract?.monthly_cost ?? location.monthlyCost ?? '',
       annualCost: '',
       contractPdf: '',
+      contractFile: null,
       signedBy: '',
       status: 'active',
       notes: 'Renewed contract',
@@ -979,7 +1426,27 @@ const ContractManagement = ({
     setShowRenewalForm(true);
   };
 
-  const submitRenewal = async (event) => {
+  const openPreviousContractForm = () => {
+    setContractFormMode('previous');
+    setRenewalError('');
+    setRenewalForm({
+      vendor: location.vendor || '',
+      contractNumber: '',
+      startDate: '',
+      endDate: location.contractStart || '',
+      renewalDate: '',
+      monthlyCost: '',
+      annualCost: '',
+      contractPdf: '',
+      contractFile: null,
+      signedBy: '',
+      status: 'expired',
+      notes: 'Previous contract',
+    });
+    setShowRenewalForm(true);
+  };
+
+  const submitContract = async (event) => {
     event.preventDefault();
     setRenewalError('');
 
@@ -989,7 +1456,7 @@ const ContractManagement = ({
     }
 
     if (!renewalForm.monthlyCost && renewalForm.monthlyCost !== 0) {
-      setRenewalError('New monthly rate is required.');
+      setRenewalError('Monthly rate is required.');
       return;
     }
 
@@ -998,12 +1465,17 @@ const ContractManagement = ({
     try {
       await onAddContract?.(location.id, {
         ...renewalForm,
-        status: 'active',
+        status: contractFormMode === 'previous' ? 'expired' : 'active',
       });
 
       setShowRenewalForm(false);
     } catch (error) {
-      setRenewalError(error?.message || 'Could not save the renewal.');
+      setRenewalError(
+        error?.message ||
+          (contractFormMode === 'previous'
+            ? 'Could not save the previous contract.'
+            : 'Could not save the renewal.')
+      );
     } finally {
       setRenewalSaving(false);
     }
@@ -1021,15 +1493,32 @@ const ContractManagement = ({
           gap: 10,
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 10,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <strong style={{ color: '#0f172a' }}>Current Contract</strong>
-          <button
-            type="button"
-            className={styles.primaryBtn}
-            onClick={openRenewalForm}
-          >
-            + Add Renewal
-          </button>
+          <div className={styles.detailsActions} style={{ margin: 0 }}>
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={openPreviousContractForm}
+            >
+              + Add Previous Contract
+            </button>
+            <button
+              type="button"
+              className={styles.primaryBtn}
+              onClick={openRenewalForm}
+            >
+              + Add Renewal
+            </button>
+          </div>
         </div>
 
         {currentContract ? (
@@ -1040,7 +1529,7 @@ const ContractManagement = ({
             </div>
             <div>
               <span>Status</span>
-              <strong>{currentContract.status || '—'}</strong>
+              <strong>{currentContract.status || 'active'}</strong>
             </div>
             <div>
               <span>Start</span>
@@ -1074,7 +1563,7 @@ const ContractManagement = ({
           </div>
         ) : (
           <div className={styles.emptyState} style={{ padding: 12 }}>
-            No contract has been added for this location yet.
+            No contract information has been entered for this location yet.
           </div>
         )}
 
@@ -1088,15 +1577,11 @@ const ContractManagement = ({
             Open Current Contract
           </a>
         )}
-
-        {currentContract?.notes && (
-          <p className={styles.notes}>{currentContract.notes}</p>
-        )}
       </div>
 
       {showRenewalForm && (
         <form
-          onSubmit={submitRenewal}
+          onSubmit={submitContract}
           style={{
             border: '1px solid #bae6fd',
             background: '#f0f9ff',
@@ -1107,9 +1592,22 @@ const ContractManagement = ({
           }}
         >
           <div>
-            <strong style={{ color: '#0f172a' }}>Record Contract Renewal</strong>
-            <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12, fontWeight: 750 }}>
-              Enter the new contract period and rate. The old contract will stay in History.
+            <strong style={{ color: '#0f172a' }}>
+              {contractFormMode === 'previous'
+                ? 'Add Previous Contract'
+                : 'Record Contract Renewal'}
+            </strong>
+            <p
+              style={{
+                margin: '4px 0 0',
+                color: '#64748b',
+                fontSize: 12,
+                fontWeight: 750,
+              }}
+            >
+              {contractFormMode === 'previous'
+                ? 'Add an older contract for this location. It will be saved to History and will not replace the current contract.'
+                : 'Enter the new contract period and rate. The current contract will stay in History.'}
             </p>
           </div>
 
@@ -1122,10 +1620,18 @@ const ContractManagement = ({
           <div className={styles.formGrid}>
             <label>
               Vendor
-              <input
+              <select
                 value={renewalForm.vendor}
                 onChange={(event) => updateField('vendor', event.target.value)}
-              />
+              >
+                <option value="">Select vendor</option>
+                {renewalForm.vendor && !vendorOptions.includes(renewalForm.vendor) && (
+                  <option value={renewalForm.vendor}>{renewalForm.vendor}</option>
+                )}
+                {vendorOptions.map((vendor) => (
+                  <option key={vendor} value={vendor}>{vendor}</option>
+                ))}
+              </select>
             </label>
 
             <label>
@@ -1137,7 +1643,7 @@ const ContractManagement = ({
             </label>
 
             <label>
-              New Start Date
+              {contractFormMode === 'previous' ? 'Start Date' : 'New Start Date'}
               <input
                 type="date"
                 value={renewalForm.startDate}
@@ -1146,7 +1652,7 @@ const ContractManagement = ({
             </label>
 
             <label>
-              New End Date
+              {contractFormMode === 'previous' ? 'End Date' : 'New End Date'}
               <input
                 type="date"
                 value={renewalForm.endDate}
@@ -1155,7 +1661,7 @@ const ContractManagement = ({
             </label>
 
             <label>
-              Next Renewal Date
+              Renewal Date
               <input
                 type="date"
                 value={renewalForm.renewalDate}
@@ -1164,7 +1670,7 @@ const ContractManagement = ({
             </label>
 
             <label>
-              New Monthly Rate
+              Monthly Rate
               <input
                 type="number"
                 step="0.01"
@@ -1192,21 +1698,35 @@ const ContractManagement = ({
             </label>
 
             <label className={styles.fullWidth}>
-              Contract PDF URL
+              Upload Contract PDF
               <input
-                value={renewalForm.contractPdf}
-                onChange={(event) => updateField('contractPdf', event.target.value)}
-                placeholder="https://..."
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) =>
+                  updateField('contractFile', event.target.files?.[0] || null)
+                }
               />
+              {renewalForm.contractFile && (
+                <small style={{ color: '#0369a1', fontWeight: 850 }}>
+                  Selected: {renewalForm.contractFile.name}
+                </small>
+              )}
+              <small style={{ color: '#64748b', fontWeight: 750 }}>
+                PDF only. The file will be stored with this contract automatically.
+              </small>
             </label>
 
             <label className={styles.fullWidth}>
-              Renewal Notes
+              Notes
               <textarea
                 rows={3}
                 value={renewalForm.notes}
                 onChange={(event) => updateField('notes', event.target.value)}
-                placeholder="Renewed for 12 months at $1,450/month..."
+                placeholder={
+                  contractFormMode === 'previous'
+                    ? 'Previous contract details...'
+                    : 'Renewed for 12 months at $1,450/month...'
+                }
               />
             </label>
           </div>
@@ -1226,7 +1746,11 @@ const ContractManagement = ({
               className={styles.primaryBtn}
               disabled={renewalSaving}
             >
-              {renewalSaving ? 'Saving Renewal...' : 'Save Renewal'}
+              {renewalSaving
+                ? 'Saving Contract...'
+                : contractFormMode === 'previous'
+                  ? 'Save Previous Contract'
+                  : 'Save Renewal'}
             </button>
           </div>
         </form>
@@ -1235,8 +1759,8 @@ const ContractManagement = ({
   );
 };
 
-const ContractHistory = ({ contracts }) => {
-  const sortedContracts = [...contracts].sort((a, b) => {
+const ContractHistory = ({ location, contracts }) => {
+  const sortedContracts = getContractsWithOriginal(location, contracts).sort((a, b) => {
     const aDate = a.start_date || a.created_at || '';
     const bDate = b.start_date || b.created_at || '';
     return String(bDate).localeCompare(String(aDate));
@@ -1255,81 +1779,90 @@ const ContractHistory = ({ contracts }) => {
       <div>
         <strong style={{ color: '#0f172a' }}>Contract History</strong>
         <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12, fontWeight: 750 }}>
-          Past contracts stay here when a renewal is added.
+          Original contracts, previous contracts, and renewals are kept here.
         </p>
       </div>
 
-      {sortedContracts.map((contract, index) => (
-        <div
-          key={contract.id}
-          style={{
-            border: '1px solid #e2e8f0',
-            borderRadius: 12,
-            padding: 11,
-            background: contract.status === 'active' ? '#f0fdf4' : '#ffffff',
-            display: 'grid',
-            gap: 8,
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-            <strong>
-              {contract.status === 'active' ? 'Current Contract' : `Previous Contract ${sortedContracts.length - index}`}
-            </strong>
-            <span
-              style={{
-                borderRadius: 999,
-                padding: '3px 8px',
-                fontSize: 10,
-                fontWeight: 950,
-                background: contract.status === 'active' ? '#dcfce7' : '#f1f5f9',
-                color: contract.status === 'active' ? '#166534' : '#475569',
-              }}
-            >
-              {contract.status || '—'}
-            </span>
+      {sortedContracts.map((contract, index) => {
+        const isCurrent = contract.status === 'active';
+        const title = isCurrent
+          ? contract.isLocationOriginal
+            ? 'Original / Current Contract'
+            : 'Current Contract'
+          : contract.isLocationOriginal
+            ? 'Original Contract'
+            : `Previous Contract ${sortedContracts.length - index}`;
+
+        return (
+          <div
+            key={contract.id}
+            style={{
+              border: '1px solid #e2e8f0',
+              borderRadius: 12,
+              padding: 11,
+              background: isCurrent ? '#f0fdf4' : '#ffffff',
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <strong>{title}</strong>
+              <span
+                style={{
+                  borderRadius: 999,
+                  padding: '3px 8px',
+                  fontSize: 10,
+                  fontWeight: 950,
+                  background: isCurrent ? '#dcfce7' : '#f1f5f9',
+                  color: isCurrent ? '#166534' : '#475569',
+                }}
+              >
+                {isCurrent ? 'active' : contract.status || 'expired'}
+              </span>
+            </div>
+
+            <div className={styles.detailGrid}>
+              <div>
+                <span>Start</span>
+                <strong>{formatDate(contract.start_date)}</strong>
+              </div>
+              <div>
+                <span>End</span>
+                <strong>{formatDate(contract.end_date)}</strong>
+              </div>
+              <div>
+                <span>Length</span>
+                <strong>{getContractLengthLabel(contract.start_date, contract.end_date)}</strong>
+              </div>
+              <div>
+                <span>Monthly Rate</span>
+                <strong>{formatMoney(contract.monthly_cost)}</strong>
+              </div>
+              <div>
+                <span>Annual Cost</span>
+                <strong>{formatMoney(contract.annual_cost)}</strong>
+              </div>
+              <div>
+                <span>Vendor</span>
+                <strong>{contract.vendor || '—'}</strong>
+              </div>
+            </div>
+
+            {contract.notes && <p className={styles.notes}>{contract.notes}</p>}
+
+            {contract.contract_pdf && (
+              <a
+                href={contract.contract_pdf}
+                target="_blank"
+                rel="noreferrer"
+                className={styles.contractLink}
+              >
+                Open Contract
+              </a>
+            )}
           </div>
-
-          <div className={styles.detailGrid}>
-            <div>
-              <span>Start</span>
-              <strong>{formatDate(contract.start_date)}</strong>
-            </div>
-            <div>
-              <span>End</span>
-              <strong>{formatDate(contract.end_date)}</strong>
-            </div>
-            <div>
-              <span>Length</span>
-              <strong>{getContractLengthLabel(contract.start_date, contract.end_date)}</strong>
-            </div>
-            <div>
-              <span>Monthly Rate</span>
-              <strong>{formatMoney(contract.monthly_cost)}</strong>
-            </div>
-            <div>
-              <span>Annual Cost</span>
-              <strong>{formatMoney(contract.annual_cost)}</strong>
-            </div>
-            <div>
-              <span>Vendor</span>
-              <strong>{contract.vendor || '—'}</strong>
-            </div>
-          </div>
-
-          {contract.notes && <p className={styles.notes}>{contract.notes}</p>}
-
-          {contract.contract_pdf && (
-            <a
-              href={contract.contract_pdf}
-              target="_blank"
-              rel="noreferrer"
-              className={styles.contractLink}
-            >
-              Open Contract
-            </a>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

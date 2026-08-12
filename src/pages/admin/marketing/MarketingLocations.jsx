@@ -40,6 +40,7 @@ const EMPTY_FORM = {
   graphicText: '',
   graphicUrl: '',
   contractUrl: '',
+  contractFile: null,
   notes: '',
 };
 
@@ -257,6 +258,7 @@ const locationToForm = (item) => ({
   graphicText: item.graphicText || '',
   graphicUrl: item.graphicUrl || '',
   contractUrl: item.contractUrl || '',
+  contractFile: null,
   notes: item.notes || '',
 });
 
@@ -266,8 +268,8 @@ const MarketingLocations = () => {
   const [regionFilter, setRegionFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [locationGroupFilter] = useState('all');
-  const [assetTypeFilter] = useState('all');
+  const [locationGroupFilter, setLocationGroupFilter] = useState('all');
+  const [assetTypeFilter, setAssetTypeFilter] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
 
   const [locations, setLocations] = useState([]);
@@ -627,6 +629,52 @@ const MarketingLocations = () => {
     [filteredLocations, activityTypeMetaByKey]
   );
 
+  const visibleMapLocations = useMemo(() => {
+    return mapLocations.filter((item) => {
+      const isOffice = item.type === 'office';
+      const isBillboard = item.type === 'billboard';
+      const isDmvVideo = item.type === 'dmv_video';
+
+      if (locationGroupFilter === 'offices') {
+        return isOffice;
+      }
+
+      if (locationGroupFilter === 'marketing') {
+        if (!isBillboard && !isDmvVideo) {
+          return false;
+        }
+
+        if (assetTypeFilter === 'billboard') {
+          return isBillboard;
+        }
+
+        if (assetTypeFilter === 'dmv_video') {
+          return isDmvVideo;
+        }
+
+        return true;
+      }
+
+      if (isOffice) {
+        return true;
+      }
+
+      if (!isBillboard && !isDmvVideo) {
+        return false;
+      }
+
+      if (assetTypeFilter === 'billboard') {
+        return isBillboard;
+      }
+
+      if (assetTypeFilter === 'dmv_video') {
+        return isDmvVideo;
+      }
+
+      return true;
+    });
+  }, [mapLocations, locationGroupFilter, assetTypeFilter]);
+
   const areaCampaignLocations = useMemo(
     () =>
       filteredLocations.filter((item) => {
@@ -659,6 +707,21 @@ const MarketingLocations = () => {
 
     return mapLocations[0] || null;
   }, [selectedLocation, mapLocations, activityTypeMetaByKey]);
+
+  const visibleSelectedMapLocation = useMemo(() => {
+    if (selectedMapLocation) {
+      const match = visibleMapLocations.find(
+        (item) => item.id === selectedMapLocation.id
+      );
+
+      if (match) {
+        return match;
+      }
+    }
+
+    return visibleMapLocations[0] || null;
+  }, [selectedMapLocation, visibleMapLocations]);
+
 
   useEffect(() => {
     if (selectedLocation?.id && selectedLocation.id !== selectedId) {
@@ -884,6 +947,47 @@ const MarketingLocations = () => {
     return data?.publicUrl || '';
   };
 
+  const uploadMarketingContractPdf = async (file, locationId = 'unassigned') => {
+    if (!file) return '';
+
+    const fileName = String(file.name || '').toLowerCase();
+    const isPdf =
+      file.type === 'application/pdf' ||
+      fileName.endsWith('.pdf');
+
+    if (!isPdf) {
+      throw new Error('Contract file must be a PDF.');
+    }
+
+    const safeBaseName = String(file.name || 'contract.pdf')
+      .replace(/\.pdf$/i, '')
+      .replace(/[^a-z0-9-_]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+
+    const safeLocationId = String(locationId || 'unassigned')
+      .replace(/[^a-zA-Z0-9-_]+/g, '-');
+
+    const filePath =
+      `contracts/${safeLocationId}/${Date.now()}-${safeBaseName || 'contract'}.pdf`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('marketing-assets')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'application/pdf',
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+      .from('marketing-assets')
+      .getPublicUrl(filePath);
+
+    return data?.publicUrl || '';
+  };
+
   const handleSaveLocation = async (event, submittedFormData = formData) => {
     event.preventDefault();
 
@@ -933,6 +1037,18 @@ const MarketingLocations = () => {
           ...nextFormData,
           photoUrl: uploadedPhotoUrl || nextFormData.photoUrl,
           graphicUrl: uploadedPhotoUrl || nextFormData.graphicUrl,
+        };
+      }
+
+      if (activeFormData.contractFile) {
+        const uploadedContractUrl = await uploadMarketingContractPdf(
+          activeFormData.contractFile,
+          editingLocation?.id || 'new-location'
+        );
+
+        nextFormData = {
+          ...nextFormData,
+          contractUrl: uploadedContractUrl || nextFormData.contractUrl,
         };
       }
 
@@ -1010,6 +1126,10 @@ const MarketingLocations = () => {
   };
 
   const handleAddContract = async (locationId, form) => {
+    const uploadedContractUrl = form.contractFile
+      ? await uploadMarketingContractPdf(form.contractFile, locationId)
+      : form.contractPdf?.trim() || null;
+
     const payload = {
       location_id: locationId,
       vendor: form.vendor?.trim() || null,
@@ -1019,16 +1139,77 @@ const MarketingLocations = () => {
       renewal_date: form.renewalDate || null,
       monthly_cost: Number(form.monthlyCost || 0),
       annual_cost: Number(form.annualCost || 0),
-      contract_pdf: form.contractPdf?.trim() || null,
+      contract_pdf: uploadedContractUrl,
       signed_by: form.signedBy?.trim() || null,
       status: form.status || 'active',
       notes: form.notes?.trim() || null,
     };
 
-    // If this is a renewal/new active contract, close out any prior active
-    // contract rows first so the newest active contract becomes the source
-    // used by the dashboard.
+    // A renewal should preserve the contract that was originally entered on
+    // marketing_locations before replacing it with the new active contract.
     if (payload.status === 'active') {
+      const [{ data: locationRow, error: locationError }, { data: existingContracts, error: contractLoadError }] =
+        await Promise.all([
+          supabase
+            .from('marketing_locations')
+            .select('vendor, contract_start, contract_end, renewal_date, monthly_cost, contract_url')
+            .eq('id', locationId)
+            .maybeSingle(),
+          supabase
+            .from('marketing_contracts')
+            .select('id, vendor, start_date, end_date, monthly_cost')
+            .eq('location_id', locationId),
+        ]);
+
+      if (locationError) throw locationError;
+      if (contractLoadError) throw contractLoadError;
+
+      const originalHasContractData =
+        !!locationRow?.contract_start ||
+        !!locationRow?.contract_end ||
+        !!locationRow?.renewal_date ||
+        !!locationRow?.vendor ||
+        !!locationRow?.contract_url ||
+        Number(locationRow?.monthly_cost || 0) > 0;
+
+      if (originalHasContractData) {
+        const originalAlreadySaved = (existingContracts || []).some((contract) => {
+          const sameVendor =
+            String(contract.vendor || '').trim().toLowerCase() ===
+            String(locationRow.vendor || '').trim().toLowerCase();
+          const sameStart = (contract.start_date || null) === (locationRow.contract_start || null);
+          const sameEnd = (contract.end_date || null) === (locationRow.contract_end || null);
+          const sameMonthly =
+            Number(contract.monthly_cost || 0).toFixed(2) ===
+            Number(locationRow.monthly_cost || 0).toFixed(2);
+
+          return sameVendor && sameStart && sameEnd && sameMonthly;
+        });
+
+        if (!originalAlreadySaved) {
+          const { error: preserveError } = await supabase
+            .from('marketing_contracts')
+            .insert({
+              location_id: locationId,
+              vendor: locationRow.vendor || null,
+              contract_number: null,
+              start_date: locationRow.contract_start || null,
+              end_date: locationRow.contract_end || null,
+              renewal_date: locationRow.renewal_date || null,
+              monthly_cost: Number(locationRow.monthly_cost || 0),
+              annual_cost: Number(locationRow.monthly_cost || 0) * 12,
+              contract_pdf: locationRow.contract_url || null,
+              signed_by: null,
+              status: 'expired',
+              notes: 'Original contract preserved from + Add Marketing before renewal.',
+            });
+
+          if (preserveError) throw preserveError;
+        }
+      }
+
+      // Close any prior active contract rows so the new renewal is the only
+      // active contract in marketing_contracts.
       const { error: closeError } = await supabase
         .from('marketing_contracts')
         .update({ status: 'expired' })
@@ -1044,8 +1225,8 @@ const MarketingLocations = () => {
 
     if (error) throw error;
 
-    // Keep the main marketing_locations record synchronized with the newest
-    // contract so list/map status and pricing also refresh correctly.
+    // Only active contracts replace the main location's current contract.
+    // Historical contracts remain history-only and never change the map card.
     if (payload.status === 'active') {
       const { error: locationUpdateError } = await supabase
         .from('marketing_locations')
@@ -1257,6 +1438,88 @@ const MarketingLocations = () => {
     await fetchLocations();
   };
 
+  const handleUpdateMediaCampaign = async (
+    locationId,
+    campaignId,
+    form
+  ) => {
+    if (!campaignId) {
+      throw new Error('Missing campaign ID.');
+    }
+
+    const payload = {
+      campaign_name: form.campaignName?.trim() || 'Marketing Campaign',
+      campaign_type: form.campaignType || 'dmv_video',
+      status: form.status || 'active',
+      vendor: form.vendor?.trim() || null,
+      start_date: form.startDate || null,
+      end_date: form.endDate || null,
+      renewal_date: form.renewalDate || null,
+      monthly_cost: Number(form.monthlyCost || 0),
+      total_cost: Number(form.totalCost || 0),
+      contract_url: form.contractUrl?.trim() || null,
+      market_name: form.marketName?.trim() || null,
+      network_name: form.networkName?.trim() || null,
+      spots_purchased:
+        form.spotsPurchased === '' ||
+        form.spotsPurchased === null ||
+        form.spotsPurchased === undefined
+          ? null
+          : Number(form.spotsPurchased),
+      area_label: form.areaLabel?.trim() || null,
+      radius_miles:
+        form.radiusMiles === '' ||
+        form.radiusMiles === null ||
+        form.radiusMiles === undefined
+          ? null
+          : Number(form.radiusMiles),
+      notes: form.notes?.trim() || null,
+    };
+
+    const { error } = await supabase
+      .from('marketing_location_campaigns')
+      .update(payload)
+      .eq('id', campaignId)
+      .eq('location_id', locationId);
+
+    if (error) throw error;
+
+    const files = Array.from(form.files || []);
+
+    if (files.length > 0) {
+      const existingAssets =
+        relatedData.mediaCampaigns[locationId]
+          ?.find((campaign) => campaign.id === campaignId)
+          ?.mediaAssets || [];
+
+      const nextSortOrder = existingAssets.length;
+
+      const assetRows = [];
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const fileUrl = await uploadMarketingMediaFile(file, locationId);
+
+        assetRows.push({
+          campaign_id: campaignId,
+          location_id: locationId,
+          asset_type: file.type?.startsWith('video/') ? 'video' : 'image',
+          title: file.name,
+          file_url: fileUrl,
+          sort_order: nextSortOrder + index,
+        });
+      }
+
+      const { error: assetError } = await supabase
+        .from('marketing_location_campaign_assets')
+        .insert(assetRows);
+
+      if (assetError) throw assetError;
+    }
+
+    await fetchLocations();
+  };
+
   const handleDeleteMediaCampaign = async (campaignId) => {
     const confirmed = window.confirm('Delete this campaign and its media assets?');
     if (!confirmed) return;
@@ -1380,6 +1643,86 @@ const MarketingLocations = () => {
           </select>
         </div>
 
+        {viewMode === 'map' && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
+              style={{
+                color: '#64748b',
+                fontSize: 11,
+                fontWeight: 900,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              MAP SHOW
+            </span>
+
+            <div className={styles.viewToggle}>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocationGroupFilter('all');
+                  setAssetTypeFilter('all');
+                }}
+                className={
+                  locationGroupFilter === 'all'
+                    ? styles.activeToggle
+                    : ''
+                }
+              >
+                Both
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setLocationGroupFilter('offices');
+                  setAssetTypeFilter('all');
+                }}
+                className={
+                  locationGroupFilter === 'offices'
+                    ? styles.activeToggle
+                    : ''
+                }
+              >
+                Offices
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLocationGroupFilter('marketing')}
+                className={
+                  locationGroupFilter === 'marketing'
+                    ? styles.activeToggle
+                    : ''
+                }
+              >
+                Marketing
+              </button>
+            </div>
+
+            {locationGroupFilter !== 'offices' && (
+              <select
+                value={assetTypeFilter}
+                onChange={(event) =>
+                  setAssetTypeFilter(event.target.value)
+                }
+                style={{ minWidth: 150 }}
+              >
+                <option value="all">Billboards + DMV</option>
+                <option value="billboard">Billboards Only</option>
+                <option value="dmv_video">DMV Only</option>
+              </select>
+            )}
+          </div>
+        )}
+
         <div className={styles.viewToggle}>
           <button
             type="button"
@@ -1414,8 +1757,8 @@ const MarketingLocations = () => {
           {viewMode === 'map' && (
             <section className={styles.mapLayout}>
               <MarketingMap
-                locations={mapLocations}
-                selectedLocation={selectedMapLocation}
+                locations={visibleMapLocations}
+                selectedLocation={visibleSelectedMapLocation}
                 onLocationSelect={handleSelectLocation}
                 isLoading={isLoading}
             activeLocationGroupFilter={locationGroupFilter}
@@ -1424,9 +1767,22 @@ const MarketingLocations = () => {
               />
 
               <MarketingSidebar
-                selectedLocation={selectedMapLocation}
-                locations={mapLocations}
-                related={mapSelectedRelated}
+                selectedLocation={visibleSelectedMapLocation}
+                locations={visibleMapLocations}
+                related={
+                  visibleSelectedMapLocation?.id === selectedMapLocation?.id
+                    ? mapSelectedRelated
+                    : {
+                        contracts: relatedData.contracts[visibleSelectedMapLocation?.id] || [],
+                        assets: relatedData.assets[visibleSelectedMapLocation?.id] || [],
+                        events: relatedData.events[visibleSelectedMapLocation?.id] || [],
+                        tasks: relatedData.tasks[visibleSelectedMapLocation?.id] || [],
+                        notes: relatedData.notes[visibleSelectedMapLocation?.id] || [],
+                        photos: relatedData.photos[visibleSelectedMapLocation?.id] || [],
+                        mediaCampaigns: relatedData.mediaCampaigns[visibleSelectedMapLocation?.id] || [],
+                      }
+                }
+                vendorOptions={vendorOptions}
                 onLocationSelect={handleSelectLocation}
                 onEdit={openEditForm}
                 onDelete={handleDeleteLocation}
@@ -1439,6 +1795,7 @@ const MarketingLocations = () => {
                 onDeleteRelatedRow={handleDeleteRelatedRow}
                 onPhotosChange={handlePhotosChange}
                 onAddMediaCampaign={handleAddMediaCampaign}
+                onUpdateMediaCampaign={handleUpdateMediaCampaign}
                 onDeleteMediaCampaign={handleDeleteMediaCampaign}
 
               />
@@ -1605,6 +1962,7 @@ const MarketingLocations = () => {
                 selectedLocation={selectedLocation}
                 locations={filteredLocations}
                 related={selectedRelated}
+                vendorOptions={vendorOptions}
                 onLocationSelect={handleSelectLocation}
                 onEdit={openEditForm}
                 onDelete={handleDeleteLocation}
@@ -1617,6 +1975,7 @@ const MarketingLocations = () => {
                 onDeleteRelatedRow={handleDeleteRelatedRow}
                 onPhotosChange={handlePhotosChange}
                 onAddMediaCampaign={handleAddMediaCampaign}
+                onUpdateMediaCampaign={handleUpdateMediaCampaign}
                 onDeleteMediaCampaign={handleDeleteMediaCampaign}
               />
             </section>
@@ -2127,12 +2486,37 @@ const MarketingLocationModal = ({
           </label>
 
           <label className={styles.fullWidth}>
-            Contract URL
+            Upload Contract PDF
             <input
-              value={draft.contractUrl}
-              onChange={(event) => updateDraft('contractUrl', event.target.value)}
-              placeholder="https://..."
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(event) =>
+                updateDraft('contractFile', event.target.files?.[0] || null)
+              }
             />
+            {draft.contractFile && (
+              <small style={{ color: '#0369a1', fontWeight: 850 }}>
+                Selected: {draft.contractFile.name}
+              </small>
+            )}
+            {!draft.contractFile && draft.contractUrl && (
+              <a
+                href={draft.contractUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  color: '#0284c7',
+                  fontWeight: 850,
+                  fontSize: 12,
+                  width: 'fit-content',
+                }}
+              >
+                View Current Contract PDF
+              </a>
+            )}
+            <small style={{ color: '#64748b', fontWeight: 750 }}>
+              PDF only. Uploading a new file will replace the contract linked to this location.
+            </small>
           </label>
 
           <label className={styles.fullWidth}>
