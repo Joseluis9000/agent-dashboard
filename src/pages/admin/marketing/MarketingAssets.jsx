@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../../supabaseClient';
 import styles from '../MarketingOps.module.css';
+import { getMarketingPhotosByLocations } from './services/photoService';
 
 const ASSET_BUCKET = 'marketing-assets';
 
@@ -362,6 +363,246 @@ const AssetPreview = ({ asset, height = 180 }) => {
   );
 };
 
+
+const getTodayKey = () => new Date().toISOString().split('T')[0];
+
+const isDateExpired = (value) => {
+  if (!value) return false;
+  return String(value).slice(0, 10) < getTodayKey();
+};
+
+const isDateCurrentOrFuture = (value) => {
+  if (!value) return true;
+  return String(value).slice(0, 10) >= getTodayKey();
+};
+
+const formatPlacementType = (type) => {
+  if (type === 'billboard') return 'Billboard';
+  if (type === 'dmv_video') return 'DMV Video';
+  return String(type || 'Placement').replaceAll('_', ' ');
+};
+
+const getPrimaryPhotoUrl = (photos = [], location = {}) => {
+  const primary = photos.find((photo) => photo.isPrimary || photo.is_primary) || null;
+  return (
+    primary?.photoUrl ||
+    primary?.photo_url ||
+    primary?.url ||
+    location.photo_url ||
+    location.graphic_url ||
+    ''
+  );
+};
+
+const PlacementPreview = ({ placement, height = 190 }) => {
+  const preview = placement.previewAsset || null;
+
+  if (preview?.asset_type === 'video' && preview.file_url) {
+    return (
+      <video
+        src={preview.file_url}
+        controls
+        preload="metadata"
+        style={{
+          width: '100%',
+          height,
+          objectFit: 'contain',
+          display: 'block',
+          background: '#0f172a',
+          borderRadius: 12,
+        }}
+      />
+    );
+  }
+
+  const imageUrl = preview?.file_url || placement.previewUrl || '';
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={placement.name || 'Marketing placement creative'}
+        loading="lazy"
+        style={{
+          width: '100%',
+          height,
+          objectFit: 'contain',
+          display: 'block',
+          background: '#f8fafc',
+          borderRadius: 12,
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        height,
+        display: 'grid',
+        placeItems: 'center',
+        background: '#f8fafc',
+        borderRadius: 12,
+        border: '1px dashed #cbd5e1',
+        color: '#94a3b8',
+        textAlign: 'center',
+        padding: 16,
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 34 }}>{placement.type === 'dmv_video' ? '📺' : '🪧'}</div>
+        <strong style={{ display: 'block', marginTop: 6 }}>
+          {placement.type === 'dmv_video'
+            ? 'No campaign video uploaded'
+            : 'No primary billboard photo uploaded'}
+        </strong>
+      </div>
+    </div>
+  );
+};
+
+const PlacementCard = ({ placement }) => {
+  const isDmv = placement.type === 'dmv_video';
+
+  return (
+    <div
+      className={styles.card}
+      style={{
+        padding: 12,
+        display: 'grid',
+        gap: 10,
+        minWidth: 0,
+      }}
+    >
+      <PlacementPreview placement={placement} />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 0 }}>
+          <strong
+            style={{
+              display: 'block',
+              color: '#0f172a',
+              fontSize: 14,
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {placement.name}
+          </strong>
+          <small style={{ color: '#64748b', fontWeight: 800 }}>
+            {isDmv ? '📺 DMV Video Campaign' : '🪧 Billboard Placement'}
+          </small>
+        </div>
+
+        <span
+          style={{
+            borderRadius: 999,
+            padding: '4px 8px',
+            background: placement.isActive ? '#dcfce7' : '#f1f5f9',
+            color: placement.isActive ? '#166534' : '#475569',
+            fontSize: 10,
+            fontWeight: 950,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {placement.isActive ? 'Live' : 'Past'}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          gap: 7,
+        }}
+      >
+        <DetailItem label="Vendor" value={placement.vendor || '—'} />
+        <DetailItem label="Region" value={placement.region || '—'} />
+        <DetailItem label={isDmv ? 'Campaign Start' : 'Contract Start'} value={formatDate(placement.startDate)} />
+        <DetailItem label={isDmv ? 'Campaign End' : 'Contract End'} value={formatDate(placement.endDate)} />
+        <DetailItem label="Renewal" value={formatDate(placement.renewalDate)} />
+        <DetailItem label="Monthly Cost" value={`$${Number(placement.monthlyCost || 0).toLocaleString()}`} />
+      </div>
+
+      {!isDmv && placement.billboardSize && (
+        <small style={{ color: '#64748b', fontWeight: 800 }}>
+          Size: {placement.billboardSize}
+          {placement.placementType ? ` • ${placement.placementType}` : ''}
+        </small>
+      )}
+
+      {isDmv && (
+        <small style={{ color: '#64748b', fontWeight: 800 }}>
+          {placement.mediaCount || 0} creative file{placement.mediaCount === 1 ? '' : 's'}
+          {placement.videoCount ? ` • ${placement.videoCount} video${placement.videoCount === 1 ? '' : 's'}` : ''}
+        </small>
+      )}
+    </div>
+  );
+};
+
+const PlacementGallery = ({
+  placements,
+  isLoading,
+  emptyLabel,
+  search,
+  setSearch,
+  typeFilter,
+  setTypeFilter,
+  regionFilter,
+  setRegionFilter,
+  regionOptions,
+}) => (
+  <>
+    <div
+      className={styles.toolbar}
+      style={{
+        padding: 12,
+        display: 'grid',
+        gridTemplateColumns: 'minmax(220px, 1.5fr) minmax(160px, 0.6fr) minmax(160px, 0.6fr)',
+        gap: 8,
+      }}
+    >
+      <input
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search placement, vendor, campaign, office, region..."
+        style={inputStyle}
+      />
+
+      <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} style={inputStyle}>
+        <option value="all">Billboards + DMV</option>
+        <option value="billboard">Billboards Only</option>
+        <option value="dmv_video">DMV Only</option>
+      </select>
+
+      <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)} style={inputStyle}>
+        <option value="all">All Regions</option>
+        {regionOptions.map((region) => (
+          <option key={region} value={region}>{region}</option>
+        ))}
+      </select>
+    </div>
+
+    {isLoading ? (
+      <div className={styles.emptyState}>Loading placement creative...</div>
+    ) : placements.length === 0 ? (
+      <div className={styles.emptyState}>{emptyLabel}</div>
+    ) : (
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(285px, 1fr))',
+          gap: 12,
+        }}
+      >
+        {placements.map((placement) => (
+          <PlacementCard key={placement.id} placement={placement} />
+        ))}
+      </div>
+    )}
+  </>
+);
+
 const MarketingAssets = () => {
   const fileInputRef = useRef(null);
 
@@ -372,6 +613,11 @@ const MarketingAssets = () => {
   const [vendors, setVendors] = useState([]);
   const [activityTypes, setActivityTypes] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [placementLocations, setPlacementLocations] = useState([]);
+  const [placementContracts, setPlacementContracts] = useState([]);
+  const [placementPhotos, setPlacementPhotos] = useState({});
+  const [mediaCampaigns, setMediaCampaigns] = useState([]);
+  const [mediaCampaignAssets, setMediaCampaignAssets] = useState([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -386,6 +632,10 @@ const MarketingAssets = () => {
   const [vendorFilter, setVendorFilter] = useState('all');
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [viewMode, setViewMode] = useState('grid');
+  const [assetSection, setAssetSection] = useState('active');
+  const [placementSearch, setPlacementSearch] = useState('');
+  const [placementTypeFilter, setPlacementTypeFilter] = useState('all');
+  const [placementRegionFilter, setPlacementRegionFilter] = useState('all');
 
   const [assetModal, setAssetModal] = useState({
     open: false,
@@ -408,75 +658,99 @@ const MarketingAssets = () => {
     setPageError('');
 
     try {
-      const requiredResult = await supabase
-        .from('marketing_assets')
-        .select('*')
-        .order('is_favorite', { ascending: false })
-        .order('uploaded_at', { ascending: false });
-
-      if (requiredResult.error) throw requiredResult.error;
-
-      setAssets(requiredResult.data || []);
-
-      const optionalQueries = [
+      const [
+        assetsResult,
+        locationsResult,
+        officesResult,
+        regionsResult,
+        vendorsResult,
+        activityTypesResult,
+        campaignsResult,
+        contractsResult,
+        mediaCampaignsResult,
+        mediaAssetsResult,
+      ] = await Promise.all([
+        supabase
+          .from('marketing_assets')
+          .select('*')
+          .order('is_favorite', { ascending: false })
+          .order('uploaded_at', { ascending: false }),
         supabase
           .from('marketing_locations')
-          .select('id,name,city,region,office,type,status')
+          .select('*')
           .order('name', { ascending: true }),
-
         supabase
           .from('marketing_offices_with_regions')
           .select('*')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('office_code', { ascending: true }),
-
         supabase
           .from('marketing_regions')
           .select('*')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('name', { ascending: true }),
-
         supabase
           .from('marketing_vendors')
           .select('*')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('vendor_name', { ascending: true }),
-
         supabase
           .from('marketing_activity_types')
           .select('*')
           .eq('is_active', true)
           .order('sort_order', { ascending: true })
           .order('label', { ascending: true }),
-
         supabase
           .from('marketing_campaigns')
           .select('*')
           .order('created_at', { ascending: false }),
-      ];
+        supabase
+          .from('marketing_contracts')
+          .select('*')
+          .order('start_date', { ascending: false, nullsFirst: false }),
+        supabase
+          .from('marketing_location_campaigns')
+          .select('*')
+          .order('start_date', { ascending: false, nullsFirst: false }),
+        supabase
+          .from('marketing_location_campaign_assets')
+          .select('*')
+          .order('sort_order', { ascending: true }),
+      ]);
 
-      const results = await Promise.allSettled(optionalQueries);
+      const fatalError = assetsResult.error || locationsResult.error;
+      if (fatalError) throw fatalError;
 
-      const getData = (index) => {
-        const result = results[index];
-        if (result.status !== 'fulfilled') return [];
-        if (result.value?.error) return [];
-        return result.value?.data || [];
-      };
+      const locationRows = locationsResult.data || [];
+      const locationIds = locationRows.map((row) => row.id).filter(Boolean);
+      const photosByLocation = locationIds.length
+        ? await getMarketingPhotosByLocations(locationIds)
+        : {};
 
-      setLocations(getData(0));
-      setOffices(getData(1));
-      setRegions(getData(2));
-      setVendors(getData(3));
-      setActivityTypes(getData(4));
-      setCampaigns(getData(5));
+      setAssets(assetsResult.data || []);
+      setLocations(locationRows);
+      setPlacementLocations(locationRows);
+      setOffices(officesResult.error ? [] : officesResult.data || []);
+      setRegions(regionsResult.error ? [] : regionsResult.data || []);
+      setVendors(vendorsResult.error ? [] : vendorsResult.data || []);
+      setActivityTypes(activityTypesResult.error ? [] : activityTypesResult.data || []);
+      setCampaigns(campaignsResult.error ? [] : campaignsResult.data || []);
+      setPlacementContracts(contractsResult.error ? [] : contractsResult.data || []);
+      setPlacementPhotos(photosByLocation || {});
+      setMediaCampaigns(mediaCampaignsResult.error ? [] : mediaCampaignsResult.data || []);
+      setMediaCampaignAssets(mediaAssetsResult.error ? [] : mediaAssetsResult.data || []);
     } catch (error) {
       console.error('Error loading Marketing Assets:', error);
       setPageError(error?.message || 'Could not load Marketing Assets.');
       setAssets([]);
+      setPlacementLocations([]);
+      setPlacementContracts([]);
+      setPlacementPhotos({});
+      setMediaCampaigns([]);
+      setMediaCampaignAssets([]);
     } finally {
       setIsLoading(false);
     }
@@ -561,6 +835,220 @@ const MarketingAssets = () => {
       totalBytes,
     };
   }, [assets]);
+
+
+  const placementRegionOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        placementLocations
+          .filter((location) => ['billboard', 'dmv_video'].includes(location.type))
+          .map((location) => location.region)
+          .filter(Boolean)
+      )
+    ).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [placementLocations]);
+
+  const placements = useMemo(() => {
+    const contractsByLocation = placementContracts.reduce((acc, contract) => {
+      if (!contract.location_id) return acc;
+      if (!acc[contract.location_id]) acc[contract.location_id] = [];
+      acc[contract.location_id].push(contract);
+      return acc;
+    }, {});
+
+    const campaignAssetsByCampaign = mediaCampaignAssets.reduce((acc, asset) => {
+      if (!asset.campaign_id) return acc;
+      if (!acc[asset.campaign_id]) acc[asset.campaign_id] = [];
+      acc[asset.campaign_id].push(asset);
+      return acc;
+    }, {});
+
+    const locationsById = Object.fromEntries(
+      placementLocations.map((location) => [location.id, location])
+    );
+
+    const billboardPlacements = placementLocations
+      .filter((location) => location.type === 'billboard')
+      .map((location) => {
+        const contracts = [...(contractsByLocation[location.id] || [])].sort((a, b) => {
+          if (a.status === 'active' && b.status !== 'active') return -1;
+          if (a.status !== 'active' && b.status === 'active') return 1;
+          return String(b.start_date || b.created_at || '').localeCompare(
+            String(a.start_date || a.created_at || '')
+          );
+        });
+
+        const activeContract =
+          contracts.find(
+            (contract) =>
+              contract.status === 'active' && isDateCurrentOrFuture(contract.end_date)
+          ) || null;
+
+        const hasOriginalContract =
+          Boolean(location.contract_start) ||
+          Boolean(location.contract_end) ||
+          Boolean(location.renewal_date) ||
+          Number(location.monthly_cost || 0) > 0;
+
+        const originalIsActive =
+          hasOriginalContract &&
+          location.status !== 'expired' &&
+          isDateCurrentOrFuture(location.contract_end || location.renewal_date);
+
+        const currentContract = activeContract || (originalIsActive ? {
+          vendor: location.vendor,
+          start_date: location.contract_start,
+          end_date: location.contract_end,
+          renewal_date: location.renewal_date,
+          monthly_cost: location.monthly_cost,
+          status: 'active',
+        } : contracts[0] || (hasOriginalContract ? {
+          vendor: location.vendor,
+          start_date: location.contract_start,
+          end_date: location.contract_end,
+          renewal_date: location.renewal_date,
+          monthly_cost: location.monthly_cost,
+          status: location.status || 'expired',
+        } : null));
+
+        const isActive = Boolean(activeContract || originalIsActive);
+        const previewUrl = getPrimaryPhotoUrl(placementPhotos[location.id] || [], location);
+        const width = location.billboard_width;
+        const height = location.billboard_height;
+        const unit = location.billboard_size_unit || 'ft';
+
+        return {
+          id: `billboard:${location.id}`,
+          locationId: location.id,
+          type: 'billboard',
+          name: location.name || 'Billboard',
+          city: location.city || '',
+          office: location.office || '',
+          region: location.region || '',
+          vendor: currentContract?.vendor || location.vendor || '',
+          startDate: currentContract?.start_date || location.contract_start || '',
+          endDate: currentContract?.end_date || location.contract_end || '',
+          renewalDate: currentContract?.renewal_date || location.renewal_date || '',
+          monthlyCost: Number(currentContract?.monthly_cost ?? location.monthly_cost ?? 0),
+          billboardSize: width && height ? `${width} ${unit} × ${height} ${unit}` : '',
+          placementType: location.placement_type || '',
+          previewUrl,
+          previewAsset: null,
+          isActive,
+          status: isActive ? 'active' : 'past',
+        };
+      });
+
+    const dmvPlacements = mediaCampaigns
+      .filter((campaign) => campaign.campaign_type === 'dmv_video')
+      .map((campaign) => {
+        const location = locationsById[campaign.location_id] || {};
+        const mediaAssets = campaignAssetsByCampaign[campaign.id] || [];
+        const previewAsset =
+          mediaAssets.find((asset) => asset.asset_type === 'video' && asset.file_url) ||
+          mediaAssets.find((asset) => asset.file_url) ||
+          null;
+        const isActive =
+          campaign.status === 'active' &&
+          !isDateExpired(campaign.end_date);
+
+        return {
+          id: `dmv:${campaign.id}`,
+          locationId: campaign.location_id,
+          campaignId: campaign.id,
+          type: 'dmv_video',
+          name: campaign.campaign_name || location.name || 'DMV Video Campaign',
+          city: location.city || '',
+          office: location.office || '',
+          region: location.region || '',
+          vendor: campaign.vendor || location.vendor || '',
+          startDate: campaign.start_date || '',
+          endDate: campaign.end_date || '',
+          renewalDate: campaign.renewal_date || '',
+          monthlyCost: Number(campaign.monthly_cost || 0),
+          previewUrl: '',
+          previewAsset,
+          mediaCount: mediaAssets.length,
+          videoCount: mediaAssets.filter((asset) => asset.asset_type === 'video').length,
+          isActive,
+          status: isActive ? 'active' : 'past',
+        };
+      });
+
+    return [...billboardPlacements, ...dmvPlacements];
+  }, [mediaCampaignAssets, mediaCampaigns, placementContracts, placementLocations, placementPhotos]);
+
+  const filteredPlacements = useMemo(() => {
+    const query = placementSearch.trim().toLowerCase();
+
+    return placements.filter((placement) => {
+      const matchesSection =
+        assetSection === 'active' ? placement.isActive : !placement.isActive;
+      if (!matchesSection) return false;
+
+      if (
+        placementTypeFilter !== 'all' &&
+        placement.type !== placementTypeFilter
+      ) {
+        return false;
+      }
+
+      if (
+        placementRegionFilter !== 'all' &&
+        placement.region !== placementRegionFilter
+      ) {
+        return false;
+      }
+
+      if (!query) return true;
+
+      return [
+        placement.name,
+        placement.city,
+        placement.office,
+        placement.region,
+        placement.vendor,
+        placement.placementType,
+        formatPlacementType(placement.type),
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [
+    assetSection,
+    placementRegionFilter,
+    placementSearch,
+    placementTypeFilter,
+    placements,
+  ]);
+
+  const placementMetrics = useMemo(() => {
+    const active = placements.filter((placement) => placement.isActive);
+    const past = placements.filter((placement) => !placement.isActive);
+    const activeBillboards = active.filter((placement) => placement.type === 'billboard').length;
+    const activeDmv = active.filter((placement) => placement.type === 'dmv_video').length;
+    const liveCreative = active.filter(
+      (placement) => placement.previewUrl || placement.previewAsset?.file_url
+    ).length;
+
+    const expiringSoon = active.filter((placement) => {
+      const date = placement.renewalDate || placement.endDate;
+      if (!date) return false;
+      const today = new Date(`${getTodayKey()}T12:00:00`);
+      const target = new Date(`${String(date).slice(0, 10)}T12:00:00`);
+      if (Number.isNaN(target.getTime())) return false;
+      const days = Math.ceil((target - today) / 86400000);
+      return days >= 0 && days <= 60;
+    }).length;
+
+    return {
+      activeBillboards,
+      activeDmv,
+      liveCreative,
+      expiringSoon,
+      past: past.length,
+    };
+  }, [placements]);
 
   const openCreate = () => {
     setAssetModal({
@@ -733,6 +1221,51 @@ const MarketingAssets = () => {
         </div>
       )}
 
+      <div
+        className={styles.card}
+        style={{
+          padding: 8,
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        <button
+          type="button"
+          className={assetSection === 'active' ? styles.primaryBtn : styles.secondaryBtn}
+          onClick={() => setAssetSection('active')}
+        >
+          Active Placements
+        </button>
+        <button
+          type="button"
+          className={assetSection === 'past' ? styles.primaryBtn : styles.secondaryBtn}
+          onClick={() => setAssetSection('past')}
+        >
+          Past / Expired
+        </button>
+        <button
+          type="button"
+          className={assetSection === 'library' ? styles.primaryBtn : styles.secondaryBtn}
+          onClick={() => setAssetSection('library')}
+        >
+          Asset Library
+        </button>
+      </div>
+
+      {assetSection !== 'library' && (
+        <div className={styles.kpiGrid}>
+          <MetricCard label="Active Billboards" value={placementMetrics.activeBillboards} />
+          <MetricCard label="Active DMV Campaigns" value={placementMetrics.activeDmv} />
+          <MetricCard label="Live Creative" value={placementMetrics.liveCreative} />
+          <MetricCard label="Expiring Soon" value={placementMetrics.expiringSoon} note="Next 60 days" />
+          <MetricCard label="Past Placements" value={placementMetrics.past} />
+        </div>
+      )}
+
+      {assetSection === 'library' ? (
+        <>
       <div className={styles.kpiGrid}>
         <MetricCard label="Total Assets" value={metrics.total} />
         <MetricCard label="Current Library" value={metrics.active} note="Excludes archived" />
@@ -1058,6 +1591,26 @@ const MarketingAssets = () => {
             </tbody>
           </table>
         </div>
+      )}
+
+        </>
+      ) : (
+        <PlacementGallery
+          placements={filteredPlacements}
+          isLoading={isLoading}
+          emptyLabel={
+            assetSection === 'active'
+              ? 'No active billboard or DMV placements match these filters.'
+              : 'No past or expired billboard / DMV placements match these filters.'
+          }
+          search={placementSearch}
+          setSearch={setPlacementSearch}
+          typeFilter={placementTypeFilter}
+          setTypeFilter={setPlacementTypeFilter}
+          regionFilter={placementRegionFilter}
+          setRegionFilter={setPlacementRegionFilter}
+          regionOptions={placementRegionOptions}
+        />
       )}
 
       {assetModal.open && (
