@@ -72,6 +72,18 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
 
 
 
+        {/* Quote Log */}
+        <NavLink
+          to="/admin/quote-log"
+          className={({ isActive }) =>
+            `${styles.navLink} ${isActive ? styles.activeLink : ''}`
+          }
+        >
+          Quote Operations
+        </NavLink>
+
+
+
         <NavLink
 
           to="/admin/office-numbers"

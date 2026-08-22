@@ -96,7 +96,7 @@ export const AuthProvider = ({ children }) => {
         let { data } = await withTimeout(
           supabase
             .from('profiles')
-            .select('id,email,full_name,role')
+            .select('id,email,full_name,role,office,region,turborater_agent_name,csr_name')
             .eq('id', sessUser.id)
             .maybeSingle(),
           5000,
@@ -107,7 +107,7 @@ export const AuthProvider = ({ children }) => {
           const legacy = await withTimeout(
             supabase
               .from('profiles')
-              .select('id,email,full_name,role')
+              .select('id,email,full_name,role,office,region,turborater_agent_name,csr_name')
               .eq('email', sessUser.email)
               .maybeSingle(),
             5000,
@@ -127,7 +127,7 @@ export const AuthProvider = ({ children }) => {
                 full_name: sessUser.user_metadata?.full_name ?? '',
                 role: 'agent',
               })
-              .select('id,email,full_name,role')
+              .select('id,email,full_name,role,office,region,turborater_agent_name,csr_name')
               .single(),
             2000,
             'insert profile'

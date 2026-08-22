@@ -32,14 +32,29 @@ const Sidebar = ({ onLogout }) => {
   const isActive = (path) =>
     location.pathname === path || location.pathname.startsWith(path + '/');
 
-  const role = profile?.role || user?.user_metadata?.role || 'agent';
+  const role = String(
+    profile?.role ||
+    profile?.user_role ||
+    user?.user_metadata?.role ||
+    'agent'
+  )
+    .trim()
+    .toLowerCase();
+
   const isSupervisor = ['supervisor', 'admin'].includes(role);
+  const isRegional = role === 'regional';
+
+  const dashboardPath = isRegional ? '/regional/dashboard' : '/dashboard';
 
   const menuItems = useMemo(() => {
+    // Regionals intentionally keep the same floor / agent tools.
     const items = [
-      { path: '/dashboard', label: 'Dashboard', icon: Home },
+      { path: dashboardPath, label: 'Dashboard', icon: Home },
       { path: '/agent/commission', label: 'Tax Commission Log', icon: DollarSign },
       { path: '/agent/violations', label: 'My Violations', icon: ShieldAlert },
+      ...(!isRegional && !isSupervisor
+        ? [{ path: '/agent/quotes', label: 'My Quotes', icon: ClipboardList }]
+        : []),
       { path: '/uw/submit', label: 'Underwriting Submit', icon: FileText },
       { path: '/disqualified-policies', label: 'Disqualified Policies', icon: Ban },
       { path: '/ticketing-system', label: 'Appointment Calendar', icon: CalendarDays },
@@ -47,24 +62,45 @@ const Sidebar = ({ onLogout }) => {
       { path: '/office-eods', label: 'Office & Agent EODs', icon: Building2 },
     ];
 
+    if (isRegional) {
+      items.push(
+        { type: 'divider', label: 'Regional Tools' },
+        { path: '/regional/quote-operations', label: 'Quote Operations', icon: ClipboardList },
+        { path: '/regional/office-numbers', label: 'Office Performance', icon: BarChart3 },
+        { path: '/regional/tickets', label: 'Manage Tickets', icon: Ticket }
+
+        // Add once we build/verify a regional-scoped version:
+        // { path: '/regional/tax-wip', label: 'Tax Wip', icon: Users }
+      );
+    }
+
     if (isSupervisor) {
       items.push(
         { type: 'divider', label: 'Supervisor Tools' },
+        { path: '/supervisor/quote-operations', label: 'Quote Operations', icon: ClipboardList },
         { path: '/supervisor/office-numbers', label: 'Office Numbers', icon: BarChart3 },
         { path: '/supervisor/tickets', label: 'Manage Tickets', icon: Ticket },
-        { path: '/supervisor/tax-wip', label: 'Tax Whip', icon: Users }
+        { path: '/supervisor/tax-wip', label: 'Tax Wip', icon: Users }
       );
     }
 
     return items;
-  }, [isSupervisor]);
+  }, [dashboardPath, isRegional, isSupervisor]);
+
+  const sidebarThemeClass = isSupervisor
+    ? styles.supervisorSidebar
+    : isRegional
+      ? styles.regionalSidebar
+      : '';
+
+  const dashboardTitle = isSupervisor
+    ? 'Supervisor Dashboard'
+    : isRegional
+      ? 'Regional Dashboard'
+      : 'Agent Dashboard';
 
   return (
-    <aside
-      className={`${styles.sidebar} ${
-        isSupervisor ? styles.supervisorSidebar : ''
-      }`}
-    >
+    <aside className={`${styles.sidebar} ${sidebarThemeClass}`}>
       <img
         src="/fiesta-logo.png"
         alt="Fiesta Insurance Logo"
@@ -72,10 +108,12 @@ const Sidebar = ({ onLogout }) => {
       />
 
       <div className={styles.sidebarHeader}>
-        <div className={styles.dashboardTitle}>
-          {isSupervisor ? 'Supervisor Dashboard' : 'Agent Dashboard'}
-        </div>
+        <div className={styles.dashboardTitle}>{dashboardTitle}</div>
         <div className={styles.userName}>{displayName}</div>
+
+        {isRegional && profile?.region && (
+          <div className={styles.regionalRegionLabel}>{profile.region}</div>
+        )}
       </div>
 
       <nav>
@@ -89,14 +127,15 @@ const Sidebar = ({ onLogout }) => {
           }
 
           const Icon = item.icon;
+          const active = isActive(item.path);
 
           return (
             <button
               key={item.path}
               type="button"
               onClick={() => navigate(item.path)}
-              className={isActive(item.path) ? styles.active : ''}
-              aria-current={isActive(item.path) ? 'page' : undefined}
+              className={active ? styles.active : ''}
+              aria-current={active ? 'page' : undefined}
             >
               <Icon className={styles.navIcon} size={18} strokeWidth={2.2} />
               <span>{item.label}</span>
