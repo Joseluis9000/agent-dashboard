@@ -141,7 +141,7 @@ function buildMissedBy(result) {
   if (result.Net_Revenue < 500) return `${money(500 - result.Net_Revenue)} short of $500 net revenue`;
   if (result.Commission_Rate > 0) return "Qualified";
 
-  const nbShort = Math.max(10 - result.Net_NB_Count, 0);
+  const nbShort = Math.max(8 - result.Net_NB_Count, 0);
   const revenueShort = Math.max(2500 - result.Gross_Revenue, 0);
   const parts = [];
 
@@ -310,7 +310,7 @@ function calculateAgentCommission({
     } else if ((netNbCount >= 17 && grossRevenue >= 3500) || grossRevenue >= 5000) {
       commissionRate = 0.125;
       tier = "Tier 2";
-    } else if (netNbCount >= 10 || grossRevenue >= 2500) {
+    } else if (netNbCount >= 8 || grossRevenue >= 2500) {
       commissionRate = 0.1;
       tier = "Tier 1";
     }
@@ -396,7 +396,6 @@ export default function AdminTaxWip() {
   const [weeklyTransfersData, setWeeklyTransfersData] = useState([]);
   const [weeklyViolationsData, setWeeklyViolationsData] = useState([]);
   const [weeklyDisqualifiedData, setWeeklyDisqualifiedData] = useState([]);
-  const [publishedRecords, setPublishedRecords] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -508,7 +507,6 @@ export default function AdminTaxWip() {
       setWeeklyTransfersData(transfersResult || []);
       setWeeklyViolationsData(violationsResult || []);
       setWeeklyDisqualifiedData(disqualifiedResult || []);
-      setPublishedRecords(savedPublishedRecords);
       setIsPublished(hasPublishedRecords);
 
       if (hasPublishedRecords) {
@@ -569,7 +567,6 @@ export default function AdminTaxWip() {
       setWeeklyTransfersData([]);
       setWeeklyViolationsData([]);
       setWeeklyDisqualifiedData([]);
-      setPublishedRecords([]);
       setIsPublished(false);
       setAgents([]);
       setSelectedAgentEmail("");
@@ -667,7 +664,10 @@ export default function AdminTaxWip() {
   }, [commissionRows, selectedAgentEmail]);
 
   const selectedResult = selectedAgentBundle?.result || null;
-  const selectedTransfersData = selectedAgentBundle?.transfers || [];
+  const selectedTransfersData = useMemo(
+    () => selectedAgentBundle?.transfers || [],
+    [selectedAgentBundle]
+  );
   const selectedViolationsData = selectedAgentBundle?.violations || [];
   const selectedDisqualifiedData = selectedAgentBundle?.disqualified || [];
 
@@ -820,7 +820,6 @@ export default function AdminTaxWip() {
 
       if (error) throw error;
       setIsPublished(true);
-      setPublishedRecords(payload);
       setPublishStatus(`Published ${payload.length} commission records successfully.`);
     } catch (error) {
       setPublishStatus(error?.message || "Failed to publish commission records.");
@@ -1016,7 +1015,7 @@ export default function AdminTaxWip() {
 
               <InfoRow
                 label="Tier 1 - 10%"
-                value="10+ Net NBs OR $2,500+ gross revenue."
+                value="8+ Net NBs OR $2,500+ gross revenue."
               />
 
               <InfoRow

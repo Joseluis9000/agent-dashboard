@@ -439,3 +439,102 @@
   transform: translateY(-1px);
   box-shadow: 0 12px 24px rgba(252, 239, 12, 0.35);
 }
+
+/* =====================================================
+   REGIONAL SOLID DEEP NAVY / BAY BLUE THEME
+   Agent = red
+   Regional = navy / blue
+   Supervisor/Admin = black / yellow
+===================================================== */
+
+.regionalSidebar {
+  background: #0b1f3a;
+  color: #ffffff;
+  border-right: 3px solid #176b87;
+  box-shadow: 8px 0 28px rgba(5, 26, 49, 0.30);
+}
+
+.regionalSidebar .logo {
+  margin-bottom: 30px;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.30));
+}
+
+.regionalSidebar .sidebarHeader {
+  margin-bottom: 28px;
+}
+
+.regionalSidebar .dashboardTitle {
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.regionalSidebar .userName {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 15px;
+}
+
+.regionalRegionLabel {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 8px;
+  padding: 4px 9px;
+  border: 1px solid rgba(79, 195, 247, 0.30);
+  border-radius: 999px;
+  background: #102f52;
+  color: #9edcff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  text-transform: uppercase;
+}
+
+.regionalSidebar .menuDivider {
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  color: #4fc3f7;
+}
+
+.regionalSidebar button {
+  width: 100%;
+  padding: 13px 15px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: #102845;
+  color: #f6fbff;
+  font-weight: 700;
+  transition: all 0.22s ease;
+  box-shadow: none;
+}
+
+.regionalSidebar button:hover {
+  background: #144c70;
+  color: #ffffff;
+  border-color: #2a8aaa;
+  transform: translateX(3px);
+  box-shadow: 0 7px 16px rgba(23, 107, 135, 0.20);
+}
+
+.regionalSidebar button.active {
+  background: #176b87;
+  color: #ffffff;
+  border-color: #42a5f5;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(23, 107, 135, 0.28);
+}
+
+.regionalSidebar .logoutButton {
+  margin-top: 20px;
+  background: #102845 !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(79, 195, 247, 0.24) !important;
+  font-weight: 800;
+  box-shadow: none;
+}
+
+.regionalSidebar .logoutButton:hover {
+  background: #176b87 !important;
+  border-color: #42a5f5 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(23, 107, 135, 0.24);
+}

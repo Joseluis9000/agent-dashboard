@@ -114,6 +114,15 @@ const SupervisorSidebar = ({ onLogout }) => {
 
       <nav className={styles.nav}>
         <NavLink
+          to="/supervisor/quote-operations"
+          className={({ isActive }) =>
+            isActive ? styles.activeLink : styles.navLink
+          }
+        >
+          Quote Operations
+        </NavLink>
+
+        <NavLink
           to="/supervisor/office-numbers"
           className={({ isActive }) =>
             isActive ? styles.activeLink : styles.navLink
@@ -162,4 +171,3 @@ const SupervisorSidebar = ({ onLogout }) => {
 };
 
 export default SupervisorSidebar;
-

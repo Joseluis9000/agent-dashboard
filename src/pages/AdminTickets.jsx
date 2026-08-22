@@ -6,6 +6,7 @@ import { supabase } from '../supabaseClient';
 import ActionMenu from '../components/AdminDashboard/ActionMenu';
 import Modal from '../components/AdminDashboard/Modal';
 import TicketDetails from '../components/AdminDashboard/TicketDetails';
+import AdminInventoryHub from '../components/Inventory/AdminInventoryHub';
 
 // --- Small helper components --- //
 
@@ -229,6 +230,8 @@ const AdminTickets = () => {
 
   // Form state for manually adding a ticket as admin
   const [view, setView] = useState('list');
+  const [pageSection, setPageSection] = useState('tickets');
+  const [officeOptions, setOfficeOptions] = useState([]);
   const [office, setOffice] = useState('');
   const [csrName, setCsrName] = useState('');
   const [department, setDepartment] = useState(
@@ -265,6 +268,32 @@ const AdminTickets = () => {
     setSelectedTicket(null);
   };
 
+  const fetchOfficeOptions = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('office_dashboard_settings')
+      .select('office_code, region')
+      .order('office_code');
+
+    if (error) {
+      console.error('Unable to load office_dashboard_settings:', error);
+      return;
+    }
+
+    const options = (data || [])
+      .map((row) => ({
+        code: String(row.office_code || '').trim().toUpperCase(),
+        region: String(row.region || '').trim(),
+      }))
+      .filter((row) => row.code);
+
+    setOfficeOptions(options);
+
+    setOffice((current) => {
+      if (current) return current;
+      return options[0]?.code || '';
+    });
+  }, []);
+
   const fetchTickets = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -278,8 +307,9 @@ const AdminTickets = () => {
   }, []);
 
   useEffect(() => {
+    fetchOfficeOptions();
     fetchTickets();
-  }, [fetchTickets]);
+  }, [fetchOfficeOptions, fetchTickets]);
 
   const handleClaimTicket = async (ticketId) => {
     if (!user) return alert('Cannot perform action: user not found.');
@@ -331,7 +361,7 @@ const AdminTickets = () => {
       setFormMessage('Error: ' + error.message);
     } else {
       setFormMessage('Ticket submitted successfully!');
-      setOffice('');
+      setOffice(officeOptions[0]?.code || '');
       setCsrName('');
       const firstDept = Object.keys(ticketCategories)[0];
       setDepartment(firstDept);
@@ -624,6 +654,40 @@ const AdminTickets = () => {
 
   // --- Render --- //
 
+  if (pageSection === 'inventory') {
+    return (
+      <div className="p-6 md:p-8 bg-gray-50 min-h-screen font-sans space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-800">Operations</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Manage support tickets and office inventory from one workspace.
+            </p>
+
+            <div className="mt-4 inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setPageSection('tickets')}
+                className="px-4 py-2 text-sm font-semibold rounded-lg text-gray-600 hover:bg-gray-50"
+              >
+                Tickets
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white shadow-sm"
+              >
+                Inventory
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <AdminInventoryHub />
+      </div>
+    );
+  }
+
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen">
@@ -709,14 +773,20 @@ const AdminTickets = () => {
                 >
                   Office
                 </label>
-                <input
+                <select
                   id="office"
-                  type="text"
                   value={office}
                   onChange={(e) => setOffice(e.target.value)}
                   required
                   className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-                />
+                >
+                  <option value="">Select office</option>
+                  {officeOptions.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.code}{item.region ? ` - ${item.region}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label
@@ -792,8 +862,30 @@ const AdminTickets = () => {
 
   return (
     <div className="p-6 md:p-8 bg-gray-50 min-h-screen font-sans space-y-8">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-800">Tickets Dashboard</h1>
+      <div className="flex flex-wrap justify-between items-start gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">Operations</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage support tickets and office inventory from one workspace.
+          </p>
+
+          <div className="mt-4 inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-900 text-white shadow-sm"
+            >
+              Tickets
+            </button>
+            <button
+              type="button"
+              onClick={() => setPageSection('inventory')}
+              className="px-4 py-2 text-sm font-semibold rounded-lg text-gray-600 hover:bg-gray-50"
+            >
+              Inventory
+            </button>
+          </div>
+        </div>
+
         <button
           onClick={() => setView('form')}
           className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 transition-all duration-200 shadow-md hover:shadow-lg"

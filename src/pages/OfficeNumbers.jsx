@@ -5,17 +5,201 @@ import { supabase } from '../supabaseClient';
 const PAGE_SIZE = 1000;
 const SETTINGS_STORAGE_KEY = 'officeNumbersPacingSettingsV5';
 
+// Module-level request caches survive React 18 StrictMode's development remount.
+// They also let Offices/Agents reuse the same monthly dashboard RPC response.
+const dashboardRequestCache = new Map();
+const dashboardRequestInFlight = new Map();
+const rawRangeRequestCache = new Map();
+const rawRangeRequestInFlight = new Map();
+const officeDetailRequestCache = new Map();
+const officeDetailRequestInFlight = new Map();
+const agentDetailRequestCache = new Map();
+const agentDetailRequestInFlight = new Map();
+
+const getCachedDashboardRows = async (month, force = false) => {
+  if (!force && dashboardRequestCache.has(month)) {
+    return dashboardRequestCache.get(month);
+  }
+
+  if (!force && dashboardRequestInFlight.has(month)) {
+    return dashboardRequestInFlight.get(month);
+  }
+
+  const request = supabase
+    .rpc('get_office_numbers_dashboard', { p_month: month })
+    .then(({ data, error }) => {
+      if (error) throw error;
+      const rows = data || [];
+      dashboardRequestCache.set(month, rows);
+      return rows;
+    })
+    .finally(() => {
+      dashboardRequestInFlight.delete(month);
+    });
+
+  dashboardRequestInFlight.set(month, request);
+  return request;
+};
+
+const getCachedRawRange = async (firstDay, nextMonthFirstDay, force = false) => {
+  const cacheKey = `${firstDay}|${nextMonthFirstDay}`;
+
+  if (!force && rawRangeRequestCache.has(cacheKey)) {
+    return rawRangeRequestCache.get(cacheKey);
+  }
+
+  if (!force && rawRangeRequestInFlight.has(cacheKey)) {
+    return rawRangeRequestInFlight.get(cacheKey);
+  }
+
+  const request = (async () => {
+    let allRows = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('daily_transaction_detail_transfers')
+        .select('id, sync_key, receipt_id, customer_id, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
+        .gte('date_time', `${firstDay} 00:00:00`)
+        .lt('date_time', `${nextMonthFirstDay} 00:00:00`)
+        .order('date_time', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+
+    rawRangeRequestCache.set(cacheKey, allRows);
+    return allRows;
+  })().finally(() => {
+    rawRangeRequestInFlight.delete(cacheKey);
+  });
+
+  rawRangeRequestInFlight.set(cacheKey, request);
+  return request;
+};
+
+const getCachedOfficeDetail = async (month, officeCode, trendMonths = 12, force = false) => {
+  const normalizedOffice = normalizeOffice(officeCode);
+  const cacheKey = `${month}|${normalizedOffice}|${trendMonths}`;
+
+  if (!force && officeDetailRequestCache.has(cacheKey)) {
+    return officeDetailRequestCache.get(cacheKey);
+  }
+
+  if (!force && officeDetailRequestInFlight.has(cacheKey)) {
+    return officeDetailRequestInFlight.get(cacheKey);
+  }
+
+  const request = supabase
+    .rpc('get_office_numbers_detail', {
+      p_month: month,
+      p_office_code: normalizedOffice,
+      p_trend_months: trendMonths,
+    })
+    .then(({ data, error }) => {
+      if (error) throw error;
+      const payload = Array.isArray(data) ? (data[0] || {}) : (data || {});
+      officeDetailRequestCache.set(cacheKey, payload);
+      return payload;
+    })
+    .finally(() => {
+      officeDetailRequestInFlight.delete(cacheKey);
+    });
+
+  officeDetailRequestInFlight.set(cacheKey, request);
+  return request;
+};
+
+
+const getCachedAgentDetail = async (month, agentEmail, trendMonths = 12, force = false) => {
+  const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+  const cacheKey = `${month}|${normalizedEmail}|${trendMonths}`;
+
+  if (!force && agentDetailRequestCache.has(cacheKey)) {
+    return agentDetailRequestCache.get(cacheKey);
+  }
+
+  if (!force && agentDetailRequestInFlight.has(cacheKey)) {
+    return agentDetailRequestInFlight.get(cacheKey);
+  }
+
+  const request = supabase
+    .rpc('get_office_numbers_agent_detail', {
+      p_month: month,
+      p_agent_email: normalizedEmail,
+      p_trend_months: trendMonths,
+    })
+    .then(({ data, error }) => {
+      if (error) throw error;
+      const payload = Array.isArray(data) ? (data[0] || {}) : (data || {});
+      agentDetailRequestCache.set(cacheKey, payload);
+      return payload;
+    })
+    .finally(() => {
+      agentDetailRequestInFlight.delete(cacheKey);
+    });
+
+  agentDetailRequestInFlight.set(cacheKey, request);
+  return request;
+};
+
+const INSURANCE_FEE_TYPES = [
+  'broker',
+  'endorsement',
+  'renewal',
+  'reinstatement',
+  'payment',
+];
+
+const ALL_FEE_COMPONENT_TYPES = [
+  ...INSURANCE_FEE_TYPES,
+  'registration',
+  'convenience',
+  'tax_prep',
+];
+
 const FEE_TYPE_OPTIONS = [
   { value: 'broker', label: 'Broker Fee' },
   { value: 'endorsement', label: 'Endorsement Fee' },
   { value: 'renewal', label: 'Renewal Fee' },
   { value: 'reinstatement', label: 'Reinstatement Fee' },
   { value: 'payment', label: 'Payment Fee' },
+  { value: 'insurance', label: 'Insurance Fees' },
   { value: 'registration', label: 'Registration Fee' },
   { value: 'convenience', label: 'Convenience Fee' },
   { value: 'tax_prep', label: 'Tax Prep / Product Fee' },
   { value: 'all', label: 'All Fees' },
 ];
+
+const getFeeMetricFromRpcRow = (row, feeType, metric) => {
+  if (!row) return 0;
+
+  if (feeType === 'insurance') {
+    return INSURANCE_FEE_TYPES.reduce(
+      (sum, type) => sum + (Number(row[`${type}_fee_${metric}`]) || 0),
+      0
+    );
+  }
+
+  if (feeType === 'all') {
+    const directValue = row[`all_fee_${metric}`];
+    if (directValue !== undefined && directValue !== null) {
+      return Number(directValue) || 0;
+    }
+
+    return ALL_FEE_COMPONENT_TYPES.reduce(
+      (sum, type) => sum + (Number(row[`${type}_fee_${metric}`]) || 0),
+      0
+    );
+  }
+
+  return Number(row[`${feeType}_fee_${metric}`]) || 0;
+};
 
 const cleanStr = (value) => String(value ?? '').replace(/\r/g, '').trim();
 
@@ -32,12 +216,6 @@ const normalizeOffice = (officeRaw = '') => {
 const getOfficeNumber = (office = '') => {
   const match = String(office).match(/CA(\d{3})/i);
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
-};
-
-const getDateKeyFromTransfer = (row) => {
-  const raw = cleanStr(row?.date_time);
-  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match ? match[1] : '';
 };
 
 const isVoidedRow = (row) => cleanStr(row?.voided).toUpperCase().includes('VOIDED');
@@ -92,6 +270,7 @@ const createFeeBucket = () => ({
   registration: 0,
   convenience: 0,
   tax_prep: 0,
+  insurance: 0,
   all: 0,
 });
 
@@ -136,6 +315,11 @@ const calculateTransactionSummary = (rows = []) => {
     if (feeCategory) {
       feeTotals[feeCategory] += fee;
       feeCounts[feeCategory] += Math.sign(fee);
+
+      if (INSURANCE_FEE_TYPES.includes(feeCategory)) {
+        feeTotals.insurance += fee;
+        feeCounts.insurance += Math.sign(fee);
+      }
     }
   });
 
@@ -195,31 +379,6 @@ const getComparisonMonthDetails = (monthValue) => {
       ...getMonthDetails(toMonthValue(lastYearDate)),
     },
   };
-};
-
-const buildHistoricalMetricMap = (rows, selectedFeeType, usesNbRwCount) => {
-  const rowsByOffice = new Map();
-
-  rows.forEach((row) => {
-    const office = normalizeOffice(row.office);
-    if (!office) return;
-
-    if (!rowsByOffice.has(office)) rowsByOffice.set(office, []);
-    rowsByOffice.get(office).push(row);
-  });
-
-  const metricByOffice = {};
-
-  rowsByOffice.forEach((officeRows, office) => {
-    const summary = calculateTransactionSummary(officeRows);
-    const selectedFeeCount = summary.fee_counts[selectedFeeType] || 0;
-
-    metricByOffice[office] = usesNbRwCount
-      ? summary.nb_rw_count
-      : selectedFeeCount;
-  });
-
-  return metricByOffice;
 };
 
 const getMonthLabel = (monthValue) => {
@@ -346,29 +505,26 @@ const loadSavedSettings = () => {
   }
 };
 
-const createEmptyOfficeMetric = (officeName) => ({
-  officeName,
-  nbRwCount: 0,
-  newBusinessCount: 0,
-  rewriteCount: 0,
-  feeTotals: createFeeBucket(),
-  feeCounts: createFeeBucket(),
-  transactionCount: 0,
-  rawRows: 0,
-  validRows: 0,
-  excludedRows: 0,
-  activeDays: new Set(),
-});
-
 const OfficeNumbers = () => {
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthValue);
   const [monthlyRows, setMonthlyRows] = useState([]);
   const [lastMonthRows, setLastMonthRows] = useState([]);
   const [lastYearRows, setLastYearRows] = useState([]);
+  const [agentMonthlyRows, setAgentMonthlyRows] = useState([]);
+  const [agentLastMonthRows, setAgentLastMonthRows] = useState([]);
+  const [agentLastYearRows, setAgentLastYearRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [selectedFeeType, setSelectedFeeType] = useState('broker');
   const [viewMode, setViewMode] = useState('office');
+  const [selectedOffice, setSelectedOffice] = useState('');
+  const [selectedAgentEmail, setSelectedAgentEmail] = useState('');
+  const [officeDetailData, setOfficeDetailData] = useState(null);
+  const [officeDetailLoading, setOfficeDetailLoading] = useState(false);
+  const [officeDetailError, setOfficeDetailError] = useState('');
+  const [agentDetailData, setAgentDetailData] = useState(null);
+  const [agentDetailLoading, setAgentDetailLoading] = useState(false);
+  const [agentDetailError, setAgentDetailError] = useState('');
 
   const initialSettings = useMemo(loadSavedSettings, []);
   const [officeGoals, setOfficeGoals] = useState({});
@@ -557,67 +713,57 @@ const OfficeNumbers = () => {
     }
   }, [selectedMonth]);
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchDashboardData = useCallback(async (options = {}) => {
+    const { force = false, includeAgents = viewMode === 'agent' } = options;
+
     setLoading(true);
     setErrorMessage('');
 
-    const fetchRange = async (firstDay, nextMonthFirstDay) => {
-      let allRows = [];
-      let from = 0;
-
-      while (true) {
-        const { data, error } = await supabase
-          .from('daily_transaction_detail_transfers')
-          .select('id, sync_key, receipt_id, customer_id, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
-          .gte('date_time', `${firstDay} 00:00:00`)
-          .lt('date_time', `${nextMonthFirstDay} 00:00:00`)
-          .order('date_time', { ascending: true })
-          .range(from, from + PAGE_SIZE - 1);
-
-        if (error) throw error;
-
-        const rows = data || [];
-        allRows = allRows.concat(rows);
-
-        if (rows.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
-      }
-
-      return allRows;
-    };
-
     try {
-      const [currentRows, previousMonthRows, previousYearRows] =
-        await Promise.all([
-          fetchRange(
-            monthDetails.firstDay,
-            monthDetails.nextMonthFirstDay
-          ),
-          fetchRange(
-            comparisonMonths.lastMonth.firstDay,
-            comparisonMonths.lastMonth.nextMonthFirstDay
-          ),
-          fetchRange(
-            comparisonMonths.lastYear.firstDay,
-            comparisonMonths.lastYear.nextMonthFirstDay
-          ),
-        ]);
+      const combinedRows = await getCachedDashboardRows(selectedMonth, force);
+      const currentRows = combinedRows.filter(
+        (row) => cleanStr(row.comparison_period).toLowerCase() === 'current'
+      );
+      const previousMonthRows = combinedRows.filter(
+        (row) => cleanStr(row.comparison_period).toLowerCase() === 'previous'
+      );
+      const previousYearRows = combinedRows.filter(
+        (row) => cleanStr(row.comparison_period).toLowerCase() === 'last_year'
+      );
 
       setMonthlyRows(currentRows);
       setLastMonthRows(previousMonthRows);
       setLastYearRows(previousYearRows);
+
+      // Agent transaction detail is lazy-loaded only when Agents is opened.
+      // The office dashboard RPC is reused from cache instead of being called again.
+      if (includeAgents) {
+        const [currentAgentRows, previousAgentRows, previousYearAgentRows] = await Promise.all([
+          getCachedRawRange(monthDetails.firstDay, monthDetails.nextMonthFirstDay, force),
+          getCachedRawRange(comparisonMonths.lastMonth.firstDay, comparisonMonths.lastMonth.nextMonthFirstDay, force),
+          getCachedRawRange(comparisonMonths.lastYear.firstDay, comparisonMonths.lastYear.nextMonthFirstDay, force),
+        ]);
+        setAgentMonthlyRows(currentAgentRows);
+        setAgentLastMonthRows(previousAgentRows);
+        setAgentLastYearRows(previousYearAgentRows);
+      }
     } catch (error) {
       console.error('Error fetching office numbers:', error);
-      setErrorMessage(
-        error?.message || 'Unable to load the monthly office report.'
-      );
+      setErrorMessage(error?.message || 'Unable to load the monthly office report.');
       setMonthlyRows([]);
       setLastMonthRows([]);
       setLastYearRows([]);
+      if (includeAgents) {
+        setAgentMonthlyRows([]);
+        setAgentLastMonthRows([]);
+        setAgentLastYearRows([]);
+      }
     } finally {
       setLoading(false);
     }
   }, [
+    selectedMonth,
+    viewMode,
     monthDetails.firstDay,
     monthDetails.nextMonthFirstDay,
     comparisonMonths.lastMonth.firstDay,
@@ -626,29 +772,114 @@ const OfficeNumbers = () => {
     comparisonMonths.lastYear.nextMonthFirstDay,
   ]);
 
+  const fetchOfficeDetail = useCallback(async (officeName, options = {}) => {
+    const { force = false } = options;
+    const normalizedOffice = normalizeOffice(officeName);
+    if (!normalizedOffice || normalizedOffice === 'Unknown') return;
+
+    setOfficeDetailLoading(true);
+    setOfficeDetailError('');
+
+    try {
+      const payload = await getCachedOfficeDetail(
+        selectedMonth,
+        normalizedOffice,
+        12,
+        force
+      );
+      setOfficeDetailData(payload);
+    } catch (error) {
+      console.error('Error fetching office detail:', error);
+      setOfficeDetailError(error?.message || 'Unable to load office detail.');
+      setOfficeDetailData(null);
+    } finally {
+      setOfficeDetailLoading(false);
+    }
+  }, [selectedMonth]);
+
+  const fetchAgentDetail = useCallback(async (agentEmail, options = {}) => {
+    const { force = false } = options;
+    const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+    if (!normalizedEmail || normalizedEmail === 'unknown agent') return;
+
+    setAgentDetailLoading(true);
+    setAgentDetailError('');
+
+    try {
+      const payload = await getCachedAgentDetail(selectedMonth, normalizedEmail, 12, force);
+      setAgentDetailData(payload);
+    } catch (error) {
+      console.error('Error fetching agent detail:', error);
+      setAgentDetailError(error?.message || 'Unable to load agent detail.');
+      setAgentDetailData(null);
+    } finally {
+      setAgentDetailLoading(false);
+    }
+  }, [selectedMonth]);
+
+  // Month/profile/settings load. Fee changes do not participate in fetching.
   useEffect(() => {
     fetchProfileAndSettings();
-    fetchDashboardData();
-  }, [fetchProfileAndSettings, fetchDashboardData]);
+  }, [fetchProfileAndSettings]);
+
+  // The office RPC loads once per month and is deduped across StrictMode remounts.
+  useEffect(() => {
+    fetchDashboardData({ includeAgents: false });
+  }, [selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Opening Agents lazy-loads raw rows, while reusing the cached office RPC result.
+  useEffect(() => {
+    if (viewMode !== 'agent') return;
+    fetchDashboardData({ includeAgents: true });
+  }, [viewMode, selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Office Detail uses a dedicated lightweight RPC. It does not load all-office raw agent rows.
+  useEffect(() => {
+    if (!selectedOffice || viewMode !== 'office') return;
+    setOfficeDetailData(null);
+    fetchOfficeDetail(selectedOffice);
+  }, [selectedOffice, selectedMonth, viewMode, fetchOfficeDetail]);
+
+  // Agent Detail is company/region/office scoped by the RPC based on the signed-in role.
+  useEffect(() => {
+    if (!selectedAgentEmail || viewMode !== 'office') return;
+    setAgentDetailData(null);
+    fetchAgentDetail(selectedAgentEmail);
+  }, [selectedAgentEmail, selectedMonth, viewMode, fetchAgentDetail]);
 
   const visibleMonthlyRows = useMemo(
-    () => monthlyRows.filter((row) => canViewOffice(row.office)),
+    () => monthlyRows.filter((row) => canViewOffice(row.office_code || row.office)),
     [monthlyRows, canViewOffice]
   );
 
   const visibleLastMonthRows = useMemo(
-    () => lastMonthRows.filter((row) => canViewOffice(row.office)),
+    () => lastMonthRows.filter((row) => canViewOffice(row.office_code || row.office)),
     [lastMonthRows, canViewOffice]
   );
 
   const visibleLastYearRows = useMemo(
-    () => lastYearRows.filter((row) => canViewOffice(row.office)),
+    () => lastYearRows.filter((row) => canViewOffice(row.office_code || row.office)),
     [lastYearRows, canViewOffice]
+  );
+
+  const visibleAgentMonthlyRows = useMemo(
+    () => agentMonthlyRows.filter((row) => canViewOffice(row.office)),
+    [agentMonthlyRows, canViewOffice]
+  );
+
+  const visibleAgentLastMonthRows = useMemo(
+    () => agentLastMonthRows.filter((row) => canViewOffice(row.office)),
+    [agentLastMonthRows, canViewOffice]
+  );
+
+  const visibleAgentLastYearRows = useMemo(
+    () => agentLastYearRows.filter((row) => canViewOffice(row.office)),
+    [agentLastYearRows, canViewOffice]
   );
 
   const latestDataDate = useMemo(() => {
     return visibleMonthlyRows.reduce((latest, row) => {
-      const date = getDateKeyFromTransfer(row);
+      const date = cleanStr(row?.latest_data_date);
       return date && (!latest || date > latest) ? date : latest;
     }, '');
   }, [visibleMonthlyRows]);
@@ -681,142 +912,121 @@ const OfficeNumbers = () => {
     };
   }, [latestDataDate, monthDetails]);
 
-  const lastMonthMetricByOffice = useMemo(
-    () =>
-      buildHistoricalMetricMap(
-        visibleLastMonthRows,
-        selectedFeeType,
-        selectedMetricConfig.usesNbRwCount
-      ),
-    [visibleLastMonthRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
-  );
+  const getOfficeSummaryMetric = useCallback((row) => {
+    if (!row) return null;
+    if (selectedMetricConfig.usesNbRwCount) return Number(row.nb_rw_count) || 0;
+    return getFeeMetricFromRpcRow(row, selectedFeeType, 'count');
+  }, [selectedFeeType, selectedMetricConfig.usesNbRwCount]);
 
-  const lastYearMetricByOffice = useMemo(
-    () =>
-      buildHistoricalMetricMap(
-        visibleLastYearRows,
-        selectedFeeType,
-        selectedMetricConfig.usesNbRwCount
-      ),
-    [visibleLastYearRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
-  );
+  const lastMonthMetricByOffice = useMemo(() => {
+    const output = {};
+    visibleLastMonthRows.forEach((row) => {
+      output[normalizeOffice(row.office_code)] = getOfficeSummaryMetric(row);
+    });
+    return output;
+  }, [visibleLastMonthRows, getOfficeSummaryMetric]);
+
+  const lastYearMetricByOffice = useMemo(() => {
+    const output = {};
+    visibleLastYearRows.forEach((row) => {
+      output[normalizeOffice(row.office_code)] = getOfficeSummaryMetric(row);
+    });
+    return output;
+  }, [visibleLastYearRows, getOfficeSummaryMetric]);
 
 
   const lastMonthMetricByAgent = useMemo(
     () => buildAgentHistoricalMetricMap(
-      visibleLastMonthRows,
+      visibleAgentLastMonthRows,
       selectedFeeType,
       selectedMetricConfig.usesNbRwCount
     ),
-    [visibleLastMonthRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+    [visibleAgentLastMonthRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
   );
 
   const lastYearMetricByAgent = useMemo(
     () => buildAgentHistoricalMetricMap(
-      visibleLastYearRows,
+      visibleAgentLastYearRows,
       selectedFeeType,
       selectedMetricConfig.usesNbRwCount
     ),
-    [visibleLastYearRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
+    [visibleAgentLastYearRows, selectedFeeType, selectedMetricConfig.usesNbRwCount]
   );
 
   const officeMetrics = useMemo(() => {
-    const dailyGroups = {};
+    return visibleMonthlyRows
+      .map((row) => {
+        const officeName = normalizeOffice(row.office_code);
+        const feeTotals = {
+          broker: Number(row.broker_fee_total) || 0,
+          endorsement: Number(row.endorsement_fee_total) || 0,
+          renewal: Number(row.renewal_fee_total) || 0,
+          reinstatement: Number(row.reinstatement_fee_total) || 0,
+          payment: Number(row.payment_fee_total) || 0,
+          registration: Number(row.registration_fee_total) || 0,
+          convenience: Number(row.convenience_fee_total) || 0,
+          tax_prep: Number(row.tax_prep_fee_total) || 0,
+          insurance: getFeeMetricFromRpcRow(row, 'insurance', 'total'),
+          all: Number(row.all_fee_total) || 0,
+        };
+        const feeCounts = {
+          broker: Number(row.broker_fee_count) || 0,
+          endorsement: Number(row.endorsement_fee_count) || 0,
+          renewal: Number(row.renewal_fee_count) || 0,
+          reinstatement: Number(row.reinstatement_fee_count) || 0,
+          payment: Number(row.payment_fee_count) || 0,
+          registration: Number(row.registration_fee_count) || 0,
+          convenience: Number(row.convenience_fee_count) || 0,
+          tax_prep: Number(row.tax_prep_fee_count) || 0,
+          insurance: getFeeMetricFromRpcRow(row, 'insurance', 'count'),
+          all: Number(row.all_fee_count) || 0,
+        };
 
-    visibleMonthlyRows.forEach((row) => {
-      const office = normalizeOffice(row.office);
-      const date = getDateKeyFromTransfer(row);
-      if (!office || !date) return;
-
-      const key = `${office}|${date}`;
-      if (!dailyGroups[key]) dailyGroups[key] = { office, date, rows: [] };
-      dailyGroups[key].rows.push(row);
-    });
-
-    const metricsByOffice = {};
-
-    Object.values(dailyGroups).forEach((group) => {
-      const summary = calculateTransactionSummary(group.rows);
-
-      if (!metricsByOffice[group.office]) {
-        metricsByOffice[group.office] = createEmptyOfficeMetric(group.office);
-      }
-
-      const office = metricsByOffice[group.office];
-      office.nbRwCount += summary.nb_rw_count;
-      office.newBusinessCount += summary.new_business_count;
-      office.rewriteCount += summary.rewrite_count;
-      office.transactionCount += summary.valid_receipts_count;
-      office.rawRows += summary.raw_rows_count;
-      office.validRows += summary.valid_rows_count;
-      office.excludedRows += summary.excluded_rows_count;
-
-      Object.keys(office.feeTotals).forEach((feeType) => {
-        office.feeTotals[feeType] += summary.fee_totals[feeType] || 0;
-        office.feeCounts[feeType] += summary.fee_counts[feeType] || 0;
-      });
-
-      if (summary.valid_rows_count > 0) office.activeDays.add(group.date);
-    });
-
-    return Object.values(metricsByOffice)
-      .map((office) => {
-        const selectedFeeTotal = office.feeTotals[selectedFeeType] || 0;
-        const selectedFeeCount = office.feeCounts[selectedFeeType] || 0;
-
-        // Broker Fee average is based on the true NEW + RWR policy count.
-        // Other fee categories use their own matching fee transaction count.
+        const nbRwCount = Number(row.nb_rw_count) || 0;
+        const newBusinessCount = row.new_business_count == null ? null : Number(row.new_business_count) || 0;
+        const rewriteCount = row.rewrite_count == null ? null : Number(row.rewrite_count) || 0;
+        const selectedFeeTotal = feeTotals[selectedFeeType] || 0;
+        const selectedFeeCount = feeCounts[selectedFeeType] || 0;
         const selectedFeeAvgDenominator = selectedFeeType === 'broker'
-          ? office.nbRwCount
+          ? nbRwCount
           : selectedFeeCount;
         const selectedFeeAvg = selectedFeeAvgDenominator !== 0
           ? selectedFeeTotal / selectedFeeAvgDenominator
           : 0;
-
-        /*
-         * Broker Fee uses the correct NEW + RWR policy count.
-         * Other fee selections use the matching fee-transaction count.
-         */
         const selectedMetricCount = selectedMetricConfig.usesNbRwCount
-          ? office.nbRwCount
+          ? nbRwCount
           : selectedFeeCount;
-
-        const projectedCount =
-          selectedMetricCount * pacingDetails.projectionMultiplier;
-
-        const goal = isBrokerView
-          ? Number(
-              officeGoals?.[office.officeName]?.nb_rw
-            ) || 0
+        const projectedCount = selectedMetricCount * pacingDetails.projectionMultiplier;
+        const goal = isBrokerView ? Number(officeGoals?.[officeName]?.nb_rw) || 0 : 0;
+        const actualGoalPercent = isBrokerView && goal > 0
+          ? (selectedMetricCount / goal) * 100
           : 0;
-
-        const actualGoalPercent =
-          isBrokerView && goal > 0
-            ? (selectedMetricCount / goal) * 100
-            : 0;
-
-        const projectedGoalPercent =
-          isBrokerView && goal > 0
-            ? (projectedCount / goal) * 100
-            : 0;
-
-        const difference = isBrokerView
-          ? projectedCount - goal
+        const projectedGoalPercent = isBrokerView && goal > 0
+          ? (projectedCount / goal) * 100
           : 0;
+        const difference = isBrokerView ? projectedCount - goal : 0;
 
         return {
-          ...office,
-          activeDays: office.activeDays.size,
-          region: cleanStr(officeRegions[office.officeName]) || 'Unassigned',
+          officeName,
+          region: cleanStr(row.region) || cleanStr(officeRegions[officeName]) || 'Unassigned',
+          dataSource: cleanStr(row.data_source) || 'detailed',
+          nbRwCount,
+          newBusinessCount,
+          rewriteCount,
+          feeTotals,
+          feeCounts,
+          transactionCount: Number(row.valid_receipt_count) || 0,
+          rawRows: Number(row.raw_rows_count) || 0,
+          validRows: Number(row.valid_rows_count) || 0,
+          excludedRows: Number(row.excluded_rows_count) || 0,
+          activeDays: Number(row.active_days) || 0,
           selectedFeeTotal,
           selectedFeeCount,
           selectedFeeAvg,
           selectedMetricCount,
           projectedCount,
-          lastMonthCount:
-            lastMonthMetricByOffice[office.officeName] ?? null,
-          lastYearCount:
-            lastYearMetricByOffice[office.officeName] ?? null,
+          lastMonthCount: lastMonthMetricByOffice[officeName] ?? null,
+          lastYearCount: lastYearMetricByOffice[officeName] ?? null,
           goal,
           actualGoalPercent,
           projectedGoalPercent,
@@ -826,20 +1036,21 @@ const OfficeNumbers = () => {
       })
       .sort((a, b) => getOfficeNumber(a.officeName) - getOfficeNumber(b.officeName));
   }, [
-  visibleMonthlyRows,
-  pacingDetails.projectionMultiplier,
-  officeGoals,
-  officeRegions,
-  selectedFeeType,
-  selectedMetricConfig,
-  lastMonthMetricByOffice,
-  lastYearMetricByOffice,
-  isBrokerView,
-]);
+    visibleMonthlyRows,
+    selectedFeeType,
+    selectedMetricConfig.usesNbRwCount,
+    pacingDetails.projectionMultiplier,
+    officeGoals,
+    officeRegions,
+    isBrokerView,
+    lastMonthMetricByOffice,
+    lastYearMetricByOffice,
+  ]);
+
   const agentMetrics = useMemo(() => {
     const groups = new Map();
 
-    visibleMonthlyRows.forEach((row) => {
+    visibleAgentMonthlyRows.forEach((row) => {
       const agent = normalizeAgent(row);
       if (!groups.has(agent)) groups.set(agent, []);
       groups.get(agent).push(row);
@@ -925,7 +1136,7 @@ const OfficeNumbers = () => {
         return a.agentEmail.localeCompare(b.agentEmail);
       });
   }, [
-    visibleMonthlyRows,
+    visibleAgentMonthlyRows,
     selectedFeeType,
     selectedMetricConfig,
     pacingDetails.projectionMultiplier,
@@ -1058,8 +1269,9 @@ const OfficeNumbers = () => {
   const totals = useMemo(() => {
     const result = officeMetrics.reduce((acc, office) => {
       acc.nbRwCount += office.nbRwCount;
-      acc.newBusinessCount += office.newBusinessCount;
-      acc.rewriteCount += office.rewriteCount;
+      if (office.newBusinessCount !== null) acc.newBusinessCount += office.newBusinessCount;
+      if (office.rewriteCount !== null) acc.rewriteCount += office.rewriteCount;
+      if (office.dataSource === 'legacy') acc.hasLegacyData = true;
       acc.selectedFeeTotal += office.selectedFeeTotal;
       acc.selectedFeeCount += office.selectedFeeCount;
       acc.selectedMetricCount += office.selectedMetricCount;
@@ -1094,6 +1306,7 @@ const OfficeNumbers = () => {
       goal: 0,
       transactionCount: 0,
       excludedRows: 0,
+      hasLegacyData: false,
     });
 
     const selectedFeeAvgDenominator = selectedFeeType === 'broker'
@@ -1345,14 +1558,201 @@ const OfficeNumbers = () => {
     }));
   };
 
+  const selectedOfficeMetric = useMemo(
+    () => officeMetrics.find((office) => office.officeName === selectedOffice) || null,
+    [officeMetrics, selectedOffice]
+  );
+
+  const selectedOfficeAgents = useMemo(() => {
+    const rows = Array.isArray(officeDetailData?.agents) ? officeDetailData.agents : [];
+
+    return rows
+      .map((agent) => {
+        const nbRwCount = Number(agent.nb_rw_count) || 0;
+        const feeTotal = getFeeMetricFromRpcRow(agent, selectedFeeType, 'total');
+        const feeCount = getFeeMetricFromRpcRow(agent, selectedFeeType, 'count');
+        const selectedMetricCount = selectedMetricConfig.usesNbRwCount ? nbRwCount : feeCount;
+        const avgDenominator = selectedFeeType === 'broker' ? nbRwCount : feeCount;
+        const goal = isBrokerView ? Number(agent.nb_rw_goal) || 0 : 0;
+        const projectedCount = selectedMetricCount * pacingDetails.projectionMultiplier;
+
+        return {
+          agentEmail: cleanStr(agent.agent_email) || 'Unknown Agent',
+          csrName: cleanStr(agent.csr_name) || cleanStr(agent.agent_email) || 'Unknown Agent',
+          nbRwCount,
+          newBusinessCount: Number(agent.new_business_count) || 0,
+          rewriteCount: Number(agent.rewrite_count) || 0,
+          selectedMetricCount,
+          selectedFeeTotal: feeTotal,
+          selectedFeeCount: feeCount,
+          selectedFeeAvg: avgDenominator ? feeTotal / avgDenominator : 0,
+          goal,
+          projectedCount,
+          actualGoalPercent: goal > 0 ? (selectedMetricCount / goal) * 100 : 0,
+          projectedGoalPercent: goal > 0 ? (projectedCount / goal) * 100 : 0,
+          status: !isBrokerView
+            ? ''
+            : goal <= 0
+              ? 'No Goal'
+              : projectedCount >= goal
+                ? 'On Track'
+                : 'Behind',
+          activeDays: Number(agent.active_days) || 0,
+          validReceiptCount: Number(agent.valid_receipt_count) || 0,
+          raw: agent,
+          feeTotals: {
+            broker: getFeeMetricFromRpcRow(agent, 'broker', 'total'),
+            endorsement: getFeeMetricFromRpcRow(agent, 'endorsement', 'total'),
+            renewal: getFeeMetricFromRpcRow(agent, 'renewal', 'total'),
+            reinstatement: getFeeMetricFromRpcRow(agent, 'reinstatement', 'total'),
+            payment: getFeeMetricFromRpcRow(agent, 'payment', 'total'),
+            insurance: getFeeMetricFromRpcRow(agent, 'insurance', 'total'),
+            registration: getFeeMetricFromRpcRow(agent, 'registration', 'total'),
+            convenience: getFeeMetricFromRpcRow(agent, 'convenience', 'total'),
+            tax_prep: getFeeMetricFromRpcRow(agent, 'tax_prep', 'total'),
+            all: getFeeMetricFromRpcRow(agent, 'all', 'total'),
+          },
+          feeCounts: {
+            broker: getFeeMetricFromRpcRow(agent, 'broker', 'count'),
+            endorsement: getFeeMetricFromRpcRow(agent, 'endorsement', 'count'),
+            renewal: getFeeMetricFromRpcRow(agent, 'renewal', 'count'),
+            reinstatement: getFeeMetricFromRpcRow(agent, 'reinstatement', 'count'),
+            payment: getFeeMetricFromRpcRow(agent, 'payment', 'count'),
+            insurance: getFeeMetricFromRpcRow(agent, 'insurance', 'count'),
+            registration: getFeeMetricFromRpcRow(agent, 'registration', 'count'),
+            convenience: getFeeMetricFromRpcRow(agent, 'convenience', 'count'),
+            tax_prep: getFeeMetricFromRpcRow(agent, 'tax_prep', 'count'),
+            all: getFeeMetricFromRpcRow(agent, 'all', 'count'),
+          },
+        };
+      })
+      .sort((a, b) => {
+        if (b.selectedMetricCount !== a.selectedMetricCount) {
+          return b.selectedMetricCount - a.selectedMetricCount;
+        }
+        return b.selectedFeeTotal - a.selectedFeeTotal;
+      });
+  }, [
+    officeDetailData,
+    selectedFeeType,
+    selectedMetricConfig.usesNbRwCount,
+    isBrokerView,
+    pacingDetails.projectionMultiplier,
+  ]);
+
+  const selectedOfficeTrend = useMemo(() => {
+    const rows = Array.isArray(officeDetailData?.trend) ? officeDetailData.trend : [];
+
+    return rows.map((row) => {
+      const nbRwCount = Number(row.nb_rw_count) || 0;
+      const feeCount = getFeeMetricFromRpcRow(row, selectedFeeType, 'count');
+      const feeTotal = getFeeMetricFromRpcRow(row, selectedFeeType, 'total');
+
+      return {
+        month: cleanStr(row.month),
+        dataSource: cleanStr(row.data_source) || 'none',
+        selectedMetricCount: selectedMetricConfig.usesNbRwCount ? nbRwCount : feeCount,
+        selectedFeeTotal: feeTotal,
+        nbRwCount,
+        goal: Number(row.nb_rw_goal) || 0,
+      };
+    });
+  }, [officeDetailData, selectedFeeType, selectedMetricConfig.usesNbRwCount]);
+
+  const selectedAgentMetric = useMemo(
+    () => selectedOfficeAgents.find((agent) => agent.agentEmail === selectedAgentEmail) || null,
+    [selectedOfficeAgents, selectedAgentEmail]
+  );
+
+
+  const allAuthorizedAgentMetric = useMemo(() => {
+    const agent = agentDetailData?.agent;
+    if (!agent) return selectedAgentMetric;
+
+    const nbRwCount = Number(agent.nb_rw_count) || 0;
+    const feeTotal = getFeeMetricFromRpcRow(agent, selectedFeeType, 'total');
+    const feeCount = getFeeMetricFromRpcRow(agent, selectedFeeType, 'count');
+    const selectedMetricCount = selectedMetricConfig.usesNbRwCount ? nbRwCount : feeCount;
+    const avgDenominator = selectedFeeType === 'broker' ? nbRwCount : feeCount;
+    const goal = isBrokerView ? Number(agent.nb_rw_goal) || 0 : 0;
+    const projectedCount = selectedMetricCount * pacingDetails.projectionMultiplier;
+
+    return {
+      agentEmail: cleanStr(agent.agent_email) || selectedAgentEmail,
+      csrName: cleanStr(agent.csr_name) || selectedAgentMetric?.csrName || selectedAgentEmail,
+      nbRwCount,
+      newBusinessCount: Number(agent.new_business_count) || 0,
+      rewriteCount: Number(agent.rewrite_count) || 0,
+      selectedMetricCount,
+      selectedFeeTotal: feeTotal,
+      selectedFeeCount: feeCount,
+      selectedFeeAvg: avgDenominator ? feeTotal / avgDenominator : 0,
+      goal,
+      projectedCount,
+      actualGoalPercent: goal > 0 ? (selectedMetricCount / goal) * 100 : 0,
+      projectedGoalPercent: goal > 0 ? (projectedCount / goal) * 100 : 0,
+      status: !isBrokerView ? '' : goal <= 0 ? 'No Goal' : projectedCount >= goal ? 'On Track' : 'Behind',
+      activeDays: Number(agent.active_days) || 0,
+      validReceiptCount: Number(agent.valid_receipt_count) || 0,
+      raw: agent,
+      feeTotals: {
+        broker: getFeeMetricFromRpcRow(agent, 'broker', 'total'),
+        endorsement: getFeeMetricFromRpcRow(agent, 'endorsement', 'total'),
+        renewal: getFeeMetricFromRpcRow(agent, 'renewal', 'total'),
+        reinstatement: getFeeMetricFromRpcRow(agent, 'reinstatement', 'total'),
+        payment: getFeeMetricFromRpcRow(agent, 'payment', 'total'),
+        insurance: getFeeMetricFromRpcRow(agent, 'insurance', 'total'),
+        registration: getFeeMetricFromRpcRow(agent, 'registration', 'total'),
+        convenience: getFeeMetricFromRpcRow(agent, 'convenience', 'total'),
+        tax_prep: getFeeMetricFromRpcRow(agent, 'tax_prep', 'total'),
+        all: getFeeMetricFromRpcRow(agent, 'all', 'total'),
+      },
+      feeCounts: {
+        broker: getFeeMetricFromRpcRow(agent, 'broker', 'count'),
+        endorsement: getFeeMetricFromRpcRow(agent, 'endorsement', 'count'),
+        renewal: getFeeMetricFromRpcRow(agent, 'renewal', 'count'),
+        reinstatement: getFeeMetricFromRpcRow(agent, 'reinstatement', 'count'),
+        payment: getFeeMetricFromRpcRow(agent, 'payment', 'count'),
+        insurance: getFeeMetricFromRpcRow(agent, 'insurance', 'count'),
+        registration: getFeeMetricFromRpcRow(agent, 'registration', 'count'),
+        convenience: getFeeMetricFromRpcRow(agent, 'convenience', 'count'),
+        tax_prep: getFeeMetricFromRpcRow(agent, 'tax_prep', 'count'),
+        all: getFeeMetricFromRpcRow(agent, 'all', 'count'),
+      },
+    };
+  }, [agentDetailData, selectedAgentMetric, selectedAgentEmail, selectedFeeType, selectedMetricConfig.usesNbRwCount, isBrokerView, pacingDetails.projectionMultiplier]);
+
+  const openOfficeDetail = (officeName) => {
+    setSelectedAgentEmail('');
+    setSelectedOffice(officeName);
+    setOfficeDetailData(null);
+    setOfficeDetailError('');
+    setViewMode('office');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const openAgentDetail = (agentEmail) => {
+    setAgentDetailData(null);
+    setAgentDetailError('');
+    setSelectedAgentEmail(agentEmail);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const renderOfficeRow = (office) => {
     const onTrack = office.status === 'On Track';
 
     return (
       <tr key={office.officeName}>
         <td style={styles.officeCell}>
-          {office.officeName}
-          <div style={styles.smallMuted}>{office.activeDays} days</div>
+          <button
+            type="button"
+            onClick={() => openOfficeDetail(office.officeName)}
+            style={styles.officeLinkButton}
+            title={`Open ${office.officeName} detail`}
+          >
+            {office.officeName}
+          </button>
+          <div style={styles.smallMuted}>{office.activeDays} days · View detail</div>
         </td>
 
         <td style={styles.regionCell}>
@@ -1414,7 +1814,9 @@ const OfficeNumbers = () => {
           <strong>{formatNumber(office.selectedMetricCount)}</strong>
           <div style={styles.smallMuted}>
             {selectedMetricConfig.usesNbRwCount
-              ? `${formatNumber(office.newBusinessCount)} NEW / ${formatNumber(office.rewriteCount)} RWR`
+              ? office.dataSource === 'legacy'
+                ? 'Legacy data · NEW/RWR split unavailable'
+                : `${formatNumber(office.newBusinessCount)} NEW / ${formatNumber(office.rewriteCount)} RWR`
               : `${formatNumber(office.selectedFeeCount)} matching fee transaction(s)`}
           </div>
         </td>
@@ -1621,7 +2023,7 @@ const OfficeNumbers = () => {
           <div style={styles.segmentedControl}>
             <button
               type="button"
-              onClick={() => setViewMode('office')}
+              onClick={() => { setSelectedOffice(''); setViewMode('office'); }}
               style={{
                 ...styles.segmentButton,
                 ...(viewMode === 'office' ? styles.segmentButtonActive : {}),
@@ -1631,7 +2033,7 @@ const OfficeNumbers = () => {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode('agent')}
+              onClick={() => { setSelectedOffice(''); setViewMode('agent'); }}
               style={{
                 ...styles.segmentButton,
                 ...(viewMode === 'agent' ? styles.segmentButtonActive : {}),
@@ -1668,7 +2070,7 @@ const OfficeNumbers = () => {
 
           <button
             type="button"
-            onClick={() => { fetchProfileAndSettings(); fetchDashboardData(); }}
+            onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: viewMode === 'agent' }); }}
             disabled={loading || settingsLoading}
             style={styles.primaryButton}
           >
@@ -1694,13 +2096,64 @@ const OfficeNumbers = () => {
             <strong>Unable to load report</strong>
             <div>{errorMessage}</div>
           </div>
-          <button type="button" onClick={() => { fetchProfileAndSettings(); fetchDashboardData(); }} style={styles.retryButton}>
+          <button type="button" onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: viewMode === 'agent' }); }} style={styles.retryButton}>
             Retry
           </button>
         </div>
       )}
 
-      {viewMode === 'office' && (
+      {viewMode === 'office' && selectedOfficeMetric && selectedAgentMetric && (
+        <AgentDetail
+          agent={allAuthorizedAgentMetric || selectedAgentMetric}
+          office={selectedOfficeMetric}
+          selectedFeeConfig={selectedFeeConfig}
+          selectedMetricConfig={selectedMetricConfig}
+          selectedMonth={selectedMonth}
+          pacingDetails={pacingDetails}
+          isBrokerView={isBrokerView}
+          detailData={agentDetailData}
+          detailLoading={agentDetailLoading}
+          detailError={agentDetailError}
+          onRefresh={() => fetchAgentDetail(selectedAgentEmail, { force: true })}
+          onBack={() => { setSelectedAgentEmail(''); setAgentDetailData(null); setAgentDetailError(''); }}
+          onBackToSummary={() => {
+            setSelectedAgentEmail('');
+            setAgentDetailData(null);
+            setAgentDetailError('');
+            setSelectedOffice('');
+            setOfficeDetailData(null);
+            setOfficeDetailError('');
+          }}
+        />
+      )}
+
+      {viewMode === 'office' && selectedOfficeMetric && !selectedAgentMetric && (
+        <OfficeDetail
+          office={selectedOfficeMetric}
+          agents={selectedOfficeAgents}
+          trend={selectedOfficeTrend}
+          detailData={officeDetailData}
+          detailLoading={officeDetailLoading}
+          detailError={officeDetailError}
+          selectedFeeConfig={selectedFeeConfig}
+          selectedMetricConfig={selectedMetricConfig}
+          selectedMonth={selectedMonth}
+          comparisonMonths={comparisonMonths}
+          latestDataDate={latestDataDate}
+          pacingDetails={pacingDetails}
+          isBrokerView={isBrokerView}
+          onOpenAgent={openAgentDetail}
+          onRefreshDetail={() => fetchOfficeDetail(selectedOffice, { force: true })}
+          onBack={() => {
+            setSelectedAgentEmail('');
+            setSelectedOffice('');
+            setOfficeDetailData(null);
+            setOfficeDetailError('');
+          }}
+        />
+      )}
+
+      {viewMode === 'office' && !selectedOfficeMetric && (
         <>
       <div style={styles.summaryGrid}>
         <SummaryCard
@@ -1708,7 +2161,9 @@ const OfficeNumbers = () => {
           value={formatNumber(totals.selectedMetricCount)}
           subtext={
             selectedMetricConfig.usesNbRwCount
-              ? `${formatNumber(totals.newBusinessCount)} NEW • ${formatNumber(totals.rewriteCount)} RWR`
+              ? totals.hasLegacyData
+                ? 'Includes legacy months/rows where NEW/RWR split is unavailable'
+                : `${formatNumber(totals.newBusinessCount)} NEW • ${formatNumber(totals.rewriteCount)} RWR`
               : `${formatNumber(totals.selectedFeeCount)} matching fee transaction(s)`
           }
         />
@@ -1744,7 +2199,7 @@ const OfficeNumbers = () => {
           <div style={styles.loading}>Loading office performance metrics...</div>
         ) : officeMetrics.length === 0 ? (
           <div style={styles.loading}>
-            No daily_transaction_detail_transfers data was found for this month.
+            No Office Numbers data was found for this month.
           </div>
         ) : (
           <div style={styles.tableWrapper}>
@@ -2576,6 +3031,451 @@ const OfficeNumbers = () => {
 };
 
 
+const MetricBar = ({ label, value, max, displayValue }) => {
+  const width = max > 0 ? Math.max(2, Math.min(100, (Number(value || 0) / max) * 100)) : 0;
+  return (
+    <div style={styles.metricBarRow}>
+      <div style={styles.metricBarLabel}>{label}</div>
+      <div style={styles.metricBarTrack}><div style={{ ...styles.metricBarFill, width: `${width}%` }} /></div>
+      <div style={styles.metricBarValue}>{displayValue}</div>
+    </div>
+  );
+};
+
+const TrendBars = ({ rows = [], selectedMetricConfig }) => {
+  const max = Math.max(1, ...rows.map((row) => Number(row.selectedMetricCount) || 0));
+
+  return (
+    <div style={styles.trendChart}>
+      {rows.map((row) => {
+        const value = Number(row.selectedMetricCount) || 0;
+        const height = Math.max(3, (value / max) * 100);
+        return (
+          <div key={row.month} style={styles.trendColumn} title={`${row.month}: ${formatNumber(value)} ${selectedMetricConfig.shortCountLabel}`}>
+            <div style={styles.trendValue}>{formatNumber(value)}</div>
+            <div style={styles.trendBarWell}>
+              <div style={{ ...styles.trendBar, height: `${height}%` }} />
+            </div>
+            <div style={styles.trendMonth}>{row.month ? row.month.slice(5) : '—'}</div>
+            <div style={styles.trendSource}>{row.dataSource === 'legacy' ? 'L' : row.dataSource === 'detailed' ? 'D' : '—'}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const OfficeDetail = ({
+  office, agents, trend, detailData, detailLoading, detailError,
+  selectedFeeConfig, selectedMetricConfig, selectedMonth, comparisonMonths,
+  latestDataDate, pacingDetails, isBrokerView, onOpenAgent, onRefreshDetail, onBack,
+}) => {
+  const comparisonValues = [
+    { label: 'Current', value: office.selectedMetricCount },
+    { label: 'Last Month', value: office.lastMonthCount || 0 },
+    { label: 'Last Year', value: office.lastYearCount || 0 },
+  ];
+  const comparisonMax = Math.max(1, ...comparisonValues.map((item) => Number(item.value) || 0));
+  const pacingValues = [
+    { label: 'Actual', value: office.selectedMetricCount },
+    { label: 'Projected', value: office.projectedCount },
+    ...(isBrokerView && office.goal > 0 ? [{ label: 'Goal', value: office.goal }] : []),
+  ];
+  const pacingMax = Math.max(1, ...pacingValues.map((item) => Number(item.value) || 0));
+
+  const feeEntries = FEE_TYPE_OPTIONS
+    .filter((item) => !['all', 'insurance'].includes(item.value))
+    .map((item) => ({ label: item.label, value: Number(office.feeTotals?.[item.value]) || 0 }))
+    .filter((item) => Math.abs(item.value) > 0.001);
+  const feeMax = Math.max(1, ...feeEntries.map((item) => Math.abs(item.value)));
+  const splitTotal = (Number(office.newBusinessCount) || 0) + (Number(office.rewriteCount) || 0);
+  const newPercent = splitTotal > 0 ? (Number(office.newBusinessCount) || 0) / splitTotal * 100 : 0;
+  const rpcOffice = detailData?.office || null;
+
+  return (
+    <div style={styles.detailPage}>
+      <div style={styles.detailTopRow}>
+        <div>
+          <button type="button" onClick={onBack} style={styles.backButton}>← Back to Office Summary</button>
+          <h2 style={styles.detailTitle}>{office.officeName} · {office.region}</h2>
+          <div style={styles.detailSubtitle}>
+            {getMonthLabel(selectedMonth)} · Data through {formatDateLabel(rpcOffice?.latest_data_date || latestDataDate)} · {office.activeDays} active day(s)
+          </div>
+        </div>
+        <div style={styles.detailHeaderActions}>
+          <button type="button" onClick={onRefreshDetail} disabled={detailLoading} style={styles.secondaryButton}>
+            {detailLoading ? 'Refreshing...' : 'Refresh Detail'}
+          </button>
+          <span style={office.status === 'On Track' ? styles.onTrackBadge : office.status === 'Behind' ? styles.behindBadge : styles.noGoalBadge}>
+            {office.status}
+          </span>
+        </div>
+      </div>
+
+      {detailError && (
+        <div style={styles.errorBox}>
+          <div><strong>Unable to load office detail</strong><div>{detailError}</div></div>
+          <button type="button" onClick={onRefreshDetail} style={styles.retryButton}>Retry</button>
+        </div>
+      )}
+
+
+      <div style={styles.detailKpiGrid}>
+        <SummaryCard label={selectedMetricConfig.countLabel} value={formatNumber(office.selectedMetricCount)} subtext={office.dataSource === 'legacy' ? 'Legacy detail split unavailable' : `${formatNumber(office.newBusinessCount)} NEW • ${formatNumber(office.rewriteCount)} RWR`} />
+        <SummaryCard label={selectedFeeConfig.label} value={formatCurrency(office.selectedFeeTotal)} subtext={`${formatNumber(office.selectedFeeCount)} fee transaction(s)`} />
+        <SummaryCard label={`Average ${selectedFeeConfig.label}`} value={formatCurrency(office.selectedFeeAvg, 2)} />
+        <SummaryCard label={selectedMetricConfig.projectedLabel} value={formatDecimal(office.projectedCount)} subtext={`Day ${pacingDetails.asOfDay} of ${pacingDetails.totalDaysInMonth}`} />
+        {isBrokerView && <SummaryCard label="NB/RW Goal" value={office.goal > 0 ? formatNumber(office.goal) : 'Not Set'} subtext={office.goal > 0 ? `${Math.round(office.actualGoalPercent)}% actual · ${Math.round(office.projectedGoalPercent)}% projected` : ''} />}
+        <SummaryCard label="Loaded Receipts" value={formatNumber(office.transactionCount)} subtext={`${formatNumber(office.excludedRows)} voided/excluded rows`} />
+      </div>
+
+      <div style={styles.chartGrid}>
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Performance Comparison</div>
+          <div style={styles.chartSubtext}>{selectedMetricConfig.shortCountLabel}: current vs. {getMonthLabel(comparisonMonths.lastMonth.value)} vs. {getMonthLabel(comparisonMonths.lastYear.value)}</div>
+          {comparisonValues.map((item) => <MetricBar key={item.label} label={item.label} value={item.value} max={comparisonMax} displayValue={formatNumber(item.value)} />)}
+        </div>
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Goal & Pacing</div>
+          <div style={styles.chartSubtext}>Actual performance, projected finish, and monthly goal.</div>
+          {pacingValues.map((item) => <MetricBar key={item.label} label={item.label} value={item.value} max={pacingMax} displayValue={formatDecimal(item.value)} />)}
+        </div>
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Fee Mix</div>
+          <div style={styles.chartSubtext}>Revenue by fee category for this office.</div>
+          {feeEntries.length ? feeEntries.map((item) => <MetricBar key={item.label} label={item.label} value={Math.abs(item.value)} max={feeMax} displayValue={formatCurrency(item.value)} />) : <div style={styles.emptyDetail}>No fee revenue in this period.</div>}
+        </div>
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>NEW vs RWR</div>
+          <div style={styles.chartSubtext}>Policy mix for detailed-data months.</div>
+          {office.dataSource === 'legacy' ? <div style={styles.emptyDetail}>NEW/RWR split is unavailable for legacy data.</div> : (
+            <>
+              <div style={styles.splitTrack}><div style={{ ...styles.splitNew, width: `${newPercent}%` }} /><div style={{ ...styles.splitRwr, width: `${100 - newPercent}%` }} /></div>
+              <div style={styles.splitLegend}><span>{formatNumber(office.newBusinessCount)} NEW ({Math.round(newPercent)}%)</span><span>{formatNumber(office.rewriteCount)} RWR ({Math.round(100 - newPercent)}%)</span></div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.chartCardWide}>
+        <div style={styles.chartTitle}>12-Month Performance Trend</div>
+        <div style={styles.chartSubtext}>
+          {selectedMetricConfig.shortCountLabel} by month. D = detailed transaction data; L = legacy monthly data.
+        </div>
+        {detailLoading && !trend.length ? (
+          <div style={styles.emptyDetail}>Loading office trend...</div>
+        ) : trend.length ? (
+          <TrendBars rows={trend} selectedMetricConfig={selectedMetricConfig} />
+        ) : (
+          <div style={styles.emptyDetail}>No trend data is available for this office.</div>
+        )}
+      </div>
+
+      <div style={styles.tableCard}>
+        <div style={styles.detailSectionHeader}>
+          <div>
+            <div style={styles.chartTitle}>Agent Leaderboard</div>
+            <div style={styles.chartSubtext}>Selected-office agent performance loaded from the lightweight Office Detail RPC.</div>
+          </div>
+          {rpcOffice && <div style={styles.detailDataPill}>{formatNumber(rpcOffice.valid_rows_count || 0)} valid rows</div>}
+        </div>
+
+        {detailLoading && !agents.length ? (
+          <div style={styles.emptyDetail}>Loading agent breakdown...</div>
+        ) : agents.length === 0 ? (
+          <div style={styles.emptyDetail}>No agent detail found for this office and month.</div>
+        ) : (
+          <div style={styles.tableWrapper}>
+            <table style={{ ...styles.table, minWidth: isBrokerView ? 980 : 820 }}>
+              <thead>
+                <tr>
+                  <th style={styles.tableHeader}>Agent</th>
+                  <th style={styles.tableHeader}>{selectedMetricConfig.shortCountLabel}</th>
+                  <th style={styles.tableHeader}>{selectedFeeConfig.label}</th>
+                  <th style={styles.tableHeader}>Avg Fee</th>
+                  {isBrokerView && <th style={styles.tableHeader}>Goal</th>}
+                  <th style={styles.tableHeader}>Projected</th>
+                  {isBrokerView && <th style={styles.tableHeader}>Status</th>}
+                  <th style={styles.tableHeader}>Active Days</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((agent) => (
+                  <tr key={agent.agentEmail}>
+                    <td style={styles.officeCell}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenAgent(agent.agentEmail)}
+                        style={styles.agentLinkButton}
+                        title={`Open ${agent.csrName} detail`}
+                      >
+                        {agent.csrName}
+                      </button>
+                      <div style={styles.smallMuted}>{agent.agentEmail} · View detail</div>
+                    </td>
+                    <td style={{ ...styles.numberCell, ...styles.metricCurrentCell }}>
+                      <strong>{formatNumber(agent.selectedMetricCount)}</strong>
+                      {selectedMetricConfig.usesNbRwCount && (
+                        <div style={styles.smallMuted}>{formatNumber(agent.newBusinessCount)} NEW / {formatNumber(agent.rewriteCount)} RWR</div>
+                      )}
+                    </td>
+                    <td style={styles.numberCell}>{formatCurrency(agent.selectedFeeTotal)}</td>
+                    <td style={styles.numberCell}>{formatCurrency(agent.selectedFeeAvg, 2)}</td>
+                    {isBrokerView && <td style={{ ...styles.numberCell, ...styles.metricGoalCell }}>{agent.goal > 0 ? formatNumber(agent.goal) : 'Not Set'}</td>}
+                    <td style={{ ...styles.numberCell, ...styles.metricProjectedCell }}>{formatDecimal(agent.projectedCount)}</td>
+                    {isBrokerView && (
+                      <td style={styles.numberCell}>
+                        <span style={agent.status === 'On Track' ? styles.onTrackBadge : agent.status === 'Behind' ? styles.behindBadge : styles.noGoalBadge}>{agent.status}</span>
+                      </td>
+                    )}
+                    <td style={styles.numberCell}>{formatNumber(agent.activeDays)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
+const AgentDetail = ({
+  agent,
+  office,
+  selectedFeeConfig,
+  selectedMetricConfig,
+  selectedMonth,
+  pacingDetails,
+  isBrokerView,
+  detailData,
+  detailLoading,
+  detailError,
+  onRefresh,
+  onBack,
+  onBackToSummary,
+}) => {
+  const feeEntries = FEE_TYPE_OPTIONS
+    .filter((item) => !['all', 'insurance'].includes(item.value))
+    .map((item) => ({
+      label: item.label,
+      value: Number(agent.feeTotals?.[item.value]) || 0,
+      count: Number(agent.feeCounts?.[item.value]) || 0,
+    }))
+    .filter((item) => Math.abs(item.value) > 0.001 || item.count !== 0);
+
+  const feeMax = Math.max(1, ...feeEntries.map((item) => Math.abs(item.value)));
+  const splitTotal = (Number(agent.newBusinessCount) || 0) + (Number(agent.rewriteCount) || 0);
+  const newPercent = splitTotal > 0
+    ? ((Number(agent.newBusinessCount) || 0) / splitTotal) * 100
+    : 0;
+  const pacingValues = [
+    { label: 'Actual', value: agent.selectedMetricCount },
+    { label: 'Projected', value: agent.projectedCount },
+    ...(isBrokerView && agent.goal > 0 ? [{ label: 'Goal', value: agent.goal }] : []),
+  ];
+  const pacingMax = Math.max(1, ...pacingValues.map((item) => Number(item.value) || 0));
+
+  const weeklyRows = Array.isArray(detailData?.weeks) ? detailData.weeks : [];
+  const officeRows = Array.isArray(detailData?.offices) ? detailData.offices : [];
+  const trendRows = Array.isArray(detailData?.trend) ? detailData.trend : [];
+  const trendMax = Math.max(1, ...trendRows.map((row) => Number(row.nb_rw_count) || 0));
+
+  return (
+    <div style={styles.detailPage}>
+      <div style={styles.detailTopRow}>
+        <div>
+          <button type="button" onClick={onBack} style={styles.backButton}>← Back to {office.officeName} Detail</button>
+          <div>
+            <button type="button" onClick={onBackToSummary} style={styles.secondaryTextButton}>Office Summary</button>
+          </div>
+          <h2 style={styles.detailTitle}>{agent.csrName}</h2>
+          <div style={styles.detailSubtitle}>
+            {agent.agentEmail} · All authorized offices · {getMonthLabel(selectedMonth)}
+          </div>
+        </div>
+        <span style={agent.status === 'On Track' ? styles.onTrackBadge : agent.status === 'Behind' ? styles.behindBadge : styles.noGoalBadge}>
+          {isBrokerView ? agent.status : selectedFeeConfig.label}
+        </span>
+      </div>
+
+
+
+      {detailError && (
+        <div style={styles.errorBox}>
+          <div><strong>Unable to load all-office agent detail</strong><div>{detailError}</div></div>
+          <button type="button" onClick={onRefresh} style={styles.retryButton}>Retry</button>
+        </div>
+      )}
+
+      <div style={styles.detailSectionHeader}>
+        <div>
+          <div style={styles.detailDataPill}>Scope: All Authorized Offices</div>
+          <div style={styles.chartSubtext}>Admin = company-wide · Regional = assigned region · Supervisor = assigned office.</div>
+        </div>
+        <button type="button" onClick={onRefresh} disabled={detailLoading} style={styles.primaryButton}>
+          {detailLoading ? 'Refreshing...' : 'Refresh Agent Detail'}
+        </button>
+      </div>
+      <div style={styles.detailKpiGrid}>
+        <SummaryCard
+          label={selectedMetricConfig.countLabel}
+          value={formatNumber(agent.selectedMetricCount)}
+          subtext={selectedMetricConfig.usesNbRwCount ? `${formatNumber(agent.newBusinessCount)} NEW • ${formatNumber(agent.rewriteCount)} RWR` : `${formatNumber(agent.selectedFeeCount)} matching fee transaction(s)`}
+        />
+        <SummaryCard
+          label={selectedFeeConfig.label}
+          value={formatCurrency(agent.selectedFeeTotal)}
+          subtext={`${formatNumber(agent.selectedFeeCount)} fee transaction(s)`}
+        />
+        <SummaryCard label={`Average ${selectedFeeConfig.label}`} value={formatCurrency(agent.selectedFeeAvg, 2)} />
+        <SummaryCard label={selectedMetricConfig.projectedLabel} value={formatDecimal(agent.projectedCount)} subtext={`Day ${pacingDetails.asOfDay} of ${pacingDetails.totalDaysInMonth}`} />
+        {isBrokerView && <SummaryCard label="NB/RW Goal" value={agent.goal > 0 ? formatNumber(agent.goal) : 'Not Set'} subtext={agent.goal > 0 ? `${Math.round(agent.actualGoalPercent)}% actual · ${Math.round(agent.projectedGoalPercent)}% projected` : ''} />}
+        <SummaryCard label="Loaded Receipts" value={formatNumber(agent.validReceiptCount)} subtext={`${formatNumber(agent.activeDays)} active day(s)`} />
+      </div>
+
+      <div style={styles.chartGrid}>
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Goal & Pacing</div>
+          <div style={styles.chartSubtext}>Actual performance, projected finish, and goal for this agent.</div>
+          {pacingValues.map((item) => (
+            <MetricBar key={item.label} label={item.label} value={item.value} max={pacingMax} displayValue={formatDecimal(item.value)} />
+          ))}
+        </div>
+
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Insurance Fees</div>
+          <div style={styles.chartSubtext}>Broker + Endorsement + Renewal + Reinstatement + Payment. Payment is included here for reporting, but excluded from commission.</div>
+          <div style={styles.agentInsuranceTotal}>{formatCurrency(agent.feeTotals?.insurance || 0)}</div>
+          <div style={styles.chartSubtext}>{formatNumber(agent.feeCounts?.insurance || 0)} insurance fee transaction(s)</div>
+          <div style={{ marginTop: 14 }}>
+            {INSURANCE_FEE_TYPES.map((type) => {
+              const option = FEE_TYPE_OPTIONS.find((item) => item.value === type);
+              return (
+                <div key={type} style={styles.agentFeeLine}>
+                  <span>{option?.label || type}</span>
+                  <strong>{formatCurrency(agent.feeTotals?.[type] || 0)}</strong>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>Fee Mix</div>
+          <div style={styles.chartSubtext}>Revenue generated by fee category during the selected month.</div>
+          {feeEntries.length ? feeEntries.map((item) => (
+            <MetricBar key={item.label} label={item.label} value={Math.abs(item.value)} max={feeMax} displayValue={formatCurrency(item.value)} />
+          )) : <div style={styles.emptyDetail}>No fee revenue in this period.</div>}
+        </div>
+
+        <div style={styles.chartCard}>
+          <div style={styles.chartTitle}>NEW vs RWR</div>
+          <div style={styles.chartSubtext}>Current policy mix for this agent.</div>
+          {splitTotal > 0 ? (
+            <>
+              <div style={styles.splitTrack}><div style={{ ...styles.splitNew, width: `${newPercent}%` }} /><div style={{ ...styles.splitRwr, width: `${100 - newPercent}%` }} /></div>
+              <div style={styles.splitLegend}><span>{formatNumber(agent.newBusinessCount)} NEW ({Math.round(newPercent)}%)</span><span>{formatNumber(agent.rewriteCount)} RWR ({Math.round(100 - newPercent)}%)</span></div>
+            </>
+          ) : <div style={styles.emptyDetail}>No NEW/RWR production was recorded for this agent.</div>}
+        </div>
+      </div>
+
+
+      <div style={styles.chartCard}>
+        <div style={styles.chartTitle}>12-Month NB/RW Trend</div>
+        <div style={styles.chartSubtext}>All authorized offices for this agent.</div>
+        {trendRows.length ? trendRows.map((row) => (
+          <MetricBar key={row.month} label={row.month} value={Number(row.nb_rw_count) || 0} max={trendMax} displayValue={formatNumber(row.nb_rw_count)} />
+        )) : <div style={styles.emptyDetail}>No trend data returned.</div>}
+      </div>
+
+      <div style={styles.tableCard}>
+        <div style={styles.detailSectionHeader}>
+          <div>
+            <div style={styles.chartTitle}>Weekly Performance & Estimated Commission</div>
+            <div style={styles.chartSubtext}>Full Monday-Sunday commission weeks that overlap {getMonthLabel(selectedMonth)}. Tier 1 uses 8+ Net NBs OR $2,500 gross revenue. Payment Fees do not count toward commission revenue.</div>
+            <div style={{ ...styles.chartSubtext, marginTop: 4, fontWeight: 700 }}>Estimated commission is for planning purposes only and does not include violation deductions. Final commission may differ.</div>
+          </div>
+          <div style={styles.detailDataPill}>$800 estimated gross pay / week</div>
+        </div>
+        <div style={styles.tableWrapper}>
+          <table style={{ ...styles.table, minWidth: 1260 }}>
+            <thead><tr>
+              <th style={styles.tableHeader}>Week</th><th style={styles.tableHeader}>Gross NB</th><th style={styles.tableHeader}>Disq.</th><th style={styles.tableHeader}>Net NB</th>
+              <th style={styles.tableHeader}>Commission Gross Revenue</th><th style={styles.tableHeader}>Est. Net Revenue</th><th style={styles.tableHeader}>Tier</th><th style={styles.tableHeader}>Rate</th>
+              <th style={styles.tableHeader}>Est. Commission*</th><th style={styles.tableHeader}>Status</th>
+            </tr></thead>
+            <tbody>
+              {weeklyRows.length ? weeklyRows.map((week) => (
+                <tr key={week.week_start}>
+                  <td style={styles.officeCell}>{formatDateLabel(String(week.week_start))} – {formatDateLabel(String(week.week_end))}</td>
+                  <td style={styles.numberCell}>{formatNumber(week.gross_nb_count)}</td><td style={styles.numberCell}>{formatNumber(week.disqualified_nb_count)}</td><td style={{...styles.numberCell,...styles.metricCurrentCell}}><strong>{formatNumber(week.net_nb_count)}</strong></td>
+                  <td style={styles.numberCell}>{formatCurrency(week.gross_revenue)}</td><td style={styles.numberCell}>{formatCurrency(week.net_revenue)}</td><td style={styles.numberCell}><strong>{week.tier}</strong></td><td style={styles.numberCell}>{(Number(week.commission_rate) * 100).toFixed(1)}%</td>
+                  <td style={{...styles.numberCell,fontWeight:900}}>{formatCurrency(week.base_commission)}</td><td style={styles.numberCell}>{week.status}</td>
+                </tr>
+              )) : <tr><td colSpan={10} style={styles.loading}>{detailLoading ? 'Loading weekly commission estimate...' : 'No weekly data returned.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style={styles.tableCard}>
+        <div style={styles.detailSectionHeader}>
+          <div><div style={styles.chartTitle}>Office Breakdown</div><div style={styles.chartSubtext}>Where this agent's selected-month production came from.</div></div>
+          <div style={styles.detailDataPill}>{officeRows.length} office(s)</div>
+        </div>
+        <div style={styles.tableWrapper}><table style={{...styles.table,minWidth:900}}>
+          <thead><tr><th style={styles.tableHeader}>Office</th><th style={styles.tableHeader}>Region</th><th style={styles.tableHeader}>NB/RW</th><th style={styles.tableHeader}>NEW</th><th style={styles.tableHeader}>RWR</th><th style={styles.tableHeader}>Insurance Fees</th><th style={styles.tableHeader}>Active Days</th></tr></thead>
+          <tbody>{officeRows.length ? officeRows.map((row) => {
+            const insurance = ['broker','endorsement','renewal','reinstatement','payment'].reduce((sum,type)=>sum+(Number(row[`${type}_fee_total`])||0),0);
+            return <tr key={row.office_code}><td style={styles.officeCell}>{row.office_code}</td><td style={styles.numberCell}>{row.region || 'Unassigned'}</td><td style={{...styles.numberCell,...styles.metricCurrentCell}}><strong>{formatNumber(row.nb_rw_count)}</strong></td><td style={styles.numberCell}>{formatNumber(row.new_business_count)}</td><td style={styles.numberCell}>{formatNumber(row.rewrite_count)}</td><td style={styles.numberCell}>{formatCurrency(insurance)}</td><td style={styles.numberCell}>{formatNumber(row.active_days)}</td></tr>;
+          }) : <tr><td colSpan={7} style={styles.loading}>{detailLoading ? 'Loading office breakdown...' : 'No office breakdown returned.'}</td></tr>}</tbody>
+        </table></div>
+      </div>
+
+      <div style={styles.tableCard}>
+        <div style={styles.detailSectionHeader}>
+          <div>
+            <div style={styles.chartTitle}>Fee Breakdown</div>
+            <div style={styles.chartSubtext}>Current-month agent fee revenue and transaction counts.</div>
+          </div>
+          <div style={styles.detailDataPill}>All Fees {formatCurrency(agent.feeTotals?.all || 0)}</div>
+        </div>
+        <div style={styles.tableWrapper}>
+          <table style={{ ...styles.table, minWidth: 720 }}>
+            <thead>
+              <tr>
+                <th style={styles.tableHeader}>Fee Type</th>
+                <th style={styles.tableHeader}>Transactions</th>
+                <th style={styles.tableHeader}>Revenue</th>
+                <th style={styles.tableHeader}>Average</th>
+              </tr>
+            </thead>
+            <tbody>
+              {FEE_TYPE_OPTIONS.filter((item) => item.value !== 'all').map((item) => {
+                const count = Number(agent.feeCounts?.[item.value]) || 0;
+                const total = Number(agent.feeTotals?.[item.value]) || 0;
+                const avgDenominator = item.value === 'broker' ? agent.nbRwCount : count;
+                return (
+                  <tr key={item.value}>
+                    <td style={styles.officeCell}>{item.label}</td>
+                    <td style={styles.numberCell}>{formatNumber(count)}</td>
+                    <td style={styles.numberCell}>{formatCurrency(total)}</td>
+                    <td style={styles.numberCell}>{formatCurrency(avgDenominator ? total / avgDenominator : 0, 2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 const SummaryCard = ({ label, value, subtext }) => (
   <div style={styles.summaryCard}>
     <div style={styles.summaryLabel}>{label}</div>
@@ -2967,6 +3867,43 @@ const styles = {
     whiteSpace: 'nowrap',
     fontSize: 11,
   },
+  officeLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#1d4ed8', cursor: 'pointer', font: 'inherit', fontWeight: 900, textDecoration: 'underline', textUnderlineOffset: 2 },
+  agentLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#1d4ed8', cursor: 'pointer', font: 'inherit', fontWeight: 900, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2 },
+  secondaryTextButton: { padding: 0, marginBottom: 8, border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 12, fontWeight: 800, textDecoration: 'underline', textUnderlineOffset: 2 },
+  agentInsuranceTotal: { marginTop: 12, fontSize: 28, fontWeight: 950, color: '#0f172a' },
+  agentFeeLine: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0', borderBottom: '1px solid #f1f5f9', color: '#475569', fontSize: 12 },
+  detailPage: { marginBottom: 24 },
+  detailTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 },
+  backButton: { padding: 0, marginBottom: 8, border: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', fontWeight: 850 },
+  detailTitle: { margin: 0, fontSize: 25, fontWeight: 900 },
+  detailSubtitle: { marginTop: 5, color: '#64748b', fontSize: 13, fontWeight: 700 },
+  detailKpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 },
+  chartGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14, marginBottom: 16 },
+  chartCard: { padding: 16, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', boxShadow: '0 1px 3px rgba(15,23,42,.05)' },
+  chartTitle: { fontSize: 15, fontWeight: 900, color: '#0f172a' },
+  chartSubtext: { marginTop: 3, marginBottom: 14, color: '#64748b', fontSize: 11, fontWeight: 700 },
+  metricBarRow: { display: 'grid', gridTemplateColumns: '90px 1fr 82px', alignItems: 'center', gap: 9, marginTop: 10 },
+  metricBarLabel: { color: '#475569', fontSize: 11, fontWeight: 800 },
+  metricBarTrack: { height: 12, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0' },
+  metricBarFill: { height: '100%', borderRadius: 999, background: '#2563eb' },
+  metricBarValue: { textAlign: 'right', color: '#0f172a', fontSize: 11, fontWeight: 900 },
+  splitTrack: { display: 'flex', height: 24, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0', marginTop: 20 },
+  splitNew: { height: '100%', background: '#2563eb' },
+  splitRwr: { height: '100%', background: '#94a3b8' },
+  splitLegend: { display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 10, color: '#475569', fontSize: 11, fontWeight: 800 },
+  detailSectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, padding: 16, borderBottom: '1px solid #e2e8f0' },
+  emptyDetail: { padding: 22, color: '#64748b', textAlign: 'center', fontSize: 12, fontWeight: 700 },
+  detailHeaderActions: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  secondaryButton: { padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: 8, background: '#fff', color: '#334155', cursor: 'pointer', fontWeight: 800 },
+  chartCardWide: { padding: 16, marginBottom: 16, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', boxShadow: '0 1px 3px rgba(15,23,42,.05)' },
+  trendChart: { display: 'flex', alignItems: 'flex-end', gap: 8, minHeight: 220, marginTop: 18, overflowX: 'auto', paddingBottom: 4 },
+  trendColumn: { flex: '1 0 54px', minWidth: 54, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 },
+  trendValue: { fontSize: 10, fontWeight: 900, color: '#334155' },
+  trendBarWell: { width: 28, height: 140, display: 'flex', alignItems: 'flex-end', borderRadius: 6, background: '#eff6ff', overflow: 'hidden' },
+  trendBar: { width: '100%', minHeight: 3, borderRadius: '6px 6px 0 0', background: '#2563eb' },
+  trendMonth: { fontSize: 10, fontWeight: 800, color: '#475569' },
+  trendSource: { width: 20, height: 20, display: 'grid', placeItems: 'center', borderRadius: 999, background: '#f1f5f9', color: '#64748b', fontSize: 9, fontWeight: 900 },
+  detailDataPill: { padding: '5px 9px', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', fontSize: 11, fontWeight: 900 },
   loading: { padding: '50px 24px', color: '#64748b', textAlign: 'center', fontWeight: 700 },
 };
 

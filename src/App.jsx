@@ -38,6 +38,7 @@ import AdminCommissionLog from './pages/admin/AdminCommissionLog';
 
 // ✅ ADDED: Agent Commission Log page import
 import AgentCommissionLog from './pages/agent/AgentCommissionLog';
+import AgentQuoteLog from './pages/agent/AgentQuoteLog';
 
 // ✅ ADDED: Commission Uploader page import
 import CommissionUploader from './pages/admin/CommissionUploader';
@@ -48,8 +49,19 @@ import MarketingOps from './pages/admin/MarketingOps';
 // ✅ ADDED: Admin Tax WIP page import
 import AdminTaxWip from './pages/admin/AdminTaxWip';
 
+// ✅ ADDED: Admin Quote Log
+import AdminQuoteLog from './pages/admin/AdminQuoteLog';
+
 // ✅ ADDED: Supervisor Tax WIP page import
 import SupervisorTaxWip from './pages/supervisor/SupervisorTaxWip';
+
+// ✅ ADDED: Supervisor Quote Operations
+import SupervisorQuoteOperations from './pages/supervisor/SupervisorQuoteOperations';
+
+// ✅ ADDED: Regional pages
+import RegionalDashboard from './pages/regional/RegionalDashboard';
+import RegionalQuoteOperations from './pages/regional/RegionalQuoteOperations';
+import RegionalTickets from './pages/regional/RegionalTickets';
 
 // Underwriting pages
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
@@ -340,11 +352,17 @@ function AppRoutes() {
     switch (role) {
       case 'admin':
         return '/admin';
+
       case 'supervisor':
-    return '/dashboard';
+        return '/dashboard';
+
+      case 'regional':
+        return '/regional/dashboard';
+
       case 'underwriter':
       case 'uw_manager':
         return '/uw';
+
       case 'agent':
       default:
         return '/dashboard';
@@ -389,7 +407,12 @@ function AppRoutes() {
       <Route
     element={
         <ProtectedRoute
-            allowedRoles={['agent', 'supervisor', 'admin']}
+            allowedRoles={[
+              'agent',
+              'regional',
+              'supervisor',
+              'admin',
+            ]}
         />
     }
 >
@@ -404,6 +427,7 @@ function AppRoutes() {
 
           {/* ✅ ADDED: Agent commission log route */}
           <Route path="/agent/commission" element={<AgentCommissionLog />} />
+          <Route path="/agent/quotes" element={<AgentQuoteLog />} />
 
           <Route path="/uw/submit" element={<UnderwritingSubmit />} />
         </Route>
@@ -428,6 +452,23 @@ function AppRoutes() {
         </Route>
       </Route>
 
+      {/* PROTECTED: Regional area */}
+      <Route
+        element={
+          <ProtectedRoute
+            allowedRoles={['regional', 'admin']}
+          />
+        }
+      >
+        <Route path="/regional" element={<AuthLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<RegionalDashboard />} />
+          <Route path="quote-operations" element={<RegionalQuoteOperations />} />
+          <Route path="office-numbers" element={<OfficeNumbers />} />
+          <Route path="tickets" element={<RegionalTickets />} />
+        </Route>
+      </Route>
+
       {/* PROTECTED: Supervisor area */}
       <Route element={<ProtectedRoute allowedRoles={['supervisor', 'admin']} />}>
   <Route path="/supervisor" element={<AuthLayout />}>
@@ -435,6 +476,7 @@ function AppRoutes() {
     <Route path="office-numbers" element={<OfficeNumbers />} />
     <Route path="tickets" element={<SupervisorTickets />} />
     <Route path="tax-wip" element={<SupervisorTaxWip />} />
+    <Route path="quote-operations" element={<SupervisorQuoteOperations />} />
   </Route>
 </Route>
 
@@ -461,6 +503,9 @@ function AppRoutes() {
 
           {/* ✅ ADDED: Admin Tax WIP Route */}
           <Route path="tax-wip" element={<AdminTaxWip />} />
+
+          {/* ✅ ADDED: Admin Quote Log Route */}
+          <Route path="quote-log" element={<AdminQuoteLog />} />
         </Route>
       </Route>
 
