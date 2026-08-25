@@ -55,6 +55,8 @@ const TABS = [
   ['live', 'Live Activity'],
   ['attention', 'Needs Attention'],
   ['quotes', 'Quotes'],
+  ['followups', 'Follow-Ups'],
+  ['calendar', 'Calendar'],
   ['closed', 'Closed Deals'],
   ['office_access', 'Office Log Access'],
 ];
@@ -362,6 +364,17 @@ function groupFollowUpAt(group) {
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
   return group?.outcome?.followUpAt || followUps[0] || null;
+}
+
+function localDateKey(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function calendarMonthForView(timeView, selectedDate, selectedMonth) {
+  return timeView === 'month' ? selectedMonth : monthValue(parseLocalDate(selectedDate));
 }
 
 function briefText(value, max = 92) {
@@ -738,7 +751,9 @@ export default function SupervisorQuoteOperations() {
       }
 
       const { start, end } = rangeBounds(timeView, selectedDate, month);
-      const [historyResult, liveResult] = await Promise.all([
+      const followUpMonth = calendarMonthForView(timeView, selectedDate, month);
+      const followUpBounds = monthBounds(followUpMonth);
+      const [historyResult, liveResult, followUpWorkflowResult] = await Promise.all([
         supabaseClient
           .from('quote_log_view')
           .select('*')
@@ -753,18 +768,41 @@ export default function SupervisorQuoteOperations() {
           .eq('office', profileOffice)
           .eq('status', 'in_progress')
           .order('started_at', { ascending: false }),
+        // Pull scheduled follow-ups for the full visible month, even if the quote began earlier.
+        supabaseClient
+          .from('quote_workflow')
+          .select('quote_id, follow_up_at')
+          .or('follow_up_needed.eq.true,outcome.eq.follow_up')
+          .gte('follow_up_at', followUpBounds.start)
+          .lt('follow_up_at', followUpBounds.end),
       ]);
 
-      if (historyResult.error || liveResult.error) {
-        const queryError = historyResult.error || liveResult.error;
+      if (historyResult.error || liveResult.error || followUpWorkflowResult.error) {
+        const queryError = historyResult.error || liveResult.error || followUpWorkflowResult.error;
         console.error('[SupervisorQuoteOperations] query failed:', queryError);
         setError(`Could not load Quote Operations: ${queryError.message}`);
         if (!quiet) setLoading(false);
         return;
       }
 
+      const followUpQuoteIds = [...new Set((followUpWorkflowResult.data || []).map((row) => row.quote_id).filter(Boolean))];
+      const followUpQuoteRows = [];
+      for (let index = 0; index < followUpQuoteIds.length; index += 200) {
+        const ids = followUpQuoteIds.slice(index, index + 200);
+        const { data, error: followUpQuoteError } = await supabaseClient
+          .from('quote_log_view')
+          .select('*')
+          .eq('office', profileOffice)
+          .in('id', ids);
+        if (followUpQuoteError) {
+          console.error('[SupervisorQuoteOperations] follow-up quote query failed:', followUpQuoteError);
+        } else {
+          followUpQuoteRows.push(...(data || []));
+        }
+      }
+
       const rowMap = new Map();
-      [...(historyResult.data || []), ...(liveResult.data || [])].forEach((row) => {
+      [...(historyResult.data || []), ...(liveResult.data || []), ...followUpQuoteRows].forEach((row) => {
         if (row?.id) rowMap.set(row.id, row);
       });
       const baseRows = [...rowMap.values()];
@@ -794,7 +832,7 @@ export default function SupervisorQuoteOperations() {
             .order('event_at', { ascending: true }),
           supabaseClient
             .from('quote_workflow')
-            .select('quote_id, contact_method, quote_business_type, existing_client_reason, first_yes_ready_now, second_yes_id_vin, third_yes_payment_ready, payment_method, first_yes_recorded_at, second_yes_recorded_at, third_yes_recorded_at')
+            .select('quote_id, contact_method, quote_business_type, existing_client_reason, first_yes_ready_now, second_yes_id_vin, third_yes_payment_ready, payment_method, first_yes_recorded_at, second_yes_recorded_at, third_yes_recorded_at, outcome, follow_up_needed, follow_up_at, agent_notes, not_closed_explanation, lost_deal_manager_name, lost_deal_broker_fee')
             .in('quote_id', ids),
           supabaseClient
             .from('quote_internal_notes')
@@ -1087,6 +1125,34 @@ export default function SupervisorQuoteOperations() {
     [historicalGroups]
   );
 
+
+  const calendarMonth = useMemo(
+    () => calendarMonthForView(timeView, selectedDate, month),
+    [timeView, selectedDate, month]
+  );
+
+  const calendarFollowUpGroups = useMemo(() => {
+    const { start, end } = monthBounds(calendarMonth);
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+    return scopeGroups
+      .filter((group) => group.outcome?.status === 'follow_up')
+      .filter((group) => {
+        const at = new Date(groupFollowUpAt(group) || 0).getTime();
+        return Number.isFinite(at) && at >= startMs && at < endMs;
+      })
+      .sort((a, b) => new Date(groupFollowUpAt(a) || 0) - new Date(groupFollowUpAt(b) || 0));
+  }, [scopeGroups, calendarMonth]);
+
+  const followUpGroups = useMemo(() => {
+    const startMs = new Date(selectedBounds.start).getTime();
+    const endMs = new Date(selectedBounds.end).getTime();
+    return calendarFollowUpGroups.filter((group) => {
+      const at = new Date(groupFollowUpAt(group) || 0).getTime();
+      return Number.isFinite(at) && at >= startMs && at < endMs;
+    });
+  }, [calendarFollowUpGroups, selectedBounds]);
+
   const quoteGroups = useMemo(
     () => historicalGroups.filter((group) => {
       if (isGroupClosed(group) || isGroupLive(group)) return false;
@@ -1214,10 +1280,12 @@ export default function SupervisorQuoteOperations() {
       live: liveGroups.length,
       attention: attentionGroups.length,
       quotes: quoteGroups.length,
+      followups: followUpGroups.length,
+      calendarFollowups: calendarFollowUpGroups.length,
       activeAgents,
       activeOffices,
     };
-  }, [historicalGroups, closedGroups, liveGroups, attentionGroups, quoteGroups]);
+  }, [historicalGroups, closedGroups, liveGroups, attentionGroups, quoteGroups, followUpGroups, calendarFollowUpGroups]);
 
   const liveByRegion = useMemo(() => {
     const grouped = new Map();
@@ -1710,7 +1778,11 @@ export default function SupervisorQuoteOperations() {
               ? stats.attention
               : value === 'quotes'
                 ? stats.quotes
-                : value === 'closed'
+                : value === 'followups'
+                  ? stats.followups
+                  : value === 'calendar'
+                    ? stats.calendarFollowups
+                    : value === 'closed'
                   ? stats.closed
                   : value === 'office_access'
                     ? officeLogAccessCount
@@ -1861,6 +1933,32 @@ export default function SupervisorQuoteOperations() {
             />
           )}
         </div>
+      )}
+
+      {activeTab === 'followups' && (
+        <SupervisorFollowUpList
+          groups={followUpGroups}
+          now={now}
+          rangeLabelText={rangeLabel(timeView, selectedDate, month)}
+          onOpen={openCustomer}
+          onBackToCalendar={() => {
+            setTimeView('month');
+            setActiveTab('calendar');
+          }}
+        />
+      )}
+
+      {activeTab === 'calendar' && (
+        <SupervisorFollowUpCalendar
+          month={calendarMonth}
+          groups={calendarFollowUpGroups}
+          onOpen={openCustomer}
+          onSelectDay={(date) => {
+            setSelectedDate(date);
+            setTimeView('day');
+            setActiveTab('followups');
+          }}
+        />
       )}
 
       {activeTab === 'closed' && (
@@ -2198,6 +2296,108 @@ function NeedsAttentionView({
           })}
         </div>
       )}
+    </section>
+  );
+}
+
+
+function SupervisorFollowUpList({ groups, now, rangeLabelText, onOpen, onBackToCalendar }) {
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionHeading}>
+        <div className={styles.followUpHeadingWithBack}>
+          <button type="button" className={styles.backToCalendarButton} onClick={onBackToCalendar}>← Back to Calendar</button>
+          <div>
+            <h2>Scheduled Follow-Ups</h2>
+            <p>{rangeLabelText} · Appointments and callbacks scheduled by agents in this office.</p>
+          </div>
+        </div>
+        <span className={`${styles.countPill} ${styles.followUpCountPill}`}>{groups.length} scheduled</span>
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState title="No follow-ups in this view" detail="Scheduled follow-ups for this office will appear here." />
+      ) : (
+        <div className={styles.bucketTableWrap}>
+          <table className={styles.bucketTable}>
+            <thead><tr><th>Follow-Up</th><th>Customer</th><th>Agent</th><th>Contact</th><th>Quote</th><th>Last Activity</th><th></th></tr></thead>
+            <tbody>
+              {groups.map((group) => {
+                const quote = currentQuoteForGroup(group);
+                const followUpAt = groupFollowUpAt(group);
+                const pastDue = followUpAt && new Date(followUpAt).getTime() < now;
+                return (
+                  <tr key={group.key}>
+                    <td><strong className={pastDue ? styles.followUpPastDue : ''}>{formatDateTime(followUpAt)}</strong><span className={styles.subCell}>{pastDue ? 'Past due' : 'Scheduled'}</span></td>
+                    <td><strong>{group.customerName}</strong><span className={styles.subCell}>Customer #{group.matrixCustomerId || 'N/A'}</span></td>
+                    <td>{group.agentName}</td>
+                    <td>{group.phone || group.email || '—'}</td>
+                    <td>{quote.matrix_quote_id || '—'}<span className={styles.subCell}>{quote.carrier || 'No carrier selected'}</span></td>
+                    <td>{formatDateTime(group.lastActivityAt)}<span className={styles.subCell}>{elapsedLabel(group.lastActivityAt, now)} ago</span></td>
+                    <td><button type="button" className={styles.secondaryButton} onClick={() => onOpen(group)}>Open</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SupervisorFollowUpCalendar({ month, groups, onOpen, onSelectDay }) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const first = new Date(year, monthNumber - 1, 1);
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const leading = first.getDay();
+  const monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(first);
+
+  const byDay = new Map();
+  groups.forEach((group) => {
+    const key = localDateKey(groupFollowUpAt(group));
+    if (!key) return;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(group);
+  });
+  byDay.forEach((rows) => rows.sort((a, b) => new Date(groupFollowUpAt(a)) - new Date(groupFollowUpAt(b))));
+
+  const cells = [];
+  for (let i = 0; i < leading; i += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionHeading}>
+        <div><h2>Follow-Up Calendar</h2><p>{monthLabel} · All scheduled follow-ups for this office. Click a day to open that day's list.</p></div>
+        <span className={`${styles.countPill} ${styles.followUpCountPill}`}>{groups.length} appointments</span>
+      </div>
+      <div className={styles.followUpCalendar}>
+        <div className={styles.calendarWeekdays}>{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day) => <strong key={day}>{day}</strong>)}</div>
+        <div className={styles.calendarGrid}>
+          {cells.map((day, index) => {
+            if (!day) return <div key={`blank-${index}`} className={`${styles.calendarDay} ${styles.calendarDayBlank}`} />;
+            const key = `${year}-${String(monthNumber).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            const appointments = byDay.get(key) || [];
+            return (
+              <div key={key} className={`${styles.calendarDay} ${appointments.length ? styles.calendarDayHasAppointments : ''}`}>
+                <button type="button" className={styles.calendarDayHeader} onClick={() => onSelectDay(key)}><span>{day}</span>{appointments.length > 0 && <strong>{appointments.length}</strong>}</button>
+                <div className={styles.calendarAppointments}>
+                  {appointments.slice(0,3).map((group) => (
+                    <button key={group.key} type="button" className={styles.calendarAppointment} onClick={() => onOpen(group)}>
+                      <time>{new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(new Date(groupFollowUpAt(group)))}</time>
+                      <strong>{group.customerName}</strong>
+                      <span>{group.agentName}</span>
+                    </button>
+                  ))}
+                  {appointments.length > 3 && <button type="button" className={styles.calendarMore} onClick={() => onSelectDay(key)}>View {appointments.length - 3} more appointments →</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </section>
   );
 }

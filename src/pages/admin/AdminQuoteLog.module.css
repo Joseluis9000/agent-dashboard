@@ -2415,3 +2415,193 @@
 @media (max-width: 680px) {
   .officeMismatchBanner { align-items: flex-start; flex-direction: column; }
 }
+/* v0.12 follow-up list + appointment calendar */
+.followUpCountPill {
+  border-color: #fedf89;
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.followUpTable {
+  min-width: 1320px;
+}
+
+.followUpDate {
+  color: #b54708;
+  white-space: nowrap;
+}
+
+.followUpCalendar {
+  padding: 18px 20px 22px;
+  background: #fcfcfd;
+}
+
+.calendarWeekdays,
+.calendarGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.calendarWeekdays {
+  border: 1px solid #e4e7ec;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+}
+
+.calendarWeekdays strong {
+  padding: 9px 10px;
+  border-right: 1px solid #eaecf0;
+  background: #f9fafb;
+  color: #667085;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.calendarWeekdays strong:last-child { border-right: 0; }
+
+.calendarGrid {
+  border-top: 1px solid #e4e7ec;
+  border-left: 1px solid #e4e7ec;
+}
+
+.calendarDay {
+  min-height: 150px;
+  border-right: 1px solid #e4e7ec;
+  border-bottom: 1px solid #e4e7ec;
+  background: #fff;
+}
+
+.calendarDayBlank {
+  background: #f9fafb;
+}
+
+.calendarDayHasAppointments {
+  background: #fffdf7;
+}
+
+.calendarDayHeader {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  padding: 9px 10px 7px;
+  background: transparent;
+  color: #344054;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.calendarDayHeader strong {
+  display: inline-grid;
+  min-width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 999px;
+  background: #f79009;
+  color: #fff;
+  font-size: 10px;
+}
+
+.calendarAppointments {
+  display: grid;
+  gap: 5px;
+  padding: 0 7px 8px;
+}
+
+.calendarAppointment {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  padding: 6px 7px;
+  background: #fffaeb;
+  color: #344054;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Follow-up appointments are color-coded by region. */
+.calendarRegionSouthernCalifornia { --calendar-region: #0ea5e9; --calendar-region-bg: #f0f9ff; }
+.calendarRegionValley { --calendar-region: #22c55e; --calendar-region-bg: #f0fdf4; }
+.calendarRegionKern { --calendar-region: #f97316; --calendar-region-bg: #fff7ed; }
+.calendarRegionBayArea { --calendar-region: #8b5cf6; --calendar-region-bg: #f5f3ff; }
+.calendarRegionCenCal { --calendar-region: #eab308; --calendar-region-bg: #fefce8; }
+.calendarRegionImperialValley { --calendar-region: #14b8a6; --calendar-region-bg: #f0fdfa; }
+.calendarRegionOther { --calendar-region: #98a2b3; --calendar-region-bg: #f9fafb; }
+
+.calendarAppointment[class*="calendarRegion"] {
+  border-color: var(--calendar-region);
+  background: var(--calendar-region-bg);
+  box-shadow: inset 3px 0 0 var(--calendar-region);
+}
+
+.calendarAppointment[class*="calendarRegion"]:hover {
+  border-color: var(--calendar-region);
+  background: color-mix(in srgb, var(--calendar-region-bg) 82%, var(--calendar-region) 18%);
+}
+
+.calendarAppointment[class*="calendarRegion"] time { color: var(--calendar-region); }
+.calendarAppointment:hover { background: #fff4d6; }
+.calendarAppointment time { color: #b54708; font-size: 9px; font-weight: 900; }
+.calendarAppointment strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.calendarAppointment span { overflow: hidden; color: #667085; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+
+.calendarMore {
+  width: 100%;
+  border: 1px dashed #f79009;
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: #fffaeb;
+  color: #b54708;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.calendarMore:hover {
+  background: #fff4d6;
+  border-style: solid;
+}
+
+.followUpHeadingLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.backToCalendarButton {
+  flex: 0 0 auto;
+  border: 1px solid #d0d5dd;
+  border-radius: 9px;
+  padding: 8px 11px;
+  background: #fff;
+  color: #344054;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.backToCalendarButton:hover {
+  background: #f9fafb;
+}
+
+@media (max-width: 1050px) {
+  .followUpCalendar { overflow-x: auto; }
+  .calendarWeekdays,
+  .calendarGrid { min-width: 900px; }
+}
+
+/* Allow the two added admin views to wrap cleanly on narrower screens. */
+.tabBar {
+  flex-wrap: wrap;
+}

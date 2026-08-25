@@ -30,6 +30,21 @@ function monthBounds(value) {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+function localDateKey(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function groupFollowUpAt(group) {
+  const values = (group?.quotes || [])
+    .map((quote) => quote?.follow_up_at)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  return values[0] || null;
+}
+
 function formatDateTime(value) {
   if (!value) return '—';
   const d = new Date(value);
@@ -186,6 +201,7 @@ export default function AgentQuoteLog() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('live');
   const [selectedGroupKey, setSelectedGroupKey] = useState('');
+  const [selectedFollowUpDay, setSelectedFollowUpDay] = useState('');
   const [now, setNow] = useState(Date.now());
   const refreshTimer = useRef(null);
   const fetchRequestRef = useRef(0);
@@ -233,6 +249,23 @@ export default function AgentQuoteLog() {
 
       const baseQueries = [];
 
+      // Follow-up appointments are scheduled by follow_up_at, which may be in this
+      // month even when the original quote started in a previous month. Pull those
+      // quote IDs separately, then apply the same agent ownership matching used by
+      // the rest of My Quotes.
+      const followUpWorkflowResult = await supabaseClient
+        .from('quote_workflow')
+        .select('quote_id, follow_up_at')
+        .or('follow_up_needed.eq.true,outcome.eq.follow_up')
+        .gte('follow_up_at', start)
+        .lt('follow_up_at', end);
+
+      if (followUpWorkflowResult.error) {
+        console.error('[AgentQuoteLog] follow-up calendar query failed:', followUpWorkflowResult.error);
+      }
+
+      const followUpQuoteIds = [...new Set((followUpWorkflowResult.data || []).map((row) => row.quote_id).filter(Boolean))];
+
       if (agentEmail) {
         baseQueries.push(
           supabaseClient.from('quote_log_view').select('*').eq('agent_email', agentEmail).gte('started_at', start).lt('started_at', end).order('started_at', { ascending: false }),
@@ -253,6 +286,22 @@ export default function AgentQuoteLog() {
           supabaseClient.from('quote_log_view').select('*').eq('office', office).eq('status', 'in_progress').order('started_at', { ascending: false })
         );
       });
+
+      if (followUpQuoteIds.length > 0) {
+        for (let index = 0; index < followUpQuoteIds.length; index += 200) {
+          const ids = followUpQuoteIds.slice(index, index + 200);
+          if (agentEmail) {
+            baseQueries.push(
+              supabaseClient.from('quote_log_view').select('*').in('id', ids).eq('agent_email', agentEmail)
+            );
+          }
+          agentNames.forEach((name) => {
+            baseQueries.push(
+              supabaseClient.from('quote_log_view').select('*').in('id', ids).ilike('captured_agent_name', name)
+            );
+          });
+        }
+      }
 
       const results = await Promise.all(baseQueries);
       const queryError = results.find((result) => result.error)?.error;
@@ -406,9 +455,22 @@ export default function AgentQuoteLog() {
     [filteredGroups, now]
   );
 
+  const calendarFollowUpGroups = useMemo(
+    () => ownedGroups
+      .filter((group) => group.outcome.key === 'follow_up')
+      .filter((group) => {
+        const followUpAt = groupFollowUpAt(group);
+        return followUpAt && monthValue(new Date(followUpAt)) === month;
+      })
+      .sort((a, b) => new Date(groupFollowUpAt(a) || 0) - new Date(groupFollowUpAt(b) || 0)),
+    [ownedGroups, month]
+  );
+
   const followUpGroups = useMemo(
-    () => ownedGroups.filter((group) => group.outcome.key === 'follow_up'),
-    [ownedGroups]
+    () => selectedFollowUpDay
+      ? calendarFollowUpGroups.filter((group) => localDateKey(groupFollowUpAt(group)) === selectedFollowUpDay)
+      : calendarFollowUpGroups,
+    [calendarFollowUpGroups, selectedFollowUpDay]
   );
 
   const closedGroups = useMemo(
@@ -524,7 +586,8 @@ export default function AgentQuoteLog() {
         <TabButton active={activeTab === 'live'} onClick={() => { setActiveTab('live'); setSelectedGroupKey(''); }} label="Live Session" count={liveGroups.length} />
         <TabButton active={activeTab === 'quotes'} onClick={() => { setActiveTab('quotes'); setSelectedGroupKey(''); }} label="My Quotes" count={historyGroups.length} />
         <TabButton active={activeTab === 'office'} onClick={() => { setActiveTab('office'); setSelectedGroupKey(''); }} label="Office Quotes" count={officeGroups.length} />
-        <TabButton active={activeTab === 'follow_up'} onClick={() => { setActiveTab('follow_up'); setSelectedGroupKey(''); }} label="Follow-Ups" count={followUpGroups.length} />
+        <TabButton active={activeTab === 'follow_up'} onClick={() => { setActiveTab('follow_up'); setSelectedFollowUpDay(''); setSelectedGroupKey(''); }} label="Follow-Ups" count={calendarFollowUpGroups.length} />
+        <TabButton active={activeTab === 'calendar'} onClick={() => { setActiveTab('calendar'); setSelectedFollowUpDay(''); setSelectedGroupKey(''); }} label="Calendar" count={calendarFollowUpGroups.length} />
         <TabButton active={activeTab === 'closed'} onClick={() => { setActiveTab('closed'); setSelectedGroupKey(''); }} label="Closed Deals" count={closedGroups.length} />
       </nav>
 
@@ -563,15 +626,34 @@ export default function AgentQuoteLog() {
         </section>
       )}
 
-      {activeTab !== 'live' && (
+      {activeTab === 'calendar' && (
+        <AgentFollowUpCalendar
+          month={month}
+          groups={calendarFollowUpGroups}
+          onOpen={(group) => setSelectedGroupKey(group.key)}
+          onSelectDay={(date) => {
+            setSelectedFollowUpDay(date);
+            setActiveTab('follow_up');
+          }}
+        />
+      )}
+
+      {activeTab !== 'live' && activeTab !== 'calendar' && (
         <section className={styles.listSection}>
           <div className={styles.listToolbar}>
             <div>
-              <strong>{activeTab === 'quotes' ? 'My Quote History' : activeTab === 'office' ? 'Current Office Quotes' : activeTab === 'follow_up' ? 'My Follow-Ups' : 'My Closed Deals'}</strong>
+              <div className={styles.listTitleRow}>
+                {activeTab === 'follow_up' && selectedFollowUpDay && (
+                  <button type="button" className={styles.backToCalendarButton} onClick={() => { setSelectedFollowUpDay(''); setActiveTab('calendar'); }}>
+                    ← Back to Calendar
+                  </button>
+                )}
+                <strong>{activeTab === 'quotes' ? 'My Quote History' : activeTab === 'office' ? 'Current Office Quotes' : activeTab === 'follow_up' ? (selectedFollowUpDay ? `Follow-Ups · ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${selectedFollowUpDay}T12:00:00`))}` : 'My Follow-Ups') : 'My Closed Deals'}</strong>
+              </div>
               <small>{activeTab === 'office' ? 'Temporary office access from an approved extension.' : 'My Quotes are owned by the agent who originally created that Matrix quote.'}</small>
             </div>
             <div className={styles.filters}>
-              <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+              <input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setSelectedFollowUpDay(''); }} />
               <input type="search" placeholder="Search customer, carrier, quote…" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
           </div>
@@ -647,6 +729,75 @@ export default function AgentQuoteLog() {
   );
 }
 
+function AgentFollowUpCalendar({ month, groups, onOpen, onSelectDay }) {
+  const [year, monthNumber] = String(month || monthValue()).split('-').map(Number);
+  const first = new Date(year, monthNumber - 1, 1);
+  const daysInMonth = new Date(year, monthNumber, 0).getDate();
+  const leading = first.getDay();
+  const monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(first);
+
+  const byDay = new Map();
+  groups.forEach((group) => {
+    const key = localDateKey(groupFollowUpAt(group));
+    if (!key) return;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(group);
+  });
+  byDay.forEach((rows) => rows.sort((a, b) => new Date(groupFollowUpAt(a)) - new Date(groupFollowUpAt(b))));
+
+  const cells = [];
+  for (let index = 0; index < leading; index += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <section className={styles.calendarSection}>
+      <div className={styles.calendarHeading}>
+        <div>
+          <strong>My Follow-Up Calendar</strong>
+          <small>{monthLabel} · Only follow-ups that belong to your own quotes are shown.</small>
+        </div>
+        <span>{groups.length} appointment{groups.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div className={styles.calendarWrap}>
+        <div className={styles.calendarWeekdays}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => <strong key={day}>{day}</strong>)}
+        </div>
+        <div className={styles.calendarGrid}>
+          {cells.map((day, index) => {
+            if (!day) return <div key={`blank-${index}`} className={`${styles.calendarDay} ${styles.calendarDayBlank}`} />;
+            const key = `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const appointments = byDay.get(key) || [];
+            return (
+              <div key={key} className={`${styles.calendarDay} ${appointments.length ? styles.calendarDayHasAppointments : ''}`}>
+                <button type="button" className={styles.calendarDayHeader} onClick={() => appointments.length && onSelectDay(key)}>
+                  <span>{day}</span>
+                  {appointments.length > 0 && <strong>{appointments.length}</strong>}
+                </button>
+                <div className={styles.calendarAppointments}>
+                  {appointments.slice(0, 3).map((group) => (
+                    <button key={group.key} type="button" className={styles.calendarAppointment} onClick={() => onOpen(group)}>
+                      <time>{new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(groupFollowUpAt(group)))}</time>
+                      <strong>{group.customerName}</strong>
+                      <span>{group.office} · {group.latest.phone || 'No phone'}</span>
+                    </button>
+                  ))}
+                  {appointments.length > 3 && (
+                    <button type="button" className={styles.calendarMore} onClick={() => onSelectDay(key)}>
+                      View {appointments.length - 3} more appointment{appointments.length - 3 === 1 ? '' : 's'} →
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function AgentQuoteDetails({ group, eventsByQuote, notesByQuote, customerHistory = [] }) {
   const latest = group.latest || {};
   const drivers = safeArray(latest.drivers_summary);
@@ -675,6 +826,8 @@ function AgentQuoteDetails({ group, eventsByQuote, notesByQuote, customerHistory
           <DetailField label="Premium" value={formatMoney(latest.total_premium)} />
           <DetailField label="Down Payment" value={formatMoney(latest.down_payment)} />
           <DetailField label="Monthly Payment" value={formatMoney(latest.monthly_payment)} />
+          <DetailField label="Phone Number" value={latest.phone || '—'} />
+          <DetailField label="Matrix Customer ID" value={group.matrixCustomerId || latest.matrix_customer_id || '—'} />
           <DetailField label="Started" value={formatDateTime(latest.started_at)} />
           <DetailField label="Last Activity" value={formatDateTime(group.lastActivityAt)} />
         </div>
