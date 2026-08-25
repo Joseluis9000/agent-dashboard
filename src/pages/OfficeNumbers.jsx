@@ -2111,6 +2111,7 @@ const OfficeNumbers = () => {
           selectedMonth={selectedMonth}
           pacingDetails={pacingDetails}
           isBrokerView={isBrokerView}
+          hideEstimatedCommission={currentRole === 'supervisor'}
           detailData={agentDetailData}
           detailLoading={agentDetailLoading}
           detailError={agentDetailError}
@@ -3249,6 +3250,7 @@ const AgentDetail = ({
   selectedMonth,
   pacingDetails,
   isBrokerView,
+  hideEstimatedCommission,
   detailData,
   detailLoading,
   detailError,
@@ -3391,35 +3393,39 @@ const AgentDetail = ({
         )) : <div style={styles.emptyDetail}>No trend data returned.</div>}
       </div>
 
-      <div style={styles.tableCard}>
-        <div style={styles.detailSectionHeader}>
-          <div>
-            <div style={styles.chartTitle}>Weekly Performance & Estimated Commission</div>
-            <div style={styles.chartSubtext}>Full Monday-Sunday commission weeks that overlap {getMonthLabel(selectedMonth)}. Tier 1 uses 8+ Net NBs OR $2,500 gross revenue. Payment Fees do not count toward commission revenue.</div>
-            <div style={{ ...styles.chartSubtext, marginTop: 4, fontWeight: 700 }}>Estimated commission is for planning purposes only and does not include violation deductions. Final commission may differ.</div>
+      {!hideEstimatedCommission && (
+        <>
+        <div style={styles.tableCard}>
+          <div style={styles.detailSectionHeader}>
+            <div>
+              <div style={styles.chartTitle}>Weekly Performance & Estimated Commission</div>
+              <div style={styles.chartSubtext}>Full Monday-Sunday commission weeks that overlap {getMonthLabel(selectedMonth)}. Tier 1 uses 8+ Net NBs OR $2,500 gross revenue. Payment Fees do not count toward commission revenue.</div>
+              <div style={{ ...styles.chartSubtext, marginTop: 4, fontWeight: 700 }}>Estimated commission is for planning purposes only and does not include violation deductions. Final commission may differ.</div>
+            </div>
+            <div style={styles.detailDataPill}>$800 estimated gross pay / week</div>
           </div>
-          <div style={styles.detailDataPill}>$800 estimated gross pay / week</div>
+          <div style={styles.tableWrapper}>
+            <table style={{ ...styles.table, minWidth: 1260 }}>
+              <thead><tr>
+                <th style={styles.tableHeader}>Week</th><th style={styles.tableHeader}>Gross NB</th><th style={styles.tableHeader}>Disq.</th><th style={styles.tableHeader}>Net NB</th>
+                <th style={styles.tableHeader}>Commission Gross Revenue</th><th style={styles.tableHeader}>Est. Net Revenue</th><th style={styles.tableHeader}>Tier</th><th style={styles.tableHeader}>Rate</th>
+                <th style={styles.tableHeader}>Est. Commission*</th><th style={styles.tableHeader}>Status</th>
+              </tr></thead>
+              <tbody>
+                {weeklyRows.length ? weeklyRows.map((week) => (
+                  <tr key={week.week_start}>
+                    <td style={styles.officeCell}>{formatDateLabel(String(week.week_start))} – {formatDateLabel(String(week.week_end))}</td>
+                    <td style={styles.numberCell}>{formatNumber(week.gross_nb_count)}</td><td style={styles.numberCell}>{formatNumber(week.disqualified_nb_count)}</td><td style={{...styles.numberCell,...styles.metricCurrentCell}}><strong>{formatNumber(week.net_nb_count)}</strong></td>
+                    <td style={styles.numberCell}>{formatCurrency(week.gross_revenue)}</td><td style={styles.numberCell}>{formatCurrency(week.net_revenue)}</td><td style={styles.numberCell}><strong>{week.tier}</strong></td><td style={styles.numberCell}>{(Number(week.commission_rate) * 100).toFixed(1)}%</td>
+                    <td style={{...styles.numberCell,fontWeight:900}}>{formatCurrency(week.base_commission)}</td><td style={styles.numberCell}>{week.status}</td>
+                  </tr>
+                )) : <tr><td colSpan={10} style={styles.loading}>{detailLoading ? 'Loading weekly commission estimate...' : 'No weekly data returned.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div style={styles.tableWrapper}>
-          <table style={{ ...styles.table, minWidth: 1260 }}>
-            <thead><tr>
-              <th style={styles.tableHeader}>Week</th><th style={styles.tableHeader}>Gross NB</th><th style={styles.tableHeader}>Disq.</th><th style={styles.tableHeader}>Net NB</th>
-              <th style={styles.tableHeader}>Commission Gross Revenue</th><th style={styles.tableHeader}>Est. Net Revenue</th><th style={styles.tableHeader}>Tier</th><th style={styles.tableHeader}>Rate</th>
-              <th style={styles.tableHeader}>Est. Commission*</th><th style={styles.tableHeader}>Status</th>
-            </tr></thead>
-            <tbody>
-              {weeklyRows.length ? weeklyRows.map((week) => (
-                <tr key={week.week_start}>
-                  <td style={styles.officeCell}>{formatDateLabel(String(week.week_start))} – {formatDateLabel(String(week.week_end))}</td>
-                  <td style={styles.numberCell}>{formatNumber(week.gross_nb_count)}</td><td style={styles.numberCell}>{formatNumber(week.disqualified_nb_count)}</td><td style={{...styles.numberCell,...styles.metricCurrentCell}}><strong>{formatNumber(week.net_nb_count)}</strong></td>
-                  <td style={styles.numberCell}>{formatCurrency(week.gross_revenue)}</td><td style={styles.numberCell}>{formatCurrency(week.net_revenue)}</td><td style={styles.numberCell}><strong>{week.tier}</strong></td><td style={styles.numberCell}>{(Number(week.commission_rate) * 100).toFixed(1)}%</td>
-                  <td style={{...styles.numberCell,fontWeight:900}}>{formatCurrency(week.base_commission)}</td><td style={styles.numberCell}>{week.status}</td>
-                </tr>
-              )) : <tr><td colSpan={10} style={styles.loading}>{detailLoading ? 'Loading weekly commission estimate...' : 'No weekly data returned.'}</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        </>
+      )}
 
       <div style={styles.tableCard}>
         <div style={styles.detailSectionHeader}>

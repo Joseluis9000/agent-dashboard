@@ -61,3 +61,34 @@
 @media (max-width:760px){ .page{padding:18px;} .header,.listToolbar{flex-direction:column;align-items:stretch;} .statsGrid{grid-template-columns:repeat(2,1fr);} .filters input[type='search']{min-width:0;flex:1;} }
 
 @media (max-width:1050px){ .drawerBackdrop{padding:10px;} .drawer{width:98vw;max-height:97vh;padding:14px;} .modalGrid{grid-template-columns:1fr;max-height:calc(97vh - 95px);overflow:auto;} .detailsColumn,.workflowColumn{overflow:visible;} }
+
+/* Agent follow-up calendar */
+.calendarSection { background:#fff; border:1px solid #e4e7ec; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(16,24,40,.04); }
+.calendarHeading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:17px 18px; border-bottom:1px solid #eaecf0; }
+.calendarHeading > div { display:grid; gap:4px; }
+.calendarHeading > div > strong { font-size:16px; }
+.calendarHeading > div > small { color:#667085; }
+.calendarHeading > span { display:inline-flex; align-items:center; border:1px solid #fedf89; border-radius:999px; padding:5px 9px; background:#fffaeb; color:#b54708; font-size:11px; font-weight:900; white-space:nowrap; }
+.calendarWrap { overflow:hidden; padding:16px; }
+.calendarWeekdays,.calendarGrid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); }
+.calendarWeekdays { border:1px solid #e4e7ec; border-bottom:0; border-radius:12px 12px 0 0; overflow:hidden; background:#f9fafb; }
+.calendarWeekdays strong { padding:9px; border-right:1px solid #e4e7ec; color:#667085; font-size:10px; text-align:center; text-transform:uppercase; }
+.calendarWeekdays strong:last-child { border-right:0; }
+.calendarGrid { border-top:1px solid #e4e7ec; border-left:1px solid #e4e7ec; }
+.calendarDay { min-height:148px; border-right:1px solid #e4e7ec; border-bottom:1px solid #e4e7ec; background:#fff; }
+.calendarDayBlank { background:#f9fafb; }
+.calendarDayHasAppointments { background:#fffdf7; }
+.calendarDayHeader { display:flex; width:100%; align-items:center; justify-content:space-between; border:0; padding:9px 10px 7px; background:transparent; color:#344054; cursor:pointer; font:inherit; font-weight:900; }
+.calendarDayHeader strong { display:inline-grid; min-width:23px; height:23px; place-items:center; border-radius:999px; background:#f79009; color:#fff; font-size:10px; }
+.calendarAppointments { display:grid; gap:5px; padding:0 7px 8px; }
+.calendarAppointment { display:grid; min-width:0; gap:1px; border:1px solid #fedf89; border-left:4px solid #f79009; border-radius:8px; padding:6px 7px; background:#fffaeb; color:#344054; cursor:pointer; text-align:left; }
+.calendarAppointment:hover { background:#fff4d6; }
+.calendarAppointment time { color:#b54708; font-size:9px; font-weight:900; }
+.calendarAppointment strong { overflow:hidden; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.calendarAppointment span { overflow:hidden; color:#667085; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
+.calendarMore { border:1px dashed #f79009; border-radius:8px; padding:7px 8px; background:#fff; color:#b54708; cursor:pointer; font:inherit; font-size:9px; font-weight:900; text-align:left; }
+.calendarMore:hover { background:#fffaeb; }
+.listTitleRow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.backToCalendarButton { border:1px solid #d0d5dd; border-radius:8px; padding:6px 9px; background:#fff; color:#344054; cursor:pointer; font:inherit; font-size:11px; font-weight:800; }
+.backToCalendarButton:hover { background:#f9fafb; }
+@media (max-width:1050px){ .calendarWrap{overflow-x:auto;} .calendarWeekdays,.calendarGrid{min-width:900px;} }
