@@ -3,8 +3,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../../AuthContext';
 import styles from './SupervisorQuoteOperations.module.css';
 import QuoteSalesFlow from '../../components/QuoteSalesFlow/QuoteSalesFlow';
+import {
+  STALE_AFTER_MS as SHARED_STALE_AFTER_MS,
+  ATTENTION_CATEGORIES,
+  getQuoteDisplayStatus as sharedGetQuoteDisplayStatus,
+  inferQuoteBusinessType as sharedInferQuoteBusinessType,
+  inferExistingClientReason as sharedInferExistingClientReason,
+  secondYesConfirmed as sharedSecondYesConfirmed,
+  getThreeYesStage as sharedGetThreeYesStage,
+  isGroupClosed as sharedIsGroupClosed,
+  isGroupFollowUp as sharedIsGroupFollowUp,
+  isGroupLive as sharedIsGroupLive,
+  isGroupRegularQuote as sharedIsGroupRegularQuote,
+  getGroupAttentionItem as sharedGetGroupAttentionItem,
+} from '../../utils/quoteClassification';
 
-const STALE_AFTER_MS = 60 * 60 * 1000;
+const STALE_AFTER_MS = SHARED_STALE_AFTER_MS;
 
 const NOT_CLOSED_REASONS = [
   ['lost_deal', 'Lost Deal'],
@@ -187,15 +201,7 @@ function elapsedLabel(value, now = Date.now()) {
 }
 
 function getDisplayStatus(quote, now = Date.now()) {
-  if (quote?.status === 'bridged_back' || quote?.bridged_back_at) return 'completed';
-
-  if (quote?.status === 'in_progress') {
-    const started = new Date(quote.started_at).getTime();
-    if (Number.isFinite(started) && now - started >= STALE_AFTER_MS) return 'stale';
-    return 'in_progress';
-  }
-
-  return quote?.status || 'unknown';
+  return sharedGetQuoteDisplayStatus(quote, now, STALE_AFTER_MS);
 }
 
 function latestTimestamp(q) {
@@ -225,14 +231,7 @@ function toDatetimeLocal(value) {
 
 
 function inferQuoteBusinessType(quote) {
-  const explicit = cleanStr(quote?.quote_business_type).toLowerCase();
-  if (explicit === 'new_business' || explicit === 'existing_client') return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/re[- ]?write|rewrite|renew|reinstat|endorsement|existing/.test(source)) {
-    return 'existing_client';
-  }
-  return 'new_business';
+  return sharedInferQuoteBusinessType(quote);
 }
 
 function contactMethodLabel(quote) {
@@ -249,17 +248,7 @@ function quoteBusinessTypeLabel(quote) {
 }
 
 function inferExistingClientReason(quote) {
-  const explicit = cleanStr(quote?.existing_client_reason).toLowerCase();
-  if (EXISTING_CLIENT_REASONS.some(([value]) => value === explicit)) return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/payment/.test(source)) return 'rewrite_payment';
-  if (/endorsement/.test(source)) return 'rewrite_endorsement';
-  if (/renewal/.test(source)) return 'renewal';
-  if (/reinstat/.test(source)) return 'reinstatement';
-  if (/re[- ]?write|rewrite|prior policy|previous policy/.test(source)) return 'rewrite_recent_policy';
-
-  return '';
+  return sharedInferExistingClientReason(quote);
 }
 
 function existingClientReasonLabel(quote) {
@@ -280,32 +269,15 @@ function firstYesConfirmed(quote) {
 }
 
 function secondYesConfirmed(quote) {
-  if (quote?.second_yes_id_vin === true) return true;
-  if (quote?.second_yes_id_vin === false) return false;
-  return hasLicenseSignal(quote) && hasFullVinSignal(quote);
+  return sharedSecondYesConfirmed(quote);
 }
 
 function thirdYesConfirmed(quote) {
-  if (quote?.third_yes_payment_ready === true) return true;
-  if (quote?.third_yes_payment_ready === false) return false;
-
-  const payment = cleanStr(quote?.payment_method).toLowerCase();
-  if (payment === 'cash' || payment === 'card') return true;
-
-  // Until the agent quote page records the payment question directly,
-  // a completed carrier bridge after the 2nd Yes is a strong 3rd-Yes fallback.
-  return secondYesConfirmed(quote) && Boolean(
-    quote?.bridged_back_at ||
-    quote?.status === 'bridged_back' ||
-    quote?.carrier
-  );
+  return sharedGetThreeYesStage(quote) === 3;
 }
 
 function threeYesStage(quote) {
-  if (thirdYesConfirmed(quote)) return 3;
-  if (secondYesConfirmed(quote)) return 2;
-  if (firstYesConfirmed(quote)) return 1;
-  return 0;
+  return sharedGetThreeYesStage(quote);
 }
 
 function threeYesEvidenceLabel(quote) {
@@ -383,15 +355,12 @@ function briefText(value, max = 92) {
   return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
 }
 
-function isGroupClosed(group) {
-  return group?.outcome?.status === 'closed';
+function isGroupClosed(group, now = Date.now()) {
+  return sharedIsGroupClosed(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
-function isGroupLive(group) {
-  // A workflow disposition is authoritative. As soon as an agent/admin/supervisor
-  // records Not Closed, Follow Up, or Closed, the customer leaves Live Activity
-  // even if the raw TurboRater quote row is still technically "in_progress".
-  return Number(group?.inProgressCount || 0) > 0 && group?.outcome?.status === 'open';
+function isGroupLive(group, now = Date.now()) {
+  return sharedIsGroupLive(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
 function isDidNotRewriteGroup(group) {
@@ -617,35 +586,6 @@ function groupQuotesByCustomer(quotes, now, officeRegions = {}) {
     .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
 }
 
-function getAttentionItem(group) {
-  if (!group || group?.outcome?.status !== 'not_closed') return null;
-
-  const outcome = cleanStr(group?.outcome?.source?.outcome).toLowerCase();
-
-  if (outcome === 'lost_deal') {
-    return {
-      level: 'critical',
-      title: 'Lost Deal',
-      detail: 'Manager help / lower broker fee was requested or approved, but the customer still did not close.',
-      sortValue: 0,
-      stage: Number(group?.yesStage || 0),
-      category: 'lost_deal',
-    };
-  }
-
-  if (outcome === 'walk') {
-    return {
-      level: 'high',
-      title: 'Walk',
-      detail: 'Customer left on price before the agent contacted management for Deal Save help.',
-      sortValue: 1,
-      stage: Number(group?.yesStage || 0),
-      category: 'walk',
-    };
-  }
-
-  return null;
-}
 
 
 export default function SupervisorQuoteOperations() {
@@ -751,30 +691,67 @@ export default function SupervisorQuoteOperations() {
       }
 
       const { start, end } = rangeBounds(timeView, selectedDate, month);
-      const followUpMonth = calendarMonthForView(timeView, selectedDate, month);
-      const followUpBounds = monthBounds(followUpMonth);
+      // Supabase/PostgREST can cap a single response. Page every primary dataset
+      // so the supervisor always classifies the complete office history.
+      const fetchAllPaged = async (buildQuery, label, pageSize = 1000) => {
+        const rows = [];
+        let from = 0;
+
+        while (true) {
+          const { data, error } = await buildQuery()
+            .range(from, from + pageSize - 1);
+
+          if (error) {
+            console.error(`[SupervisorQuoteOperations] ${label} page failed at ${from}:`, error);
+            return { data: rows, error };
+          }
+
+          const page = data || [];
+          rows.push(...page);
+          if (page.length < pageSize) break;
+          from += pageSize;
+        }
+
+        return { data: rows, error: null };
+      };
+
       const [historyResult, liveResult, followUpWorkflowResult] = await Promise.all([
-        supabaseClient
-          .from('quote_log_view')
-          .select('*')
-          .eq('office', profileOffice)
-          .gte('started_at', start)
-          .lt('started_at', end)
-          .order('started_at', { ascending: false }),
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_log_view')
+            .select('*')
+            .eq('office', profileOffice)
+            .gte('started_at', start)
+            .lt('started_at', end)
+            .order('started_at', { ascending: false })
+            .order('id', { ascending: false }),
+          'quote history'
+        ),
         // Live Activity is intentionally independent of Day / Week / Month.
-        supabaseClient
-          .from('quote_log_view')
-          .select('*')
-          .eq('office', profileOffice)
-          .eq('status', 'in_progress')
-          .order('started_at', { ascending: false }),
-        // Pull scheduled follow-ups for the full visible month, even if the quote began earlier.
-        supabaseClient
-          .from('quote_workflow')
-          .select('quote_id, follow_up_at')
-          .or('follow_up_needed.eq.true,outcome.eq.follow_up')
-          .gte('follow_up_at', followUpBounds.start)
-          .lt('follow_up_at', followUpBounds.end),
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_log_view')
+            .select('*')
+            .eq('office', profileOffice)
+            .eq('status', 'in_progress')
+            .order('started_at', { ascending: false })
+            .order('id', { ascending: false }),
+          'live quotes'
+        ),
+        // Follow-Ups is an office work queue, not a history-date bucket.
+        // Load every scheduled follow-up the supervisor can see. Calendar applies
+        // its own month filter later; the Follow-Ups tab must not lose future
+        // appointments just because Day / Week / Month is currently set to August.
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_workflow')
+            .select('quote_id, follow_up_at')
+            .or('follow_up_needed.eq.true,outcome.eq.follow_up')
+            .not('follow_up_at', 'is', null)
+            .order('follow_up_at', { ascending: true })
+            .order('quote_id', { ascending: true }),
+          'follow-up workflow'
+        ),
       ]);
 
       if (historyResult.error || liveResult.error || followUpWorkflowResult.error) {
@@ -811,25 +788,46 @@ export default function SupervisorQuoteOperations() {
       const workflowRows = [];
       const eventRows = [];
       const internalNoteRows = [];
+      const dealSaveRows = [];
 
       for (let index = 0; index < quoteIds.length; index += 200) {
         const ids = quoteIds.slice(index, index + 200);
+
+        const fetchQuoteEventsForIds = async (quoteIdBatch) => {
+          const rows = [];
+          const pageSize = 1000;
+          let from = 0;
+
+          while (true) {
+            const { data, error } = await supabaseClient
+              .from('quote_events')
+              .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
+              .in('quote_id', quoteIdBatch)
+              .order('event_at', { ascending: true })
+              .range(from, from + pageSize - 1);
+
+            if (error) return { data: rows, error };
+            const page = data || [];
+            rows.push(...page);
+            if (page.length < pageSize) break;
+            from += pageSize;
+          }
+
+          return { data: rows, error: null };
+        };
 
         const [
           { data: quoteData, error: quoteError },
           { data: eventsData, error: eventsError },
           { data: workflowData, error: workflowError },
           { data: notesData, error: notesError },
+          { data: dealSaveData, error: dealSaveError },
         ] = await Promise.all([
           supabaseClient
             .from('quotes')
-            .select('id, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary, turborater_office, office_source, office_mismatch, captured_device_id')
+            .select('id, status, extension_version, carrier, total_premium, down_payment, monthly_payment, bridged_back_at, bridge_policy_status, bridge_policy_status_value, system_outcome_signal, carrier_bridge_started_at, carrier_bridge_carrier, matrix_bridge_back_at, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary, turborater_office, office_source, office_mismatch, captured_device_id')
             .in('id', ids),
-          supabaseClient
-            .from('quote_events')
-            .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
-            .in('quote_id', ids)
-            .order('event_at', { ascending: true }),
+          fetchQuoteEventsForIds(ids),
           supabaseClient
             .from('quote_workflow')
             .select('quote_id, contact_method, quote_business_type, existing_client_reason, first_yes_ready_now, second_yes_id_vin, third_yes_payment_ready, payment_method, first_yes_recorded_at, second_yes_recorded_at, third_yes_recorded_at, outcome, follow_up_needed, follow_up_at, agent_notes, not_closed_explanation, lost_deal_manager_name, lost_deal_broker_fee')
@@ -837,6 +835,11 @@ export default function SupervisorQuoteOperations() {
           supabaseClient
             .from('quote_internal_notes')
             .select('id, quote_id, note_text, author_email, author_name, author_role, note_source, created_at')
+            .in('quote_id', ids)
+            .order('created_at', { ascending: false }),
+          supabaseClient
+            .from('quote_deal_save_requests')
+            .select('id, quote_id, customer_name, office, requested_by_email, requested_by_name, requested_by_role, current_broker_fee, premium, status, created_at, updated_at')
             .in('quote_id', ids)
             .order('created_at', { ascending: false }),
         ]);
@@ -863,6 +866,12 @@ export default function SupervisorQuoteOperations() {
           console.error('[SupervisorQuoteOperations] internal notes query failed:', notesError);
         } else {
           internalNoteRows.push(...(notesData || []));
+        }
+
+        if (dealSaveError) {
+          console.error('[SupervisorQuoteOperations] Deal Save request query failed:', dealSaveError);
+        } else {
+          dealSaveRows.push(...(dealSaveData || []));
         }
       }
 
@@ -893,9 +902,19 @@ export default function SupervisorQuoteOperations() {
         }
       });
 
+      const latestDealSaveByQuoteId = new Map();
+      dealSaveRows.forEach((request) => {
+        if (!request?.quote_id) return;
+        const existing = latestDealSaveByQuoteId.get(request.quote_id);
+        const requestAt = new Date(request.updated_at || request.created_at || 0).getTime();
+        const existingAt = new Date(existing?.updated_at || existing?.created_at || 0).getTime();
+        if (!existing || requestAt > existingAt) latestDealSaveByQuoteId.set(request.quote_id, request);
+      });
+
       const mergedRows = baseRows.map((row) => {
         const policyBoundAt = policyBoundByQuoteId.get(row.id) || null;
         const latestInternalNote = latestInternalNoteByQuoteId.get(row.id) || null;
+        const latestDealSaveRequest = latestDealSaveByQuoteId.get(row.id) || null;
         return {
           ...row,
           ...(supplementalById.get(row.id) || {}),
@@ -904,6 +923,7 @@ export default function SupervisorQuoteOperations() {
           policy_bound_at: policyBoundAt,
           latest_internal_note: latestInternalNote?.note_text || null,
           latest_internal_note_at: latestInternalNote?.created_at || null,
+          latest_deal_save_request: latestDealSaveRequest,
         };
       });
 
@@ -967,6 +987,7 @@ export default function SupervisorQuoteOperations() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_workflow' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_events' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_internal_notes' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_deal_save_requests' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'extension_devices' }, () => {
         if (officeAccessRefreshTimer.current) clearTimeout(officeAccessRefreshTimer.current);
         officeAccessRefreshTimer.current = setTimeout(
@@ -1056,8 +1077,8 @@ export default function SupervisorQuoteOperations() {
   }, [scopeGroups, selectedBounds]);
 
   const liveGroups = useMemo(
-    () => scopeGroups.filter((group) => isGroupLive(group)),
-    [scopeGroups]
+    () => scopeGroups.filter((group) => isGroupLive(group, now)),
+    [scopeGroups, now]
   );
 
   const myQuoteNames = useMemo(
@@ -1121,8 +1142,8 @@ export default function SupervisorQuoteOperations() {
   }, [quoteInternalNotes]);
 
   const closedGroups = useMemo(
-    () => historicalGroups.filter((group) => isGroupClosed(group)),
-    [historicalGroups]
+    () => historicalGroups.filter((group) => isGroupClosed(group, now)),
+    [historicalGroups, now]
   );
 
 
@@ -1136,36 +1157,34 @@ export default function SupervisorQuoteOperations() {
     const startMs = new Date(start).getTime();
     const endMs = new Date(end).getTime();
     return scopeGroups
-      .filter((group) => group.outcome?.status === 'follow_up')
+      .filter((group) => sharedIsGroupFollowUp(group, { now, staleAfterMs: STALE_AFTER_MS }))
       .filter((group) => {
         const at = new Date(groupFollowUpAt(group) || 0).getTime();
         return Number.isFinite(at) && at >= startMs && at < endMs;
       })
       .sort((a, b) => new Date(groupFollowUpAt(a) || 0) - new Date(groupFollowUpAt(b) || 0));
-  }, [scopeGroups, calendarMonth]);
+  }, [scopeGroups, calendarMonth, now]);
 
-  const followUpGroups = useMemo(() => {
-    const startMs = new Date(selectedBounds.start).getTime();
-    const endMs = new Date(selectedBounds.end).getTime();
-    return calendarFollowUpGroups.filter((group) => {
-      const at = new Date(groupFollowUpAt(group) || 0).getTime();
-      return Number.isFinite(at) && at >= startMs && at < endMs;
-    });
-  }, [calendarFollowUpGroups, selectedBounds]);
+  // Follow-Ups is the complete visible-office queue. Do not filter it by the
+  // quote history Day / Week / Month selection. The scheduled follow_up_at date
+  // controls ordering; Calendar separately limits appointments to its month.
+  const followUpGroups = useMemo(
+    () => scopeGroups
+      .filter((group) => sharedIsGroupFollowUp(group, { now, staleAfterMs: STALE_AFTER_MS }))
+      .filter((group) => Boolean(groupFollowUpAt(group)))
+      .sort((a, b) => new Date(groupFollowUpAt(a) || 0) - new Date(groupFollowUpAt(b) || 0)),
+    [scopeGroups, now]
+  );
 
   const quoteGroups = useMemo(
     () => historicalGroups.filter((group) => {
-      if (isGroupClosed(group) || isGroupLive(group)) return false;
-      if (group.outcome?.status === 'follow_up') return false;
-
-      // "Did Not RW - Stayed With Current Carrier" belongs under the
-      // existing-client Quote classification that created the re-write,
-      // even when the quote reached the 3 Yes process before it was retained.
-      if (isDidNotRewriteGroup(group)) return true;
-
-      return Number(group.yesStage || 0) === 0;
+      if (isGroupLive(group, now)) return false;
+      return sharedIsGroupRegularQuote(group, {
+        now,
+        staleAfterMs: STALE_AFTER_MS,
+      });
     }),
-    [historicalGroups]
+    [historicalGroups, now]
   );
 
   const newQuoteGroups = useMemo(
@@ -1250,23 +1269,43 @@ export default function SupervisorQuoteOperations() {
 
   const attentionGroups = useMemo(() => {
     return historicalGroups
-      .map((group) => ({ group, attention: getAttentionItem(group) }))
-      .filter((item) => item.attention)
+      .map((group) => {
+        const item = sharedGetGroupAttentionItem(group, {
+          now,
+          staleAfterMs: STALE_AFTER_MS,
+        });
+        return item || null;
+      })
+      .filter(Boolean)
       .sort((a, b) => {
         if (a.attention.sortValue !== b.attention.sortValue) {
           return a.attention.sortValue - b.attention.sortValue;
         }
         return new Date(a.group.lastActivityAt || 0) - new Date(b.group.lastActivityAt || 0);
       });
-  }, [historicalGroups]);
+  }, [historicalGroups, now]);
 
   const lostDealAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'lost_deal'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.LOST_DEAL),
     [attentionGroups]
   );
 
   const walkAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'walk'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.WALK),
+    [attentionGroups]
+  );
+
+  const carrierBridgeAttention = useMemo(
+    () => attentionGroups.filter((item) => [
+      ATTENTION_CATEGORIES.CARRIER_NO_RETURN,
+      ATTENTION_CATEGORIES.CARRIER_RETURN_NO_OUTCOME,
+      ATTENTION_CATEGORIES.CARRIER_NO_OUTCOME,
+    ].includes(item.attention?.category)),
+    [attentionGroups]
+  );
+
+  const unresolvedYesAttention = useMemo(
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.STALE_YES),
     [attentionGroups]
   );
 
@@ -1461,9 +1500,12 @@ export default function SupervisorQuoteOperations() {
     event.preventDefault();
     if (!selectedCustomer) return;
 
-    const targetQuote =
-      selectedCustomer.quotes.find((q) => getDisplayStatus(q, now) === 'completed') ||
-      selectedCustomer.quotes[0];
+    // Supervisor overrides must apply to the CURRENT quote attempt.
+    // Using an older completed attempt can save a follow-up successfully in
+    // quote_workflow while customerOutcomeFromQuotes still treats the newer
+    // in-progress attempt as Open, which makes the follow-up disappear from
+    // Follow-Ups / Calendar / the refreshed Needs Attention view.
+    const targetQuote = selectedCustomer.quotes[0];
 
     if (!targetQuote?.id) {
       setSaveMessage('Save failed: no quote record is available for this customer.');
@@ -1854,6 +1896,24 @@ export default function SupervisorQuoteOperations() {
             onOpen={openCustomer}
             emptyTitle="No Walks in this view"
             emptyDetail="Walks will appear here after the final Not Closed outcome is recorded."
+          />
+          <NeedsAttentionView
+            title="Carrier Bridge Opportunities"
+            description="Verified carrier launches that still need a final outcome or a completed return to Agency Matrix."
+            items={carrierBridgeAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved carrier bridges"
+            emptyDetail="v0.11.7+ carrier launches will appear here when the agent does not finish the quote workflow."
+          />
+          <NeedsAttentionView
+            title="Unresolved 3 Yes Opportunities"
+            description="Quotes that reached 1st, 2nd, or 3rd Yes but never received a final outcome. Includes stale quotes and completed Matrix returns that were never dispositioned."
+            items={unresolvedYesAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved 3 Yes opportunities"
+            emptyDetail="Any quote that reaches the 3 Yes process and then goes stale or bridges back without a final outcome will appear here."
           />
         </div>
       )}

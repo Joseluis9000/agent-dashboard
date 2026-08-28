@@ -26,6 +26,9 @@ const adjustDepositsForDisplay = (trust = 0, revenue = 0) => {
     };
 };
 
+const normalizeName = (name = '') =>
+    name.trim().replace(/\s+/g, ' ').toLowerCase();
+
 const calculateSummary = (trans) => {
     const summary = {
         nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0,
@@ -82,6 +85,7 @@ const EODHistory = () => {
     const [selectedOffice, setSelectedOffice] = useState('');
     const [officeList, setOfficeList] = useState([]);
     const [officeReports, setOfficeReports] = useState([]);
+    const [profilesByEmail, setProfilesByEmail] = useState({});
     const [agentReport, setAgentReport] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -155,8 +159,35 @@ const EODHistory = () => {
                     .eq('report_date', selectedDate);
 
                 if (error) throw error;
-                setOfficeReports(data || []);
-                setAgentReport(data.find(report => report.agent_email === user.email) || null);
+                const reports = data || [];
+                setOfficeReports(reports);
+                setAgentReport(reports.find(report => report.agent_email === user.email) || null);
+
+                const reportEmails = [...new Set(
+                    reports.map(report => report.agent_email?.trim().toLowerCase()).filter(Boolean)
+                )];
+
+                if (reportEmails.length > 0) {
+                    const { data: profileData, error: profileError } = await supabase
+                        .from('profiles')
+                        .select('email, full_name, csr_name')
+                        .in('email', reportEmails);
+
+                    if (profileError) {
+                        console.error('Error fetching profiles for EOD auth comparison:', profileError);
+                        setProfilesByEmail({});
+                    } else {
+                        const lookup = (profileData || []).reduce((acc, profile) => {
+                            if (profile.email) {
+                                acc[profile.email.trim().toLowerCase()] = profile;
+                            }
+                            return acc;
+                        }, {});
+                        setProfilesByEmail(lookup);
+                    }
+                } else {
+                    setProfilesByEmail({});
+                }
             } catch (err) {
                 setError(err.message);
                 console.error("Error fetching reports:", err);
@@ -182,12 +213,30 @@ const EODHistory = () => {
 
         const breakdown = officeReports.map(report => {
             const adjusted = adjustDepositsForDisplay(report.trust_deposit, report.revenue_deposit);
-            const agentName = (report.raw_transactions && report.raw_transactions.length > 0)
+            const transactionCsr = (report.raw_transactions && report.raw_transactions.length > 0)
                 ? report.raw_transactions[0]['CSR']
-                : report.agent_email.split('@')[0];
+                : '';
+            const agentName = transactionCsr || report.agent_email?.split('@')[0] || 'Unknown Agent';
+            const authEmail = report.agent_email?.trim() || '';
+            const authProfile = profilesByEmail[authEmail.toLowerCase()] || null;
+            const authFullName = authProfile?.full_name?.trim() || '';
+            const profileCsrName = authProfile?.csr_name?.trim() || '';
+
+            const hasConfiguredCsr = Boolean(profileCsrName);
+            const hasAuthMismatch = Boolean(
+                transactionCsr &&
+                profileCsrName &&
+                normalizeName(transactionCsr) !== normalizeName(profileCsrName)
+            );
+            const showAuthDetails = Boolean(authEmail) && (!hasConfiguredCsr || hasAuthMismatch);
 
             return {
                 agentName,
+                authEmail,
+                authFullName,
+                hasConfiguredCsr,
+                hasAuthMismatch,
+                showAuthDetails,
                 trust: adjusted.trust,
                 dmv: report.dmv_deposit || 0,
                 revenue: adjusted.revenue,
@@ -207,7 +256,7 @@ const EODHistory = () => {
         }, { nb_rw_count: 0, dmv_count: 0, cash_premium: 0, cash_fee: 0, credit_premium: 0, credit_fee: 0, expenses_amount: 0 });
         
         return { officeTotals: totals, agentBreakdown: breakdown, officeSummary: summary };
-    }, [officeReports]);
+    }, [officeReports, profilesByEmail]);
 
     const commissionableAgentSummary = useMemo(() => getCommissionableSummary(agentReport), [agentReport]);
     const adjustedAgentDeposits = useMemo(() => agentReport ? adjustDepositsForDisplay(agentReport.trust_deposit, agentReport.revenue_deposit) : null, [agentReport]);
@@ -271,7 +320,21 @@ const EODHistory = () => {
                                     <tbody>
                                         {agentBreakdown.map((agent, index) => (
                                             <tr key={index}>
-                                                <td>{agent.agentName}</td>
+                                                <td>
+                                                    <div className={styles.agentIdentity}>
+                                                        <span className={styles.agentName}>{agent.agentName}</span>
+                                                        {agent.showAuthDetails && (
+                                                            <span className={agent.hasAuthMismatch ? styles.authMismatch : styles.authUnverified}>
+                                                                {agent.hasAuthMismatch ? '⚠ Auth:' : 'Auth:'} {' '}
+                                                                {agent.authFullName || 'Profile name unavailable'}
+                                                                {agent.authEmail ? ` · ${agent.authEmail}` : ''}
+                                                                {!agent.hasConfiguredCsr && (
+                                                                    <em> · CSR match not configured</em>
+                                                                )}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
                                                 <td>{formatCurrency(agent.trust)}</td>
                                                 <td>{formatCurrency(agent.dmv)}</td>
                                                 <td>

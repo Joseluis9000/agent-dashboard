@@ -2,8 +2,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import styles from './AdminQuoteLog.module.css';
+import {
+  STALE_AFTER_MS as SHARED_STALE_AFTER_MS,
+  ATTENTION_CATEGORIES,
+  getQuoteDisplayStatus as sharedGetQuoteDisplayStatus,
+  inferQuoteBusinessType as sharedInferQuoteBusinessType,
+  inferExistingClientReason as sharedInferExistingClientReason,
+  secondYesConfirmed as sharedSecondYesConfirmed,
+  getThreeYesStage as sharedGetThreeYesStage,
+  isGroupClosed as sharedIsGroupClosed,
+  isGroupFollowUp as sharedIsGroupFollowUp,
+  isGroupLive as sharedIsGroupLive,
+  isGroupRegularQuote as sharedIsGroupRegularQuote,
+  getGroupAttentionItem as sharedGetGroupAttentionItem,
+} from '../../utils/quoteClassification';
 
-const STALE_AFTER_MS = 60 * 60 * 1000;
+const STALE_AFTER_MS = SHARED_STALE_AFTER_MS;
 
 const NOT_CLOSED_REASONS = [
   ['lost_deal', 'Lost Deal'],
@@ -64,6 +78,7 @@ const TABS = [
   ['followups', 'Follow-Ups'],
   ['calendar', 'Calendar'],
   ['closed', 'Closed Deals'],
+  ['unmapped', 'Unmapped Agents'],
   ['devices', 'Trusted Devices'],
 ];
 
@@ -185,20 +200,18 @@ function elapsedLabel(value, now = Date.now()) {
 }
 
 function getDisplayStatus(quote, now = Date.now()) {
-  if (quote?.status === 'bridged_back' || quote?.bridged_back_at) return 'completed';
-
-  if (quote?.status === 'in_progress') {
-    const started = new Date(quote.started_at).getTime();
-    if (Number.isFinite(started) && now - started >= STALE_AFTER_MS) return 'stale';
-    return 'in_progress';
-  }
-
-  return quote?.status || 'unknown';
+  return sharedGetQuoteDisplayStatus(quote, now, STALE_AFTER_MS);
 }
 
 function latestTimestamp(q) {
   return new Date(
-    q.updated_at || q.bridged_back_at || q.started_at || q.created_at || 0
+    q.last_live_activity_at ||
+    q.updated_at ||
+    q.matrix_bridge_back_at ||
+    q.bridged_back_at ||
+    q.started_at ||
+    q.created_at ||
+    0
   ).getTime();
 }
 
@@ -223,14 +236,7 @@ function toDatetimeLocal(value) {
 
 
 function inferQuoteBusinessType(quote) {
-  const explicit = cleanStr(quote?.quote_business_type).toLowerCase();
-  if (explicit === 'new_business' || explicit === 'existing_client') return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/re[- ]?write|rewrite|renew|reinstat|endorsement|existing/.test(source)) {
-    return 'existing_client';
-  }
-  return 'new_business';
+  return sharedInferQuoteBusinessType(quote);
 }
 
 function quoteBusinessTypeLabel(quote) {
@@ -240,17 +246,7 @@ function quoteBusinessTypeLabel(quote) {
 }
 
 function inferExistingClientReason(quote) {
-  const explicit = cleanStr(quote?.existing_client_reason).toLowerCase();
-  if (EXISTING_CLIENT_REASONS.some(([value]) => value === explicit)) return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/payment/.test(source)) return 'payment';
-  if (/endorsement/.test(source)) return 'rewrite_endorsement';
-  if (/renewal/.test(source)) return 'renewal';
-  if (/reinstat/.test(source)) return 'reinstatement';
-  if (/re[- ]?write|rewrite|prior policy|previous policy/.test(source)) return 'rewrite_recent_policy';
-
-  return '';
+  return sharedInferExistingClientReason(quote);
 }
 
 function existingClientReasonLabel(quote) {
@@ -271,32 +267,15 @@ function firstYesConfirmed(quote) {
 }
 
 function secondYesConfirmed(quote) {
-  if (quote?.second_yes_id_vin === true) return true;
-  if (quote?.second_yes_id_vin === false) return false;
-  return hasLicenseSignal(quote) && hasFullVinSignal(quote);
+  return sharedSecondYesConfirmed(quote);
 }
 
 function thirdYesConfirmed(quote) {
-  if (quote?.third_yes_payment_ready === true) return true;
-  if (quote?.third_yes_payment_ready === false) return false;
-
-  const payment = cleanStr(quote?.payment_method).toLowerCase();
-  if (payment === 'cash' || payment === 'card') return true;
-
-  // Until the agent quote page records the payment question directly,
-  // a completed carrier bridge after the 2nd Yes is a strong 3rd-Yes fallback.
-  return secondYesConfirmed(quote) && Boolean(
-    quote?.bridged_back_at ||
-    quote?.status === 'bridged_back' ||
-    quote?.carrier
-  );
+  return sharedGetThreeYesStage(quote) === 3;
 }
 
 function threeYesStage(quote) {
-  if (thirdYesConfirmed(quote)) return 3;
-  if (secondYesConfirmed(quote)) return 2;
-  if (firstYesConfirmed(quote)) return 1;
-  return 0;
+  return sharedGetThreeYesStage(quote);
 }
 
 function threeYesEvidenceLabel(quote) {
@@ -333,7 +312,13 @@ function safeArray(value) {
 }
 
 function currentQuoteForGroup(group) {
-  return group?.quotes?.[0] || {};
+  const rows = Array.isArray(group?.quotes)
+    ? [...group.quotes]
+    : [];
+
+  rows.sort((a, b) => latestTimestamp(b) - latestTimestamp(a));
+
+  return rows[0] || {};
 }
 
 function latestGroupNote(group) {
@@ -374,15 +359,12 @@ function briefText(value, max = 92) {
   return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
 }
 
-function isGroupClosed(group) {
-  return group?.outcome?.status === 'closed';
+function isGroupClosed(group, now = Date.now()) {
+  return sharedIsGroupClosed(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
-function isGroupLive(group) {
-  // A workflow disposition is authoritative. As soon as an agent/admin/supervisor
-  // records Not Closed, Follow Up, or Closed, the customer leaves Live Activity
-  // even if the raw TurboRater quote row is still technically "in_progress".
-  return Number(group?.inProgressCount || 0) > 0 && group?.outcome?.status === 'open';
+function isGroupLive(group, now = Date.now()) {
+  return sharedIsGroupLive(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
 function isDidNotRewriteGroup(group) {
@@ -441,6 +423,8 @@ function eventDisplay(event) {
   if (type === 'FIRST_LICENSE_ENTERED') return 'Driver license detected';
   if (type === 'FIRST_FULL_VIN_ENTERED') return 'Full 17-character VIN detected';
   if (type === 'HIGH_INTENT_DETECTED') return 'ID / VIN intent signal detected';
+  if (type === 'CARRIER_BRIDGE_STARTED') return metadata.carrier ? `Carrier bridge · ${metadata.carrier}` : 'Carrier bridge started';
+  if (type === 'MATRIX_BRIDGE_BACK') return 'Agency Matrix bridge back';
   if (type === 'BRIDGE_BACK') return metadata.carrier ? `Bridge Back · ${metadata.carrier}` : 'Bridge Back completed';
   if (type === 'POLICY_BOUND') return 'Policy bound / closed';
 
@@ -626,46 +610,6 @@ function groupQuotesByCustomer(quotes, now, officeRegions = {}) {
     .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
 }
 
-function getAttentionItem(group) {
-  if (!group || group?.outcome?.status !== 'not_closed') return null;
-
-  const outcome = cleanStr(group?.outcome?.source?.outcome).toLowerCase();
-  const dealSave = group?.latestDealSaveRequest || null;
-  const helpRequested = Boolean(dealSave?.id);
-
-  // A Deal Save request is system evidence that management help was requested.
-  // Even if the final workflow was accidentally saved as Walk, management should
-  // review it as a Lost Deal because the escalation actually happened.
-  if (helpRequested || outcome === 'lost_deal') {
-    return {
-      level: 'critical',
-      title: 'Lost Deal',
-      detail: helpRequested
-        ? 'Deal Save help was requested, but the customer still did not close.'
-        : 'Management / lower broker fee help was recorded, but the customer still did not close.',
-      sortValue: 0,
-      stage: Number(group?.yesStage || 0),
-      category: 'lost_deal',
-      helpRequested,
-      dealSave,
-    };
-  }
-
-  if (outcome === 'walk') {
-    return {
-      level: 'high',
-      title: 'Walk',
-      detail: 'Customer did not close and no Deal Save request was recorded before the customer walked.',
-      sortValue: 1,
-      stage: Number(group?.yesStage || 0),
-      category: 'walk',
-      helpRequested: false,
-      dealSave: null,
-    };
-  }
-
-  return null;
-}
 
 
 export default function AdminQuoteLog() {
@@ -695,6 +639,10 @@ export default function AdminQuoteLog() {
   const [deviceSaving] = useState(false);
   const [deviceMessage, setDeviceMessage] = useState('');
   const [deviceSearch, setDeviceSearch] = useState('');
+  const [unmappedAgents, setUnmappedAgents] = useState([]);
+  const [agentProfiles, setAgentProfiles] = useState([]);
+  const [unmappedLoading, setUnmappedLoading] = useState(false);
+  const [unmappedMessage, setUnmappedMessage] = useState('');
   const refreshTimer = useRef(null);
   const deviceRefreshTimer = useRef(null);
   const fetchRequestRef = useRef(0);
@@ -758,6 +706,250 @@ export default function AdminQuoteLog() {
     setDeviceTokens(data || []);
     if (!quiet) setDeviceLoading(false);
   }, [supabaseClient, profile?.role]);
+
+  const fetchUnmappedAgents = useCallback(async ({ quiet = false } = {}) => {
+    if (!supabaseClient || cleanStr(profile?.role).toLowerCase() !== 'admin') return;
+
+    if (!quiet) {
+      setUnmappedLoading(true);
+      setUnmappedMessage('');
+    }
+
+    const unresolvedRows = [];
+    const pageSize = 1000;
+    let from = 0;
+    let unresolvedError = null;
+
+    while (true) {
+      const { data, error } = await supabaseClient
+        .from('quotes')
+        .select('id, captured_agent_name, agent_email, agent_resolution, office, customer_name, matrix_quote_id, started_at, updated_at')
+        .is('agent_email', null)
+        .not('captured_agent_name', 'is', null)
+        .order('updated_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        unresolvedError = error;
+        break;
+      }
+
+      const page = data || [];
+      unresolvedRows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    const [profilesResult, mappingsResult] = await Promise.all([
+      supabaseClient
+        .from('profiles')
+        .select('email, full_name, csr_name, turborater_agent_name, office, role')
+        .not('email', 'is', null)
+        .order('full_name', { ascending: true }),
+      supabaseClient
+        .from('turborater_agent_mappings')
+        .select('captured_name, captured_name_normalized, agent_email, created_at'),
+    ]);
+
+    const queryError = unresolvedError || profilesResult.error || mappingsResult.error;
+    if (queryError) {
+      console.error('[AdminQuoteLog] unmapped agent query failed:', queryError);
+      if (!quiet) {
+        setUnmappedMessage(`Could not load unmapped agents: ${queryError.message}`);
+        setUnmappedLoading(false);
+      }
+      return;
+    }
+
+    const mappedNames = new Set(
+      (mappingsResult.data || [])
+        .map((row) => cleanStr(row.captured_name_normalized).toLowerCase())
+        .filter(Boolean)
+    );
+
+    const grouped = new Map();
+    unresolvedRows.forEach((row) => {
+      const capturedName = cleanStr(row.captured_agent_name);
+      const normalized = capturedName.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!normalized || mappedNames.has(normalized)) return;
+
+      if (!grouped.has(normalized)) {
+        grouped.set(normalized, {
+          normalizedName: normalized,
+          capturedName,
+          quoteCount: 0,
+          offices: new Set(),
+          latestAt: null,
+          examples: [],
+        });
+      }
+
+      const item = grouped.get(normalized);
+      item.quoteCount += 1;
+      if (row.office) item.offices.add(normalizeOffice(row.office));
+      const rowAt = row.updated_at || row.started_at || null;
+      if (!item.latestAt || new Date(rowAt || 0) > new Date(item.latestAt || 0)) item.latestAt = rowAt;
+      if (item.examples.length < 3) {
+        item.examples.push({
+          id: row.id,
+          customerName: row.customer_name || 'Unnamed customer',
+          matrixQuoteId: row.matrix_quote_id || null,
+          office: normalizeOffice(row.office),
+        });
+      }
+    });
+
+    const rows = [...grouped.values()]
+      .map((item) => ({ ...item, offices: [...item.offices].filter(Boolean).sort() }))
+      .sort((a, b) => new Date(b.latestAt || 0) - new Date(a.latestAt || 0));
+
+    setUnmappedAgents(rows);
+    setAgentProfiles(profilesResult.data || []);
+    if (!quiet) setUnmappedLoading(false);
+  }, [supabaseClient, profile?.role]);
+
+  const saveAgentMapping = useCallback(async (capturedName, agentEmail) => {
+    if (!supabaseClient || cleanStr(profile?.role).toLowerCase() !== 'admin') return false;
+
+    const normalizedName = cleanStr(capturedName).toLowerCase().replace(/\s+/g, ' ').trim();
+    const email = cleanStr(agentEmail).toLowerCase();
+    if (!normalizedName || !email) return false;
+
+    setUnmappedMessage('');
+
+    // 1. Save the reusable mapping first so every future extension capture
+    //    resolves this TurboRater name automatically in the Edge Function.
+    const { error: mappingError } = await supabaseClient
+      .from('turborater_agent_mappings')
+      .upsert(
+        {
+          captured_name: cleanStr(capturedName),
+          captured_name_normalized: normalizedName,
+          agent_email: email,
+          created_by: profile?.email || null,
+        },
+        { onConflict: 'captured_name_normalized' }
+      );
+
+    if (mappingError) {
+      console.error('[AdminQuoteLog] agent mapping save failed:', mappingError);
+      setUnmappedMessage(`Could not save mapping: ${mappingError.message}`);
+      return false;
+    }
+
+    // 2. Find every historical unresolved quote for the same normalized
+    //    TurboRater name. We normalize in JavaScript so casing and extra
+    //    spaces do not cause older captures to be missed.
+    const unresolvedRows = [];
+    const pageSize = 1000;
+    let from = 0;
+    let backfillLookupError = null;
+
+    while (true) {
+      const { data, error } = await supabaseClient
+        .from('quotes')
+        .select('id, captured_agent_name')
+        .is('agent_email', null)
+        .not('captured_agent_name', 'is', null)
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        backfillLookupError = error;
+        break;
+      }
+
+      const page = data || [];
+      unresolvedRows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    if (backfillLookupError) {
+      console.error('[AdminQuoteLog] unresolved quote backfill lookup failed:', backfillLookupError);
+      setUnmappedMessage(
+        `${cleanStr(capturedName)} mapping was saved for future captures, but older quotes could not be scanned: ${backfillLookupError.message}`
+      );
+      await fetchUnmappedAgents({ quiet: true });
+      return true;
+    }
+
+    const quoteIds = unresolvedRows
+      .filter((row) => cleanStr(row.captured_agent_name).toLowerCase().replace(/\s+/g, ' ').trim() === normalizedName)
+      .map((row) => row.id)
+      .filter(Boolean);
+
+    // 3. Backfill agent_email / resolution in manageable batches.
+    //    Do not rewrite quote timestamps; this is identity repair, not new quote activity.
+    for (let index = 0; index < quoteIds.length; index += 200) {
+      const ids = quoteIds.slice(index, index + 200);
+      const { error: quoteBackfillError } = await supabaseClient
+        .from('quotes')
+        .update({
+          agent_email: email,
+          agent_resolution: 'manual_mapping',
+        })
+        .in('id', ids)
+        .is('agent_email', null);
+
+      if (quoteBackfillError) {
+        console.error('[AdminQuoteLog] quote agent backfill failed:', quoteBackfillError);
+        setUnmappedMessage(
+          `${cleanStr(capturedName)} mapping was saved, but some older quotes could not be assigned: ${quoteBackfillError.message}`
+        );
+        await fetchUnmappedAgents({ quiet: true });
+        return true;
+      }
+    }
+
+    // 4. Give the mapped employee direct access to every repaired quote.
+    //    The unique quote_id,user_email key makes this safe to run repeatedly.
+    for (let index = 0; index < quoteIds.length; index += 200) {
+      const ids = quoteIds.slice(index, index + 200);
+      const accessRows = ids.map((quoteId) => ({
+        quote_id: quoteId,
+        user_email: email,
+        access_reason: 'manual_agent_mapping',
+      }));
+
+      if (!accessRows.length) continue;
+
+      const { error: accessError } = await supabaseClient
+        .from('quote_user_access')
+        .upsert(accessRows, { onConflict: 'quote_id,user_email' });
+
+      if (accessError) {
+        console.error('[AdminQuoteLog] mapped agent access backfill failed:', accessError);
+        setUnmappedMessage(
+          `${cleanStr(capturedName)} was mapped and ${quoteIds.length} quote${quoteIds.length === 1 ? '' : 's'} were assigned, but direct agent access could not be fully backfilled: ${accessError.message}`
+        );
+        await fetchUnmappedAgents({ quiet: true });
+        return true;
+      }
+    }
+
+    // Keep the currently loaded Admin view in sync immediately instead of
+    // waiting for the next realtime/fallback refresh.
+    setQuotes((current) =>
+      current.map((quote) => {
+        const quoteName = cleanStr(quote?.captured_agent_name).toLowerCase().replace(/\s+/g, ' ').trim();
+        if (quoteName !== normalizedName || quote?.agent_email) return quote;
+        return {
+          ...quote,
+          agent_email: email,
+          agent_resolution: 'manual_mapping',
+        };
+      })
+    );
+
+    setUnmappedMessage(
+      quoteIds.length
+        ? `${cleanStr(capturedName)} mapped successfully. ${quoteIds.length} existing unresolved quote${quoteIds.length === 1 ? '' : 's'} were assigned, and future captures will resolve automatically.`
+        : `${cleanStr(capturedName)} mapped successfully. Future captures will resolve automatically.`
+    );
+
+    await fetchUnmappedAgents({ quiet: true });
+    return true;
+  }, [supabaseClient, profile?.role, profile?.email, fetchUnmappedAgents]);
 
   const fetchQuotes = useCallback(
     async ({ quiet = false } = {}) => {
@@ -830,6 +1022,31 @@ export default function AdminQuoteLog() {
       for (let index = 0; index < quoteIds.length; index += 200) {
         const ids = quoteIds.slice(index, index + 200);
 
+        const fetchQuoteEventsForIds = async (quoteIdBatch) => {
+          const rows = [];
+          const pageSize = 1000;
+          let from = 0;
+
+          while (true) {
+            const { data, error } = await supabaseClient
+              .from('quote_events')
+              .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
+              .in('quote_id', quoteIdBatch)
+              .order('event_at', { ascending: true })
+              .range(from, from + pageSize - 1);
+
+            if (error) return { data: rows, error };
+
+            const page = data || [];
+            rows.push(...page);
+
+            if (page.length < pageSize) break;
+            from += pageSize;
+          }
+
+          return { data: rows, error: null };
+        };
+
         const [
           { data: quoteData, error: quoteError },
           { data: eventsData, error: eventsError },
@@ -839,13 +1056,9 @@ export default function AdminQuoteLog() {
         ] = await Promise.all([
           supabaseClient
             .from('quotes')
-            .select('id, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary')
+            .select('id, status, extension_version, carrier, total_premium, down_payment, monthly_payment, bridged_back_at, bridge_policy_status, bridge_policy_status_value, system_outcome_signal, carrier_bridge_started_at, carrier_bridge_carrier, matrix_bridge_back_at, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary')
             .in('id', ids),
-          supabaseClient
-            .from('quote_events')
-            .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
-            .in('quote_id', ids)
-            .order('event_at', { ascending: true }),
+          fetchQuoteEventsForIds(ids),
           supabaseClient
             .from('quote_workflow')
             .select('quote_id, quote_business_type, existing_client_reason, first_yes_ready_now, second_yes_id_vin, third_yes_payment_ready, payment_method, first_yes_recorded_at, second_yes_recorded_at, third_yes_recorded_at, outcome, follow_up_needed, follow_up_at, agent_notes, not_closed_explanation, lost_deal_manager_name, lost_deal_broker_fee')
@@ -963,9 +1176,10 @@ export default function AdminQuoteLog() {
     const jobs = [fetchQuotes(), fetchOfficeSettings()];
     if (cleanStr(profile?.role).toLowerCase() === 'admin') {
       jobs.push(fetchDeviceTokens());
+      jobs.push(fetchUnmappedAgents());
     }
     await Promise.all(jobs);
-  }, [fetchQuotes, fetchOfficeSettings, fetchDeviceTokens, profile?.role]);
+  }, [fetchQuotes, fetchOfficeSettings, fetchDeviceTokens, fetchUnmappedAgents, profile?.role]);
 
   useEffect(() => {
     fetchOfficeSettings();
@@ -978,8 +1192,9 @@ export default function AdminQuoteLog() {
   useEffect(() => {
     if (cleanStr(profile?.role).toLowerCase() === 'admin') {
       fetchDeviceTokens();
+      fetchUnmappedAgents();
     }
-  }, [fetchDeviceTokens, profile?.role]);
+  }, [fetchDeviceTokens, fetchUnmappedAgents, profile?.role]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30 * 1000);
@@ -999,9 +1214,12 @@ export default function AdminQuoteLog() {
     // Device realtime is primary. A quiet 15-second fallback keeps approvals,
     // disables, removals, and new registrations accurate if a websocket event
     // is missed, without flashing a loading state.
-    const id = setInterval(() => fetchDeviceTokens({ quiet: true }), 15000);
+    const id = setInterval(() => {
+      fetchDeviceTokens({ quiet: true });
+      fetchUnmappedAgents({ quiet: true });
+    }, 15000);
     return () => clearInterval(id);
-  }, [fetchDeviceTokens, profile?.role]);
+  }, [fetchDeviceTokens, fetchUnmappedAgents, profile?.role]);
 
   useEffect(() => {
     if (!supabaseClient) return undefined;
@@ -1013,11 +1231,12 @@ export default function AdminQuoteLog() {
 
     const channel = supabaseClient
       .channel('admin-quote-log-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => { scheduleRefresh(); if (cleanStr(profile?.role).toLowerCase() === 'admin') fetchUnmappedAgents({ quiet: true }); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_workflow' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_events' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_internal_notes' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_deal_save_requests' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'turborater_agent_mappings' }, () => { if (cleanStr(profile?.role).toLowerCase() === 'admin') fetchUnmappedAgents({ quiet: true }); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'extension_devices' }, () => {
         if (cleanStr(profile?.role).toLowerCase() !== 'admin') return;
         if (deviceRefreshTimer.current) clearTimeout(deviceRefreshTimer.current);
@@ -1033,7 +1252,7 @@ export default function AdminQuoteLog() {
       if (deviceRefreshTimer.current) clearTimeout(deviceRefreshTimer.current);
       supabaseClient.removeChannel(channel);
     };
-  }, [fetchQuotes, fetchDeviceTokens, profile?.role, supabaseClient]);
+  }, [fetchQuotes, fetchDeviceTokens, fetchUnmappedAgents, profile?.role, supabaseClient]);
 
   const customerGroups = useMemo(
     () => groupQuotesByCustomer(quotes, now, officeRegions),
@@ -1154,8 +1373,8 @@ export default function AdminQuoteLog() {
   }, [scopeGroups, selectedBounds]);
 
   const liveGroups = useMemo(
-    () => scopeGroups.filter((group) => isGroupLive(group)),
-    [scopeGroups]
+    () => scopeGroups.filter((group) => isGroupLive(group, now)),
+    [scopeGroups, now]
   );
 
 
@@ -1183,8 +1402,8 @@ export default function AdminQuoteLog() {
   }, [quoteInternalNotes]);
 
   const closedGroups = useMemo(
-    () => historicalGroups.filter((group) => isGroupClosed(group)),
-    [historicalGroups]
+    () => historicalGroups.filter((group) => isGroupClosed(group, now)),
+    [historicalGroups, now]
   );
 
   const calendarMonth = useMemo(
@@ -1197,13 +1416,13 @@ export default function AdminQuoteLog() {
     const startMs = new Date(start).getTime();
     const endMs = new Date(end).getTime();
     return scopeGroups
-      .filter((group) => group.outcome?.status === 'follow_up')
+      .filter((group) => sharedIsGroupFollowUp(group, { now, staleAfterMs: STALE_AFTER_MS }))
       .filter((group) => {
         const at = new Date(groupFollowUpAt(group) || 0).getTime();
         return Number.isFinite(at) && at >= startMs && at < endMs;
       })
       .sort((a, b) => new Date(groupFollowUpAt(a) || 0) - new Date(groupFollowUpAt(b) || 0));
-  }, [scopeGroups, calendarMonth]);
+  }, [scopeGroups, calendarMonth, now]);
 
   const followUpGroups = useMemo(() => {
     const startMs = new Date(selectedBounds.start).getTime();
@@ -1216,17 +1435,16 @@ export default function AdminQuoteLog() {
 
   const quoteGroups = useMemo(
     () => historicalGroups.filter((group) => {
-      if (isGroupClosed(group) || isGroupLive(group)) return false;
-      if (group.outcome?.status === 'follow_up') return false;
+      if (isGroupLive(group, now)) return false;
 
-      // "Did Not RW - Stayed With Current Carrier" belongs under the
-      // existing-client Quote classification that created the re-write,
-      // even when the quote reached the 3 Yes process before it was retained.
-      if (isDidNotRewriteGroup(group)) return true;
-
-      return Number(group.yesStage || 0) === 0;
+      // Shared classifier owns the primary bucket for every role/page.
+      // Existing-client "Did Not RW" records naturally remain regular quotes.
+      return sharedIsGroupRegularQuote(group, {
+        now,
+        staleAfterMs: STALE_AFTER_MS,
+      });
     }),
-    [historicalGroups]
+    [historicalGroups, now]
   );
 
   const newQuoteGroups = useMemo(
@@ -1311,23 +1529,43 @@ export default function AdminQuoteLog() {
 
   const attentionGroups = useMemo(() => {
     return historicalGroups
-      .map((group) => ({ group, attention: getAttentionItem(group) }))
-      .filter((item) => item.attention)
+      .map((group) => {
+        const item = sharedGetGroupAttentionItem(group, {
+          now,
+          staleAfterMs: STALE_AFTER_MS,
+        });
+        return item || null;
+      })
+      .filter(Boolean)
       .sort((a, b) => {
         if (a.attention.sortValue !== b.attention.sortValue) {
           return a.attention.sortValue - b.attention.sortValue;
         }
         return new Date(a.group.lastActivityAt || 0) - new Date(b.group.lastActivityAt || 0);
       });
-  }, [historicalGroups]);
+  }, [historicalGroups, now]);
 
   const lostDealAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'lost_deal'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.LOST_DEAL),
     [attentionGroups]
   );
 
   const walkAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'walk'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.WALK),
+    [attentionGroups]
+  );
+
+  const carrierBridgeAttention = useMemo(
+    () => attentionGroups.filter((item) => [
+      ATTENTION_CATEGORIES.CARRIER_NO_RETURN,
+      ATTENTION_CATEGORIES.CARRIER_RETURN_NO_OUTCOME,
+      ATTENTION_CATEGORIES.CARRIER_NO_OUTCOME,
+    ].includes(item.attention?.category)),
+    [attentionGroups]
+  );
+
+  const unresolvedYesAttention = useMemo(
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.STALE_YES),
     [attentionGroups]
   );
 
@@ -1379,6 +1617,8 @@ export default function AdminQuoteLog() {
         return a.region.localeCompare(b.region, undefined, { numeric: true, sensitivity: 'base' });
       });
   }, [liveGroups]);
+
+  const unmappedAgentCount = unmappedAgents.length;
 
   const trustedDeviceCount = useMemo(
     () => deviceTokens.filter((row) =>
@@ -1592,9 +1832,7 @@ export default function AdminQuoteLog() {
     event.preventDefault();
     if (!selectedCustomer) return;
 
-    const targetQuote =
-      selectedCustomer.quotes.find((q) => getDisplayStatus(q, now) === 'completed') ||
-      selectedCustomer.quotes[0];
+    const targetQuote = currentQuoteForGroup(selectedCustomer);
 
     if (!targetQuote?.id) {
       setSaveMessage('Save failed: no quote record is available for this customer.');
@@ -1921,7 +2159,7 @@ export default function AdminQuoteLog() {
         <DashboardStat
           label="Needs Attention"
           value={stats.attention}
-          note="1st / 2nd / 3rd Yes + follow-up"
+          note="Carrier bridges + unresolved opportunities"
           tone="attention"
         />
         <DashboardStat
@@ -1938,7 +2176,7 @@ export default function AdminQuoteLog() {
       </section>
 
       <nav className={styles.tabBar} aria-label="Quote operations views">
-        {TABS.filter(([value]) => value !== 'devices' || isAdmin).map(([value, label]) => {
+        {TABS.filter(([value]) => !['devices', 'unmapped'].includes(value) || isAdmin).map(([value, label]) => {
           const count = value === 'live'
             ? stats.live
             : value === 'attention'
@@ -1951,9 +2189,11 @@ export default function AdminQuoteLog() {
                     ? stats.calendarFollowups
                     : value === 'closed'
                       ? stats.closed
-                      : value === 'devices'
-                        ? trustedDeviceCount
-                        : stats.customers;
+                      : value === 'unmapped'
+                        ? unmappedAgentCount
+                        : value === 'devices'
+                          ? trustedDeviceCount
+                          : stats.customers;
 
           return (
             <button
@@ -2000,6 +2240,24 @@ export default function AdminQuoteLog() {
             onOpen={openCustomer}
             emptyTitle="No Walks in this view"
             emptyDetail="Walks will appear here after the final Not Closed outcome is recorded."
+          />
+          <NeedsAttentionView
+            title="Carrier Bridge Opportunities"
+            description="Verified carrier launches that still need a final outcome or a completed return to Agency Matrix."
+            items={carrierBridgeAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved carrier bridges"
+            emptyDetail="v0.11.7+ carrier launches will appear here when the agent does not finish the quote workflow."
+          />
+          <NeedsAttentionView
+            title="Unresolved 3 Yes Opportunities"
+            description="Quotes that reached 1st, 2nd, or 3rd Yes but never received a final outcome. Includes stale quotes and completed Matrix returns that were never dispositioned."
+            items={unresolvedYesAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved 3 Yes opportunities"
+            emptyDetail="Any quote that reaches the 3 Yes process and then goes stale or bridges back without a final outcome will appear here."
           />
         </div>
       )}
@@ -2187,6 +2445,18 @@ export default function AdminQuoteLog() {
         </div>
       )}
 
+
+      {activeTab === 'unmapped' && isAdmin && (
+        <UnmappedAgentsManager
+          rows={unmappedAgents}
+          profiles={agentProfiles}
+          loading={unmappedLoading}
+          message={unmappedMessage}
+          onMap={saveAgentMapping}
+          onRefresh={() => fetchUnmappedAgents()}
+        />
+      )}
+
       {activeTab === 'devices' && isAdmin && (
         <DeviceTokenManager
           rows={filteredDeviceTokens}
@@ -2224,6 +2494,125 @@ export default function AdminQuoteLog() {
         />
       )}
     </div>
+  );
+}
+
+
+function UnmappedAgentsManager({ rows, profiles, loading, message, onMap, onRefresh }) {
+  const [selectedByName, setSelectedByName] = useState({});
+  const [savingName, setSavingName] = useState('');
+
+  const profileLabel = (row) => {
+    const name = cleanStr(row.full_name) || cleanStr(row.csr_name) || cleanStr(row.turborater_agent_name) || row.email;
+    const office = normalizeOffice(row.office);
+    return `${name} · ${office || 'No office'} · ${row.email}`;
+  };
+
+  const handleMap = async (row) => {
+    const selectedEmail = selectedByName[row.normalizedName] || '';
+    if (!selectedEmail) return;
+    setSavingName(row.normalizedName);
+    const ok = await onMap(row.capturedName, selectedEmail);
+    if (ok) {
+      setSelectedByName((current) => {
+        const next = { ...current };
+        delete next[row.normalizedName];
+        return next;
+      });
+    }
+    setSavingName('');
+  };
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionHeading}>
+        <div>
+          <h2>Unmapped TurboRater Agents</h2>
+          <p>
+            Quotes still sync when TurboRater shows an unknown agent name. Map each name once so future captures automatically attach to the correct dashboard user.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className={`${styles.countPill} ${rows.length ? styles.attentionCountPill : ''}`}>{rows.length} unmapped</span>
+          <button type="button" className={styles.secondaryButton} onClick={onRefresh} disabled={loading}>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {message && <div className={styles.deviceMessage}>{message}</div>}
+
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No unmapped agent names"
+          detail="New TurboRater names that do not match a profile will appear here automatically without losing the quote."
+        />
+      ) : (
+        <div className={styles.tableWrap}>
+          <table className={styles.logTable}>
+            <thead>
+              <tr>
+                <th>TurboRater Name</th>
+                <th>Quotes</th>
+                <th>Office(s)</th>
+                <th>Recent Quote Examples</th>
+                <th>Map To Dashboard User</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.normalizedName}>
+                  <td>
+                    <strong>{row.capturedName}</strong>
+                    <span className={styles.subCell}>Last seen {formatDateTime(row.latestAt)}</span>
+                  </td>
+                  <td><strong>{row.quoteCount}</strong></td>
+                  <td>{row.offices.join(', ') || 'Unknown'}</td>
+                  <td>
+                    {row.examples.map((example) => (
+                      <span key={example.id} className={styles.subCell}>
+                        {example.customerName}{example.matrixQuoteId ? ` · Q# ${example.matrixQuoteId}` : ''}
+                      </span>
+                    ))}
+                  </td>
+                  <td>
+                    <select
+                      value={selectedByName[row.normalizedName] || ''}
+                      onChange={(event) => setSelectedByName((current) => ({
+                        ...current,
+                        [row.normalizedName]: event.target.value,
+                      }))}
+                    >
+                      <option value="">Select employee…</option>
+                      {profiles.map((profileRow) => (
+                        <option key={profileRow.email} value={profileRow.email}>
+                          {profileLabel(profileRow)}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={styles.primarySmallButton}
+                      disabled={!selectedByName[row.normalizedName] || savingName === row.normalizedName}
+                      onClick={() => handleMap(row)}
+                    >
+                      {savingName === row.normalizedName ? 'Mapping…' : 'Map Agent'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className={styles.subCell} style={{ marginTop: 12 }}>
+        Saving a mapping updates future captures immediately and also assigns existing unresolved quotes with the same TurboRater name to that employee.
+      </p>
+    </section>
   );
 }
 
@@ -2626,7 +3015,7 @@ function NeedsAttentionView({
                       <span><strong>Requested by:</strong> {attention.dealSave.requested_by_name || attention.dealSave.requested_by_email || 'Agent'}</span>
                     </div>
                   )}
-                  {attention.category === 'lost_deal' && (
+                  {attention.category === ATTENTION_CATEGORIES.LOST_DEAL && (
                     <div className={styles.intentSignalsInline}>
                       <span><strong>Manager:</strong> {group.outcome?.source?.lost_deal_manager_name || 'Not recorded'}</span>
                       <span><strong>BF lost at:</strong> {group.outcome?.source?.lost_deal_broker_fee != null ? formatMoney(group.outcome.source.lost_deal_broker_fee) : 'Not recorded'}</span>
@@ -2646,9 +3035,17 @@ function NeedsAttentionView({
                 <div className={styles.attentionActionBox}>
                   <strong>Recommended action</strong>
                   <span>
-                    {attention.category === 'lost_deal'
+                    {attention.category === ATTENTION_CATEGORIES.LOST_DEAL
                       ? 'Review the Deal Save attempt, manager coaching, final BF, and why the customer still did not close.'
-                      : 'Coach the agent on escalating for Deal Save help before allowing a price-sensitive customer to walk.'}
+                      : [
+                          ATTENTION_CATEGORIES.CARRIER_NO_RETURN,
+                          ATTENTION_CATEGORIES.CARRIER_RETURN_NO_OUTCOME,
+                          ATTENTION_CATEGORIES.CARRIER_NO_OUTCOME,
+                        ].includes(attention.category)
+                        ? 'Review the carrier launch, Matrix return, policy status, and final customer disposition.'
+                        : attention.category === ATTENTION_CATEGORIES.WALK
+                          ? 'Coach the agent on escalating for Deal Save help before allowing a price-sensitive customer to walk.'
+                          : 'Review the deal stage, closing reason, and customer follow-up.'}
                   </span>
                   <button type="button" className={styles.primarySmallButton} onClick={() => onOpen(group)}>
                     Review Deal
@@ -3023,7 +3420,7 @@ function CustomerDrawer({
   quoteEventsByQuote,
   internalNotesByQuote,
 }) {
-  const latest = group.quotes[0] || {};
+  const latest = currentQuoteForGroup(group);
   const drivers = safeArray(latest.drivers_summary);
   const vehicles = safeArray(latest.vehicles_summary);
   const events = reconcileTimelineEvents(latest, quoteEventsByQuote?.[latest.id] || []);

@@ -2605,3 +2605,93 @@
 .tabBar {
   flex-wrap: wrap;
 }
+
+/* v0.13.3 - stale 3 Yes opportunities moved into Needs Attention */
+.attentionDealCard_stale {
+  border-color: #bfdbfe;
+  border-left-color: #2e90fa;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 72%);
+}
+
+.attentionDealCard_stale2 {
+  border-color: #fde68a;
+  border-left-color: #f79009;
+  background: linear-gradient(180deg, #fffdf5 0%, #ffffff 72%);
+}
+
+.attentionDealCard_stale3 {
+  border-color: #fdba74;
+  border-left-color: #f04438;
+  background: linear-gradient(180deg, #fff8f4 0%, #ffffff 72%);
+}
+
+.attentionDealCard_stale .attentionPriorityLabel,
+.attentionDealCard_stale .attentionReason > strong {
+  color: #175cd3;
+}
+
+.attentionDealCard_stale2 .attentionPriorityLabel,
+.attentionDealCard_stale2 .attentionReason > strong {
+  color: #b54708;
+}
+
+.attentionDealCard_stale3 .attentionPriorityLabel,
+.attentionDealCard_stale3 .attentionReason > strong {
+  color: #c4320a;
+}
+
+/* Keep the Needs Attention count visually prominent now that stale 3-Yes
+   opportunities are included in the bucket. */
+.attentionCountPill {
+  box-shadow: 0 0 0 1px rgba(247, 144, 9, 0.04);
+}
+
+/* Optional badges used by the updated JSX when a stale opportunity needs
+   a final disposition. */
+.staleAttentionBadge,
+.staleAttentionBadge_first,
+.staleAttentionBadge_second,
+.staleAttentionBadge_third {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.staleAttentionBadge {
+  border: 1px solid #d0d5dd;
+  background: #f9fafb;
+  color: #475467;
+}
+
+.staleAttentionBadge_first {
+  border: 1px solid #b2ddff;
+  background: #eff8ff;
+  color: #175cd3;
+}
+
+.staleAttentionBadge_second {
+  border: 1px solid #fedf89;
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.staleAttentionBadge_third {
+  border: 1px solid #f9dbaf;
+  background: #fff6ed;
+  color: #c4320a;
+}
+
+@media (max-width: 850px) {
+  .attentionDealCard_stale,
+  .attentionDealCard_stale2,
+  .attentionDealCard_stale3 {
+    grid-template-columns: 1fr;
+  }
+}
