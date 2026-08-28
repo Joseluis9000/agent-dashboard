@@ -1678,35 +1678,62 @@ const OfficeEODs = () => {
   const [viewMode, setViewMode] = useState('regional');
 
   const [officeRegions, setOfficeRegions] = useState({});
-  const [editingOffice, setEditingOffice] = useState(null);
-  const [newRegionName, setNewRegionName] = useState('');
 
   const [startDate, setStartDate] = useState(getYesterdayString());
   const [endDate, setEndDate] = useState(getYesterdayString());
 
   const [agentProfiles, setAgentProfiles] = useState({});
+  const [agentProfileDetails, setAgentProfileDetails] = useState({});
 
   useEffect(() => {
-    const savedRegions = localStorage.getItem('officeRegions');
-    const initialRegions = getInitialOfficeRegions();
+    const fetchOfficeRegions = async () => {
+      // Use the same authoritative office -> region route as AdminQuoteLog.
+      // office_dashboard_settings now controls the region shown here, so there is
+      // no separate EOD-page region list or browser localStorage to maintain.
+      const { data, error: regionError } = await supabase
+        .from('office_dashboard_settings')
+        .select('office_code, region');
 
-    if (savedRegions) {
-      setOfficeRegions({ ...initialRegions, ...JSON.parse(savedRegions) });
-    } else {
-      setOfficeRegions(initialRegions);
-    }
+      if (regionError) {
+        console.error('Could not load office region settings:', regionError);
+        // Keep the existing hard-coded list only as a safety fallback if the
+        // shared settings table cannot be reached.
+        setOfficeRegions(getInitialOfficeRegions());
+        return;
+      }
+
+      const regionMap = { ...getInitialOfficeRegions() };
+
+      (data || []).forEach((row) => {
+        const officeCode = normalizeOffice(row.office_code);
+        const region = cleanStr(row.region);
+        if (!officeCode || !region) return;
+        regionMap[officeCode] = region;
+      });
+
+      setOfficeRegions(regionMap);
+    };
+
+    fetchOfficeRegions();
   }, []);
 
   useEffect(() => {
     const fetchProfiles = async () => {
-      const { data } = await supabase.from('profiles').select('email, full_name');
+      const { data } = await supabase.from('profiles').select('email, full_name, csr_name');
 
       if (data) {
-        const mapping = {};
+        const nameMapping = {};
+        const detailMapping = {};
+
         data.forEach((profile) => {
-          if (profile.email) mapping[normalizeEmail(profile.email)] = profile.full_name;
+          if (!profile.email) return;
+          const emailKey = normalizeEmail(profile.email);
+          nameMapping[emailKey] = profile.full_name;
+          detailMapping[emailKey] = profile;
         });
-        setAgentProfiles(mapping);
+
+        setAgentProfiles(nameMapping);
+        setAgentProfileDetails(detailMapping);
       }
     };
 
@@ -1943,6 +1970,60 @@ const OfficeEODs = () => {
     });
   }, [submittedReports, expectedReports]);
 
+
+  const unmatchedSubmittedEods = useMemo(() => {
+    const expectedKeys = new Set(
+      expectedReports.map((expected) =>
+        `${expected.report_date}|${normalizeOffice(expected.office_number)}|${normalizeEmail(expected.agent_email)}`
+      )
+    );
+
+    const normalizeNameForMatch = (value = '') =>
+      String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+    const getSubmittedCsrName = (report) => {
+      const rows = Array.isArray(report?.raw_transactions) ? report.raw_transactions : [];
+      const rowWithCsr = rows.find((txn) => cleanStr(txn?.CSR || txn?.csr || txn?.csr_name || ''));
+      return cleanStr(rowWithCsr?.CSR || rowWithCsr?.csr || rowWithCsr?.csr_name || '');
+    };
+
+    return submittedReports
+      .filter((report) => {
+        const key = `${report.report_date}|${normalizeOffice(report.office_number)}|${normalizeEmail(report.agent_email)}`;
+        return !expectedKeys.has(key);
+      })
+      .map((report) => {
+        const authEmail = normalizeEmail(report.agent_email);
+        const profile = agentProfileDetails[authEmail] || null;
+        const submittedCsrName = getSubmittedCsrName(report);
+        const profileCsrName = cleanStr(profile?.csr_name || '');
+
+        let reason = 'Transfer email mismatch';
+        let reasonType = 'transfer';
+
+        if (!profileCsrName) {
+          reason = 'CSR match not configured';
+          reasonType = 'unconfigured';
+        } else if (
+          submittedCsrName &&
+          normalizeNameForMatch(submittedCsrName) !== normalizeNameForMatch(profileCsrName)
+        ) {
+          reason = 'CSR/Auth mismatch';
+          reasonType = 'mismatch';
+        }
+
+        return {
+          report,
+          authEmail: report.agent_email || '—',
+          authName: profile?.full_name || report.agent_email?.split('@')[0] || 'Unknown Agent',
+          submittedCsrName: submittedCsrName || 'CSR unavailable',
+          profileCsrName,
+          reason,
+          reasonType,
+        };
+      });
+  }, [submittedReports, expectedReports, agentProfileDetails]);
+
   const effectiveReports = useMemo(() => {
     return auditRows.map((row) => ({
       ...row,
@@ -2106,24 +2187,6 @@ const OfficeEODs = () => {
     });
   };
 
-  const handleEditRegion = (officeNumber, currentRegion) => {
-    setEditingOffice(officeNumber);
-    setNewRegionName(currentRegion === 'Unassigned' ? '' : currentRegion);
-  };
-
-  const handleSaveRegion = (officeNumber) => {
-    const updatedRegions = { ...officeRegions, [officeNumber]: newRegionName.trim() };
-
-    setOfficeRegions(updatedRegions);
-
-    const saved = JSON.parse(localStorage.getItem('officeRegions') || '{}');
-    saved[officeNumber] = newRegionName.trim();
-    localStorage.setItem('officeRegions', JSON.stringify(saved));
-
-    setEditingOffice(null);
-    setNewRegionName('');
-  };
-
   const getDisplayName = (row) => {
     const email = normalizeEmail(row.agent_email);
     return agentProfiles[email] || row.agent_email?.split('@')[0] || 'Unknown Agent';
@@ -2273,6 +2336,81 @@ const OfficeEODs = () => {
               </div>
             </div>
           )}
+
+          {!isLoading && !error && unmatchedSubmittedEods.length > 0 && (
+            <div className={styles.unmatchedEodSection}>
+              <div className={styles.unmatchedEodHeader}>
+                <div>
+                  <div className={styles.unmatchedEodTitle}>⚠ Unmatched Submitted EODs</div>
+                  <div className={styles.unmatchedEodSubtitle}>
+                    These EODs were submitted but did not pair to the expected transfer email. They are shown for review only and are not included in the office calculations below.
+                  </div>
+                </div>
+                <div className={styles.unmatchedEodCount}>{unmatchedSubmittedEods.length}</div>
+              </div>
+
+              <div className={styles.unmatchedEodTableWrap}>
+                <table className={styles.unmatchedEodTable}>
+                  <thead>
+                    <tr>
+                      <th>CSR on EOD</th>
+                      <th>Authenticated Account</th>
+                      <th>Office / Date</th>
+                      <th>Submitted Deposits</th>
+                      <th>Reason</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unmatchedSubmittedEods.map((item) => (
+                      <tr key={item.report.id || `${item.report.report_date}-${item.report.office_number}-${item.authEmail}`}>
+                        <td>
+                          <div className={styles.unmatchedPrimary}>{item.submittedCsrName}</div>
+                          {item.profileCsrName && (
+                            <div className={styles.unmatchedSecondary}>Profile CSR: {item.profileCsrName}</div>
+                          )}
+                        </td>
+                        <td>
+                          <div className={styles.unmatchedPrimary}>{item.authName}</div>
+                          <div className={styles.unmatchedSecondary}>{item.authEmail}</div>
+                        </td>
+                        <td>
+                          <div className={styles.unmatchedPrimary}>{item.report.office_number || '—'}</div>
+                          <div className={styles.unmatchedSecondary}>{item.report.report_date || '—'}</div>
+                        </td>
+                        <td>
+                          <div className={styles.unmatchedDepositLine}>Revenue: {formatCurrency(item.report.revenue_deposit)}</div>
+                          <div className={styles.unmatchedDepositLine}>Trust: {formatCurrency(item.report.trust_deposit)}</div>
+                          <div className={styles.unmatchedDepositLine}>DMV: {formatCurrency(item.report.dmv_deposit)}</div>
+                        </td>
+                        <td>
+                          <span className={`${styles.unmatchedReasonBadge} ${
+                            item.reasonType === 'mismatch'
+                              ? styles.unmatchedReasonMismatch
+                              : item.reasonType === 'unconfigured'
+                              ? styles.unmatchedReasonUnconfigured
+                              : styles.unmatchedReasonTransfer
+                          }`}>
+                            {item.reason}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.unmatchedViewButton}
+                            onClick={() => setSelectedReport(item.report)}
+                          >
+                            View EOD
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
             {!isLoading && !error && kpis.immediateReviews > 0 && (
             <div
               onClick={() => openAuditListModal('immediate')}
@@ -2339,32 +2477,9 @@ const OfficeEODs = () => {
                                 </td>
                                 <td>{group.report_date} - <strong>{group.office_number}</strong></td>
                                 <td>
-                                  {editingOffice === group.office_number ? (
-                                    <div className={styles.editRegionForm}>
-                                      <input
-                                        type="text"
-                                        value={newRegionName}
-                                        onChange={(e) => setNewRegionName(e.target.value)}
-                                        onClick={(e) => e.stopPropagation()}
-                                        placeholder="Enter Region Name"
-                                      />
-                                      <button onClick={(e) => { e.stopPropagation(); handleSaveRegion(group.office_number); }}>Save</button>
-                                      <button className={styles.cancelButton} onClick={(e) => { e.stopPropagation(); setEditingOffice(null); }}>X</button>
-                                    </div>
-                                  ) : (
-                                    <div className={styles.regionCell}>
-                                      <span>{officeRegions[group.office_number] || 'Unassigned'}</span>
-                                      <button
-                                        className={styles.editButton}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleEditRegion(group.office_number, officeRegions[group.office_number] || 'Unassigned');
-                                        }}
-                                      >
-                                        ✎
-                                      </button>
-                                    </div>
-                                  )}
+                                  <div className={styles.regionCell}>
+                                    <span>{officeRegions[group.office_number] || 'Unassigned'}</span>
+                                  </div>
                                 </td>
                                 <td>{group.total_nb_rw_count}</td>
                                 <td>{formatCurrency(Math.max(0, group.total_trust_deposit))}</td>

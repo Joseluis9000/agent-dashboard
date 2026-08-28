@@ -92,3 +92,333 @@
 .backToCalendarButton { border:1px solid #d0d5dd; border-radius:8px; padding:6px 9px; background:#fff; color:#344054; cursor:pointer; font:inherit; font-size:11px; font-weight:800; }
 .backToCalendarButton:hover { background:#f9fafb; }
 @media (max-width:1050px){ .calendarWrap{overflow-x:auto;} .calendarWeekdays,.calendarGrid{min-width:900px;} }
+
+/* Office Quotes only: v0.11.8 approved-device verification */
+.officeVerifyCard {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+  margin-bottom:14px;
+  padding:13px 15px;
+  border:1px solid #e4e7ec;
+  border-radius:14px;
+  background:#fff;
+  box-shadow:0 1px 2px rgba(16,24,40,.04);
+}
+.officeVerifyCardActive {
+  border-color:#abefc6;
+  background:#f6fef9;
+}
+.officeVerifyCardWarning {
+  border-color:#fedf89;
+  background:#fffaeb;
+}
+.officeVerifyCardLocked {
+  border-color:#fecdca;
+  background:#fff6f5;
+}
+.officeVerifyDot {
+  width:11px;
+  height:11px;
+  border-radius:999px;
+  background:#d92d20;
+  box-shadow:0 0 0 4px rgba(217,45,32,.10);
+}
+.officeVerifyCardActive .officeVerifyDot {
+  background:#12b76a;
+  box-shadow:0 0 0 4px rgba(18,183,106,.10);
+}
+.officeVerifyCardWarning .officeVerifyDot {
+  background:#f79009;
+  box-shadow:0 0 0 4px rgba(247,144,9,.12);
+}
+.officeVerifyCopy { min-width:0; }
+.officeVerifyEyebrow {
+  display:block;
+  margin-bottom:2px;
+  color:#667085;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.09em;
+}
+.officeVerifyCopy > strong {
+  display:block;
+  color:#172033;
+  font-size:13px;
+}
+.officeVerifyCopy p {
+  margin:3px 0 0;
+  color:#667085;
+  font-size:10px;
+  line-height:1.45;
+}
+.officeVerifyActions {
+  display:grid;
+  gap:6px;
+  justify-items:end;
+}
+.officeVerifyStatus {
+  padding:4px 8px;
+  border-radius:999px;
+  background:#f2f4f7;
+  color:#475467;
+  font-size:9px;
+  font-weight:900;
+}
+.officeVerifyCardActive .officeVerifyStatus {
+  background:#ecfdf3;
+  color:#027a48;
+}
+.officeVerifyCardWarning .officeVerifyStatus {
+  background:#fef0c7;
+  color:#b54708;
+}
+.officeVerifyCardLocked .officeVerifyStatus {
+  background:#fff1f0;
+  color:#b42318;
+}
+.officeVerifyButton {
+  border:0;
+  border-radius:8px;
+  padding:7px 10px;
+  background:#172033;
+  color:#fff;
+  cursor:pointer;
+  font:inherit;
+  font-size:10px;
+  font-weight:900;
+}
+.officeVerifyButton:hover { background:#263248; }
+
+@media (max-width:760px){
+  .officeVerifyCard { grid-template-columns:auto 1fr; }
+  .officeVerifyActions { grid-column:1 / -1; justify-items:start; }
+}
+
+
+/* Office Quotes action board */
+.officeBoardControls {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin:-2px 0 12px;
+  padding:10px 12px;
+  border:1px solid #e4e7ec;
+  border-radius:12px;
+  background:#fff;
+}
+.officeStatusFilters,.officeTimeFilters { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.officeFilterChip {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-height:34px;
+  border:1px solid #d0d5dd;
+  border-radius:9px;
+  padding:6px 10px;
+  background:#fff;
+  color:#475467;
+  cursor:pointer;
+  font:inherit;
+  font-size:11px;
+  font-weight:800;
+}
+.officeFilterChip strong {
+  min-width:21px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#f2f4f7;
+  color:#344054;
+  font-size:10px;
+  text-align:center;
+}
+.officeFilterChip:hover { background:#f9fafb; }
+.officeFilterChipActive {
+  border-color:#b42318;
+  background:#fff6f5;
+  color:#b42318;
+  box-shadow:0 0 0 1px rgba(180,35,24,.05);
+}
+.officeFilterChipActive strong { background:#fee4e2; color:#b42318; }
+.officeTimeFilters {
+  padding:3px;
+  border:1px solid #e4e7ec;
+  border-radius:9px;
+  background:#f9fafb;
+  flex-wrap:nowrap;
+}
+.officeTimeButton {
+  border:0;
+  border-radius:7px;
+  padding:6px 9px;
+  background:transparent;
+  color:#667085;
+  cursor:pointer;
+  font:inherit;
+  font-size:10px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.officeTimeButtonActive {
+  background:#fff;
+  color:#172033;
+  box-shadow:0 1px 3px rgba(16,24,40,.10);
+}
+@media (max-width:900px) {
+  .officeBoardControls { align-items:flex-start; flex-direction:column; }
+}
+
+
+/* Quote modal: allow the full workflow and all detail fields to be reached */
+.drawer {
+  overflow-y:auto;
+  overflow-x:hidden;
+  overscroll-behavior:contain;
+}
+.drawerHeader {
+  position:sticky;
+  top:-20px;
+  z-index:10;
+  background:#f8fafc;
+  padding-top:20px;
+}
+.modalGrid {
+  max-height:none;
+  overflow:visible;
+  align-items:start;
+}
+.detailsColumn,.workflowColumn {
+  overflow:visible;
+}
+@media (max-width:1050px){
+  .drawerHeader { top:-14px; padding-top:14px; }
+  .modalGrid { max-height:none; overflow:visible; }
+}
+
+/* Office Quote quick final outcome */
+.officeOutcomeCard {
+  margin-top:12px;
+  padding:14px;
+  border:1px solid #e4e7ec;
+  border-left:4px solid #475467;
+  border-radius:12px;
+  background:#fff;
+}
+.officeOutcomeHeading span {
+  display:block;
+  color:#667085;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.08em;
+}
+.officeOutcomeHeading strong {
+  display:block;
+  margin-top:3px;
+  color:#172033;
+  font-size:14px;
+}
+.officeOutcomeHeading p {
+  margin:4px 0 0;
+  color:#667085;
+  font-size:10px;
+  line-height:1.45;
+}
+.officeOutcomeButtons {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  margin-top:12px;
+}
+.officeOutcomeButton {
+  min-height:38px;
+  border:1px solid #d0d5dd;
+  border-radius:9px;
+  background:#fff;
+  color:#344054;
+  cursor:pointer;
+  font:inherit;
+  font-size:11px;
+  font-weight:900;
+}
+.officeOutcomeButton:hover { background:#f9fafb; }
+.officeOutcomeClosed {
+  border-color:#6ce9a6;
+  background:#ecfdf3;
+  color:#027a48;
+}
+.officeOutcomeLost {
+  border-color:#fda29b;
+  background:#fff1f0;
+  color:#b42318;
+}
+.officeOutcomeWalk {
+  border-color:#fedf89;
+  background:#fffaeb;
+  color:#b54708;
+}
+.officeOutcomeForm {
+  display:grid;
+  gap:9px;
+  margin-top:10px;
+  padding:11px;
+  border:1px solid #eaecf0;
+  border-radius:10px;
+  background:#f9fafb;
+}
+.officeOutcomeGrid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:9px;
+}
+.officeOutcomeForm label { display:grid; gap:4px; }
+.officeOutcomeForm label span {
+  color:#475467;
+  font-size:9px;
+  font-weight:900;
+  text-transform:uppercase;
+}
+.officeOutcomeForm input,.officeOutcomeForm textarea {
+  width:100%;
+  box-sizing:border-box;
+  border:1px solid #d0d5dd;
+  border-radius:8px;
+  padding:8px 9px;
+  background:#fff;
+  color:#172033;
+  font:inherit;
+  font-size:11px;
+}
+.officeOutcomeForm textarea { resize:vertical; }
+.officeOutcomeFooter {
+  display:flex;
+  justify-content:flex-end;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+}
+.officeOutcomeMessage {
+  margin-right:auto;
+  color:#475467;
+  font-size:10px;
+  font-weight:800;
+}
+.officeOutcomeSave {
+  border:0;
+  border-radius:9px;
+  padding:9px 12px;
+  background:#172033;
+  color:#fff;
+  cursor:pointer;
+  font:inherit;
+  font-size:10px;
+  font-weight:900;
+}
+.officeOutcomeSave:disabled { opacity:.55; cursor:not-allowed; }
+
+@media (max-width:700px){
+  .officeOutcomeButtons,.officeOutcomeGrid { grid-template-columns:1fr; }
+  .officeOutcomeFooter { align-items:stretch; flex-direction:column; }
+  .officeOutcomeSave { width:100%; }
+}

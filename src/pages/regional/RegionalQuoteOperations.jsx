@@ -2,8 +2,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import styles from '../admin/AdminQuoteLog.module.css';
+import {
+  STALE_AFTER_MS as SHARED_STALE_AFTER_MS,
+  ATTENTION_CATEGORIES,
+  getQuoteDisplayStatus as sharedGetQuoteDisplayStatus,
+  inferQuoteBusinessType as sharedInferQuoteBusinessType,
+  inferExistingClientReason as sharedInferExistingClientReason,
+  secondYesConfirmed as sharedSecondYesConfirmed,
+  getThreeYesStage as sharedGetThreeYesStage,
+  isGroupClosed as sharedIsGroupClosed,
+  isGroupFollowUp as sharedIsGroupFollowUp,
+  isGroupLive as sharedIsGroupLive,
+  isGroupRegularQuote as sharedIsGroupRegularQuote,
+  getGroupAttentionItem as sharedGetGroupAttentionItem,
+} from '../../utils/quoteClassification';
 
-const STALE_AFTER_MS = 60 * 60 * 1000;
+const STALE_AFTER_MS = SHARED_STALE_AFTER_MS;
 
 const NOT_CLOSED_REASONS = [
   ['lost_deal', 'Lost Deal'],
@@ -201,20 +215,18 @@ function elapsedLabel(value, now = Date.now()) {
 }
 
 function getDisplayStatus(quote, now = Date.now()) {
-  if (quote?.status === 'bridged_back' || quote?.bridged_back_at) return 'completed';
-
-  if (quote?.status === 'in_progress') {
-    const started = new Date(quote.started_at).getTime();
-    if (Number.isFinite(started) && now - started >= STALE_AFTER_MS) return 'stale';
-    return 'in_progress';
-  }
-
-  return quote?.status || 'unknown';
+  return sharedGetQuoteDisplayStatus(quote, now, STALE_AFTER_MS);
 }
 
 function latestTimestamp(q) {
   return new Date(
-    q.updated_at || q.bridged_back_at || q.started_at || q.created_at || 0
+    q.last_live_activity_at ||
+    q.updated_at ||
+    q.matrix_bridge_back_at ||
+    q.bridged_back_at ||
+    q.started_at ||
+    q.created_at ||
+    0
   ).getTime();
 }
 
@@ -239,14 +251,7 @@ function toDatetimeLocal(value) {
 
 
 function inferQuoteBusinessType(quote) {
-  const explicit = cleanStr(quote?.quote_business_type).toLowerCase();
-  if (explicit === 'new_business' || explicit === 'existing_client') return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/re[- ]?write|rewrite|renew|reinstat|endorsement|existing/.test(source)) {
-    return 'existing_client';
-  }
-  return 'new_business';
+  return sharedInferQuoteBusinessType(quote);
 }
 
 function quoteBusinessTypeLabel(quote) {
@@ -256,17 +261,7 @@ function quoteBusinessTypeLabel(quote) {
 }
 
 function inferExistingClientReason(quote) {
-  const explicit = cleanStr(quote?.existing_client_reason).toLowerCase();
-  if (EXISTING_CLIENT_REASONS.some(([value]) => value === explicit)) return explicit;
-
-  const source = cleanStr(quote?.lead_source).toLowerCase();
-  if (/payment/.test(source)) return 'payment';
-  if (/endorsement/.test(source)) return 'rewrite_endorsement';
-  if (/renewal/.test(source)) return 'renewal';
-  if (/reinstat/.test(source)) return 'reinstatement';
-  if (/re[- ]?write|rewrite|prior policy|previous policy/.test(source)) return 'rewrite_recent_policy';
-
-  return '';
+  return sharedInferExistingClientReason(quote);
 }
 
 function existingClientReasonLabel(quote) {
@@ -287,32 +282,15 @@ function firstYesConfirmed(quote) {
 }
 
 function secondYesConfirmed(quote) {
-  if (quote?.second_yes_id_vin === true) return true;
-  if (quote?.second_yes_id_vin === false) return false;
-  return hasLicenseSignal(quote) && hasFullVinSignal(quote);
+  return sharedSecondYesConfirmed(quote);
 }
 
 function thirdYesConfirmed(quote) {
-  if (quote?.third_yes_payment_ready === true) return true;
-  if (quote?.third_yes_payment_ready === false) return false;
-
-  const payment = cleanStr(quote?.payment_method).toLowerCase();
-  if (payment === 'cash' || payment === 'card') return true;
-
-  // Until the agent quote page records the payment question directly,
-  // a completed carrier bridge after the 2nd Yes is a strong 3rd-Yes fallback.
-  return secondYesConfirmed(quote) && Boolean(
-    quote?.bridged_back_at ||
-    quote?.status === 'bridged_back' ||
-    quote?.carrier
-  );
+  return sharedGetThreeYesStage(quote) === 3;
 }
 
 function threeYesStage(quote) {
-  if (thirdYesConfirmed(quote)) return 3;
-  if (secondYesConfirmed(quote)) return 2;
-  if (firstYesConfirmed(quote)) return 1;
-  return 0;
+  return sharedGetThreeYesStage(quote);
 }
 
 function threeYesEvidenceLabel(quote) {
@@ -349,7 +327,13 @@ function safeArray(value) {
 }
 
 function currentQuoteForGroup(group) {
-  return group?.quotes?.[0] || {};
+  const rows = Array.isArray(group?.quotes)
+    ? [...group.quotes]
+    : [];
+
+  rows.sort((a, b) => latestTimestamp(b) - latestTimestamp(a));
+
+  return rows[0] || {};
 }
 
 function latestGroupNote(group) {
@@ -379,15 +363,12 @@ function briefText(value, max = 92) {
   return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
 }
 
-function isGroupClosed(group) {
-  return group?.outcome?.status === 'closed';
+function isGroupClosed(group, now = Date.now()) {
+  return sharedIsGroupClosed(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
-function isGroupLive(group) {
-  // A workflow disposition is authoritative. As soon as an agent/admin/supervisor
-  // records Not Closed, Follow Up, or Closed, the customer leaves Live Activity
-  // even if the raw TurboRater quote row is still technically "in_progress".
-  return Number(group?.inProgressCount || 0) > 0 && group?.outcome?.status === 'open';
+function isGroupLive(group, now = Date.now()) {
+  return sharedIsGroupLive(group, { now, staleAfterMs: STALE_AFTER_MS });
 }
 
 function isDidNotRewriteGroup(group) {
@@ -446,6 +427,8 @@ function eventDisplay(event) {
   if (type === 'FIRST_LICENSE_ENTERED') return 'Driver license detected';
   if (type === 'FIRST_FULL_VIN_ENTERED') return 'Full 17-character VIN detected';
   if (type === 'HIGH_INTENT_DETECTED') return 'ID / VIN intent signal detected';
+  if (type === 'CARRIER_BRIDGE_STARTED') return metadata.carrier ? `Carrier bridge · ${metadata.carrier}` : 'Carrier bridge started';
+  if (type === 'MATRIX_BRIDGE_BACK') return 'Agency Matrix bridge back';
   if (type === 'BRIDGE_BACK') return metadata.carrier ? `Bridge Back · ${metadata.carrier}` : 'Bridge Back completed';
   if (type === 'POLICY_BOUND') return 'Policy bound / closed';
 
@@ -631,47 +614,6 @@ function groupQuotesByCustomer(quotes, now, officeRegions = {}) {
     .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
 }
 
-function getAttentionItem(group) {
-  if (!group || group?.outcome?.status !== 'not_closed') return null;
-
-  const outcome = cleanStr(group?.outcome?.source?.outcome).toLowerCase();
-  const dealSave = group?.latestDealSaveRequest || null;
-  const helpRequested = Boolean(dealSave?.id);
-
-  // A saved Deal Save request is system evidence that management help was requested.
-  // If a customer still does not close, regional review should treat that as a Lost Deal.
-  if (helpRequested || outcome === 'lost_deal') {
-    return {
-      level: 'critical',
-      title: 'Lost Deal',
-      detail: helpRequested
-        ? 'Deal Save help was requested, but the customer still did not close.'
-        : 'Management / lower broker fee help was recorded, but the customer still did not close.',
-      sortValue: 0,
-      stage: Number(group?.yesStage || 0),
-      category: 'lost_deal',
-      helpRequested,
-      dealSave,
-    };
-  }
-
-  if (outcome === 'walk') {
-    return {
-      level: 'high',
-      title: 'Walk',
-      detail: 'Customer did not close and no Deal Save request was recorded before the customer walked.',
-      sortValue: 1,
-      stage: Number(group?.yesStage || 0),
-      category: 'walk',
-      helpRequested: false,
-      dealSave: null,
-    };
-  }
-
-  return null;
-}
-
-
 export default function RegionalQuoteOperations() {
   const { supabaseClient, profile } = useAuth();
 
@@ -733,6 +675,8 @@ export default function RegionalQuoteOperations() {
 
     setSettingsLoading(true);
 
+    // Load the same complete office -> region map as Admin.
+    // Regional access is enforced later at the grouped-customer scope layer.
     const { data, error: settingsError } = await supabaseClient
       .from('office_dashboard_settings')
       .select('office_code, region')
@@ -742,19 +686,16 @@ export default function RegionalQuoteOperations() {
       console.error('[RegionalQuoteOperations] office_dashboard_settings query failed:', settingsError);
       setOfficeRegions({});
       setSettingsLoading(false);
-      setError(`Could not load office mappings for ${profileRegion}: ${settingsError.message}`);
+      setError(`Could not load office mappings: ${settingsError.message}`);
       return;
     }
 
     const regionMap = {};
-
-    (data || [])
-      .filter((row) => normalizeRegion(row.region) === profileRegion)
-      .forEach((row) => {
-        const officeCode = normalizeOffice(row.office_code);
-        if (!officeCode) return;
-        regionMap[officeCode] = profileRegion;
-      });
+    (data || []).forEach((row) => {
+      const officeCode = normalizeOffice(row.office_code);
+      if (!officeCode || officeCode === 'Unknown') return;
+      regionMap[officeCode] = cleanStr(row.region) || 'Unassigned';
+    });
 
     setOfficeRegions(regionMap);
     setSettingsLoading(false);
@@ -796,8 +737,6 @@ export default function RegionalQuoteOperations() {
 
       const role = cleanStr(profile?.role).toLowerCase();
       const profileRegion = normalizeRegion(profile?.region);
-      const allowedOffices = Object.keys(officeRegions || {}).map(normalizeOffice).filter(Boolean);
-
       if (role !== 'regional') {
         setError('Regional Quote Operations requires role = regional.');
         if (!quiet) setLoading(false);
@@ -816,40 +755,68 @@ export default function RegionalQuoteOperations() {
         return;
       }
 
-      if (!allowedOffices.length) {
-        setQuotes([]);
-        setQuoteEvents([]);
-        setQuoteInternalNotes([]);
-        setError(`No offices are assigned to ${profileRegion} in office_dashboard_settings.`);
-        if (!quiet) setLoading(false);
-        return;
-      }
-
       const { start, end } = rangeBounds(timeView, selectedDate, month);
       const followUpMonth = calendarMonthForView(timeView, selectedDate, month);
       const followUpBounds = monthBounds(followUpMonth);
+
+      // Supabase/PostgREST can cap a single response (commonly at 1,000 rows).
+      // Always page the primary datasets so Regional never classifies a partial month.
+      const fetchAllPaged = async (buildQuery, label, pageSize = 1000) => {
+        const rows = [];
+        let from = 0;
+
+        while (true) {
+          const { data, error } = await buildQuery()
+            .range(from, from + pageSize - 1);
+
+          if (error) {
+            console.error(`[RegionalQuoteOperations] ${label} page failed at ${from}:`, error);
+            return { data: rows, error };
+          }
+
+          const page = data || [];
+          rows.push(...page);
+
+          if (page.length < pageSize) break;
+          from += pageSize;
+        }
+
+        return { data: rows, error: null };
+      };
+
       const [historyResult, liveResult, followUpWorkflowResult] = await Promise.all([
-        supabaseClient
-          .from('quote_log_view')
-          .select('*')
-          .in('office', allowedOffices)
-          .gte('started_at', start)
-          .lt('started_at', end)
-          .order('started_at', { ascending: false }),
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_log_view')
+            .select('*')
+            .gte('started_at', start)
+            .lt('started_at', end)
+            .order('started_at', { ascending: false })
+            .order('id', { ascending: false }),
+          'quote history'
+        ),
         // Live Activity is intentionally independent of Day / Week / Month.
-        supabaseClient
-          .from('quote_log_view')
-          .select('*')
-          .in('office', allowedOffices)
-          .eq('status', 'in_progress')
-          .order('started_at', { ascending: false }),
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_log_view')
+            .select('*')
+            .eq('status', 'in_progress')
+            .order('started_at', { ascending: false })
+            .order('id', { ascending: false }),
+          'live quotes'
+        ),
         // Pull appointments by scheduled date so old quotes still appear on the current calendar.
-        supabaseClient
-          .from('quote_workflow')
-          .select('quote_id, follow_up_at')
-          .or('follow_up_needed.eq.true,outcome.eq.follow_up')
-          .gte('follow_up_at', followUpBounds.start)
-          .lt('follow_up_at', followUpBounds.end),
+        fetchAllPaged(
+          () => supabaseClient
+            .from('quote_workflow')
+            .select('quote_id, follow_up_at')
+            .or('follow_up_needed.eq.true,outcome.eq.follow_up')
+            .gte('follow_up_at', followUpBounds.start)
+            .lt('follow_up_at', followUpBounds.end)
+            .order('follow_up_at', { ascending: true })
+            .order('quote_id', { ascending: true }),
+          'follow-up workflow'
+        ),
       ]);
 
       if (historyResult.error || liveResult.error || followUpWorkflowResult.error) {
@@ -867,8 +834,7 @@ export default function RegionalQuoteOperations() {
         const { data, error: followUpQuoteError } = await supabaseClient
           .from('quote_log_view')
           .select('*')
-          .in('id', ids)
-          .in('office', allowedOffices);
+          .in('id', ids);
         if (followUpQuoteError) {
           console.error('[RegionalQuoteOperations] follow-up quote query failed:', followUpQuoteError);
         } else {
@@ -876,12 +842,29 @@ export default function RegionalQuoteOperations() {
         }
       }
 
+      // IMPORTANT: build complete customer histories BEFORE applying the regional
+      // office scope. Admin does the same thing. quoteClassification.js can look
+      // back through prior attempts for a meaningful Closed / Follow Up / Needs
+      // Attention result. Filtering raw quote rows first caused Regional to lose
+      // older attempts for the same Matrix customer and incorrectly classify many
+      // customers as regular Quotes. Regional scope is applied later to the grouped
+      // customer using the current/latest office.
       const rowMap = new Map();
-      [...(historyResult.data || []), ...(liveResult.data || []), ...followUpQuoteRows].forEach((row) => {
-        if (row?.id) rowMap.set(row.id, row);
-      });
+      [...(historyResult.data || []), ...(liveResult.data || []), ...followUpQuoteRows]
+        .forEach((row) => {
+          if (row?.id) rowMap.set(row.id, row);
+        });
       const baseRows = [...rowMap.values()];
       const quoteIds = [...new Set(baseRows.map((row) => row.id).filter(Boolean))];
+
+      console.info('[RegionalQuoteOperations] paged base fetch', {
+        historyRows: historyResult.data?.length || 0,
+        liveRows: liveResult.data?.length || 0,
+        followUpWorkflowRows: followUpWorkflowResult.data?.length || 0,
+        uniqueBaseRows: baseRows.length,
+        uniqueQuoteIds: quoteIds.length,
+      });
+
       const supplementalRows = [];
       const workflowRows = [];
       const eventRows = [];
@@ -890,6 +873,31 @@ export default function RegionalQuoteOperations() {
 
       for (let index = 0; index < quoteIds.length; index += 200) {
         const ids = quoteIds.slice(index, index + 200);
+
+        const fetchQuoteEventsForIds = async (quoteIdBatch) => {
+          const rows = [];
+          const pageSize = 1000;
+          let from = 0;
+
+          while (true) {
+            const { data, error } = await supabaseClient
+              .from('quote_events')
+              .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
+              .in('quote_id', quoteIdBatch)
+              .order('event_at', { ascending: true })
+              .range(from, from + pageSize - 1);
+
+            if (error) return { data: rows, error };
+
+            const page = data || [];
+            rows.push(...page);
+
+            if (page.length < pageSize) break;
+            from += pageSize;
+          }
+
+          return { data: rows, error: null };
+        };
 
         const [
           { data: quoteData, error: quoteError },
@@ -900,13 +908,9 @@ export default function RegionalQuoteOperations() {
         ] = await Promise.all([
           supabaseClient
             .from('quotes')
-            .select('id, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary')
+            .select('id, status, extension_version, carrier, total_premium, down_payment, monthly_payment, bridged_back_at, bridge_policy_status, bridge_policy_status_value, system_outcome_signal, carrier_bridge_started_at, carrier_bridge_carrier, matrix_bridge_back_at, driver_count, drivers_with_license, any_license_entered, first_license_entered_at, vehicle_count, vehicles_with_full_vin, any_full_vin_entered, first_full_vin_entered_at, high_intent_detected, high_intent_detected_at, completeness_observed_at, last_live_activity_at, drivers_summary, vehicles_summary')
             .in('id', ids),
-          supabaseClient
-            .from('quote_events')
-            .select('id, quote_id, capture_id, event_type, event_label, event_at, metadata, created_at')
-            .in('quote_id', ids)
-            .order('event_at', { ascending: true }),
+          fetchQuoteEventsForIds(ids),
           supabaseClient
             .from('quote_workflow')
             .select('quote_id, quote_business_type, existing_client_reason, first_yes_ready_now, second_yes_id_vin, third_yes_payment_ready, payment_method, first_yes_recorded_at, second_yes_recorded_at, third_yes_recorded_at, outcome, follow_up_needed, follow_up_at, agent_notes, not_closed_explanation, lost_deal_manager_name, lost_deal_broker_fee')
@@ -990,6 +994,16 @@ export default function RegionalQuoteOperations() {
         if (!existing || requestAt > existingAt) latestDealSaveByQuoteId.set(request.quote_id, request);
       });
 
+      console.info('[RegionalQuoteOperations] enrichment fetch', {
+        requestedQuoteIds: quoteIds.length,
+        supplementalQuoteRows: supplementalRows.length,
+        workflowRows: workflowRows.length,
+        eventRows: eventRows.length,
+        internalNoteRows: internalNoteRows.length,
+        dealSaveRows: dealSaveRows.length,
+        missingSupplementalQuoteRows: Math.max(0, quoteIds.length - supplementalRows.length),
+      });
+
       const mergedRows = baseRows.map((row) => {
         const policyBoundAt = policyBoundByQuoteId.get(row.id) || null;
         const latestInternalNote = latestInternalNoteByQuoteId.get(row.id) || null;
@@ -1022,7 +1036,6 @@ export default function RegionalQuoteOperations() {
       supabaseClient,
       profile?.role,
       profile?.region,
-      officeRegions,
       settingsLoading,
     ]
   );
@@ -1077,7 +1090,7 @@ export default function RegionalQuoteOperations() {
     };
 
     const channel = supabaseClient
-      .channel('admin-quote-log-live')
+      .channel('regional-quote-log-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_workflow' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quote_events' }, scheduleRefresh)
@@ -1167,12 +1180,10 @@ export default function RegionalQuoteOperations() {
   const scopeGroups = useMemo(() => {
     const needle = search.trim().toLowerCase();
 
-    const allowedRegionalOffices = new Set(
-      Object.keys(officeRegions || {}).map(normalizeOffice).filter(Boolean)
-    );
-
     return customerGroups.filter((group) => {
-      if (isRegional && !allowedRegionalOffices.has(normalizeOffice(group.office))) return false;
+      // Match Admin's scope behavior: classify the same grouped customer first,
+      // then restrict Regional visibility by the group's mapped region.
+      if (isRegional && profileRegion && normalizeRegion(group.region) !== normalizeRegion(profileRegion)) return false;
       if (isSupervisor && profileOffice !== 'Unknown' && group.office !== profileOffice) return false;
       if (regionFilter !== 'all' && normalizeRegion(group.region) !== normalizeRegion(regionFilter)) return false;
       if (officeFilter !== 'all' && group.office !== officeFilter) return false;
@@ -1212,8 +1223,8 @@ export default function RegionalQuoteOperations() {
     search,
     isRegional,
     isSupervisor,
+    profileRegion,
     profileOffice,
-    officeRegions,
   ]);
 
   const selectedBounds = useMemo(
@@ -1233,8 +1244,8 @@ export default function RegionalQuoteOperations() {
   }, [scopeGroups, selectedBounds]);
 
   const liveGroups = useMemo(
-    () => scopeGroups.filter((group) => isGroupLive(group)),
-    [scopeGroups]
+    () => scopeGroups.filter((group) => isGroupLive(group, now)),
+    [scopeGroups, now]
   );
 
 
@@ -1262,8 +1273,8 @@ export default function RegionalQuoteOperations() {
   }, [quoteInternalNotes]);
 
   const closedGroups = useMemo(
-    () => historicalGroups.filter((group) => isGroupClosed(group)),
-    [historicalGroups]
+    () => historicalGroups.filter((group) => isGroupClosed(group, now)),
+    [historicalGroups, now]
   );
 
   const calendarMonth = useMemo(
@@ -1276,13 +1287,13 @@ export default function RegionalQuoteOperations() {
     const startMs = new Date(start).getTime();
     const endMs = new Date(end).getTime();
     return scopeGroups
-      .filter((group) => group.outcome?.status === 'follow_up' && groupFollowUpAt(group))
+      .filter((group) => sharedIsGroupFollowUp(group, { now, staleAfterMs: STALE_AFTER_MS }))
       .filter((group) => {
         const t = new Date(groupFollowUpAt(group)).getTime();
         return Number.isFinite(t) && t >= startMs && t < endMs;
       })
       .sort((a, b) => new Date(groupFollowUpAt(a)) - new Date(groupFollowUpAt(b)));
-  }, [scopeGroups, calendarMonth]);
+  }, [scopeGroups, calendarMonth, now]);
 
   const followUpGroups = useMemo(() => {
     if (selectedFollowUpDay) {
@@ -1291,27 +1302,25 @@ export default function RegionalQuoteOperations() {
     const startMs = new Date(selectedBounds.start).getTime();
     const endMs = new Date(selectedBounds.end).getTime();
     return scopeGroups
-      .filter((group) => group.outcome?.status === 'follow_up' && groupFollowUpAt(group))
+      .filter((group) => sharedIsGroupFollowUp(group, { now, staleAfterMs: STALE_AFTER_MS }))
       .filter((group) => {
         const t = new Date(groupFollowUpAt(group)).getTime();
         return Number.isFinite(t) && t >= startMs && t < endMs;
       })
       .sort((a, b) => new Date(groupFollowUpAt(a)) - new Date(groupFollowUpAt(b)));
-  }, [scopeGroups, selectedBounds, selectedFollowUpDay, calendarFollowUpGroups]);
+  }, [scopeGroups, selectedBounds, selectedFollowUpDay, calendarFollowUpGroups, now]);
 
   const quoteGroups = useMemo(
     () => historicalGroups.filter((group) => {
-      if (isGroupClosed(group) || isGroupLive(group)) return false;
-      if (group.outcome?.status === 'follow_up') return false;
+      if (isGroupLive(group, now)) return false;
 
-      // "Did Not RW - Stayed With Current Carrier" belongs under the
-      // existing-client Quote classification that created the re-write,
-      // even when the quote reached the 3 Yes process before it was retained.
-      if (isDidNotRewriteGroup(group)) return true;
-
-      return Number(group.yesStage || 0) === 0;
+      // Shared classifier owns the primary bucket for every role/page.
+      return sharedIsGroupRegularQuote(group, {
+        now,
+        staleAfterMs: STALE_AFTER_MS,
+      });
     }),
-    [historicalGroups]
+    [historicalGroups, now]
   );
 
   const newQuoteGroups = useMemo(
@@ -1396,23 +1405,43 @@ export default function RegionalQuoteOperations() {
 
   const attentionGroups = useMemo(() => {
     return historicalGroups
-      .map((group) => ({ group, attention: getAttentionItem(group) }))
-      .filter((item) => item.attention)
+      .map((group) => {
+        const item = sharedGetGroupAttentionItem(group, {
+          now,
+          staleAfterMs: STALE_AFTER_MS,
+        });
+        return item || null;
+      })
+      .filter(Boolean)
       .sort((a, b) => {
         if (a.attention.sortValue !== b.attention.sortValue) {
           return a.attention.sortValue - b.attention.sortValue;
         }
         return new Date(a.group.lastActivityAt || 0) - new Date(b.group.lastActivityAt || 0);
       });
-  }, [historicalGroups]);
+  }, [historicalGroups, now]);
 
   const lostDealAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'lost_deal'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.LOST_DEAL),
     [attentionGroups]
   );
 
   const walkAttention = useMemo(
-    () => attentionGroups.filter((item) => item.attention?.category === 'walk'),
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.WALK),
+    [attentionGroups]
+  );
+
+  const carrierBridgeAttention = useMemo(
+    () => attentionGroups.filter((item) => [
+      ATTENTION_CATEGORIES.CARRIER_NO_RETURN,
+      ATTENTION_CATEGORIES.CARRIER_RETURN_NO_OUTCOME,
+      ATTENTION_CATEGORIES.CARRIER_NO_OUTCOME,
+    ].includes(item.attention?.category)),
+    [attentionGroups]
+  );
+
+  const unresolvedYesAttention = useMemo(
+    () => attentionGroups.filter((item) => item.attention?.category === ATTENTION_CATEGORIES.STALE_YES),
     [attentionGroups]
   );
 
@@ -1596,7 +1625,7 @@ export default function RegionalQuoteOperations() {
     setSaveMessage('');
 
     const current = group.outcome;
-    const currentQuote = group.quotes[0] || {};
+    const currentQuote = currentQuoteForGroup(group);
     setAgentEntry({
       status: current.status === 'open' ? '' : current.status,
       reason: current.status === 'not_closed' ? current.source?.outcome || '' : '',
@@ -1677,9 +1706,7 @@ export default function RegionalQuoteOperations() {
     event.preventDefault();
     if (!selectedCustomer) return;
 
-    const targetQuote =
-      selectedCustomer.quotes.find((q) => getDisplayStatus(q, now) === 'completed') ||
-      selectedCustomer.quotes[0];
+    const targetQuote = currentQuoteForGroup(selectedCustomer);
 
     if (!targetQuote?.id) {
       setSaveMessage('Save failed: no quote record is available for this customer.');
@@ -2006,7 +2033,7 @@ export default function RegionalQuoteOperations() {
         <DashboardStat
           label="Needs Attention"
           value={stats.attention}
-          note="1st / 2nd / 3rd Yes + follow-up"
+          note="Carrier bridges + unresolved opportunities"
           tone="attention"
         />
         <DashboardStat
@@ -2088,6 +2115,24 @@ export default function RegionalQuoteOperations() {
             onOpen={openCustomer}
             emptyTitle="No Walks in this view"
             emptyDetail="Walks will appear here after the final Not Closed outcome is recorded."
+          />
+          <NeedsAttentionView
+            title="Carrier Bridge Opportunities"
+            description="Verified carrier launches that still need a final outcome or a completed return to Agency Matrix."
+            items={carrierBridgeAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved carrier bridges"
+            emptyDetail="v0.11.7+ carrier launches will appear here when the agent does not finish the quote workflow."
+          />
+          <NeedsAttentionView
+            title="Unresolved 3 Yes Opportunities"
+            description="Quotes that reached 1st, 2nd, or 3rd Yes but never received a final outcome. Includes stale quotes and completed Matrix returns that were never dispositioned."
+            items={unresolvedYesAttention}
+            now={now}
+            onOpen={openCustomer}
+            emptyTitle="No unresolved 3 Yes opportunities"
+            emptyDetail="Any quote that reaches the 3 Yes process and then goes stale or bridges back without a final outcome will appear here."
           />
         </div>
       )}
@@ -2725,7 +2770,19 @@ function NeedsAttentionView({
 
                 <div className={styles.attentionActionBox}>
                   <strong>Recommended action</strong>
-                  <span>Review the deal stage, closing reason, and customer follow-up.</span>
+                  <span>
+                    {attention.category === ATTENTION_CATEGORIES.LOST_DEAL
+                      ? 'Review the Deal Save attempt, manager coaching, final BF, and why the customer still did not close.'
+                      : [
+                          ATTENTION_CATEGORIES.CARRIER_NO_RETURN,
+                          ATTENTION_CATEGORIES.CARRIER_RETURN_NO_OUTCOME,
+                          ATTENTION_CATEGORIES.CARRIER_NO_OUTCOME,
+                        ].includes(attention.category)
+                        ? 'Review the carrier launch, Matrix return, policy status, and final customer disposition.'
+                        : attention.category === ATTENTION_CATEGORIES.WALK
+                          ? 'Coach the agent on escalating for Deal Save help before allowing a price-sensitive customer to walk.'
+                          : 'Review the deal stage, closing reason, and customer follow-up.'}
+                  </span>
                   <button type="button" className={styles.primarySmallButton} onClick={() => onOpen(group)}>
                     Review Deal
                   </button>
@@ -3002,7 +3059,7 @@ function CustomerDrawer({
   quoteEventsByQuote,
   internalNotesByQuote,
 }) {
-  const latest = group.quotes[0] || {};
+  const latest = currentQuoteForGroup(group);
   const drivers = safeArray(latest.drivers_summary);
   const vehicles = safeArray(latest.vehicles_summary);
   const events = reconcileTimelineEvents(latest, quoteEventsByQuote?.[latest.id] || []);

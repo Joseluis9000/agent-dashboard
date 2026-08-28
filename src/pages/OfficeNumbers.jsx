@@ -15,6 +15,8 @@ const officeDetailRequestCache = new Map();
 const officeDetailRequestInFlight = new Map();
 const agentDetailRequestCache = new Map();
 const agentDetailRequestInFlight = new Map();
+const agentFeeRowsRequestCache = new Map();
+const agentFeeRowsRequestInFlight = new Map();
 
 const getCachedDashboardRows = async (month, force = false) => {
   if (!force && dashboardRequestCache.has(month)) {
@@ -59,7 +61,7 @@ const getCachedRawRange = async (firstDay, nextMonthFirstDay, force = false) => 
     while (true) {
       const { data, error } = await supabase
         .from('daily_transaction_detail_transfers')
-        .select('id, sync_key, receipt_id, customer_id, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
+        .select('id, sync_key, receipt_id, customer_id, customer, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
         .gte('date_time', `${firstDay} 00:00:00`)
         .lt('date_time', `${nextMonthFirstDay} 00:00:00`)
         .order('date_time', { ascending: true })
@@ -145,6 +147,52 @@ const getCachedAgentDetail = async (month, agentEmail, trendMonths = 12, force =
     });
 
   agentDetailRequestInFlight.set(cacheKey, request);
+  return request;
+};
+
+
+const getCachedAgentFeeRows = async (month, agentEmail, force = false) => {
+  const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+  const monthInfo = getMonthDetails(month);
+  const cacheKey = `${month}|${normalizedEmail}`;
+
+  if (!force && agentFeeRowsRequestCache.has(cacheKey)) {
+    return agentFeeRowsRequestCache.get(cacheKey);
+  }
+
+  if (!force && agentFeeRowsRequestInFlight.has(cacheKey)) {
+    return agentFeeRowsRequestInFlight.get(cacheKey);
+  }
+
+  const request = (async () => {
+    let allRows = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from('daily_transaction_detail_transfers')
+        .select('id, sync_key, receipt_id, customer_id, customer, agent_email, csr, office, type, company, policy, policy_type, carrier_receipt, method, premium, fee, total, franchise_fee, voided, date_time')
+        .eq('agent_email', normalizedEmail)
+        .gte('date_time', `${monthInfo.firstDay} 00:00:00`)
+        .lt('date_time', `${monthInfo.nextMonthFirstDay} 00:00:00`)
+        .order('date_time', { ascending: false })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      const rows = data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+
+    agentFeeRowsRequestCache.set(cacheKey, allRows);
+    return allRows;
+  })().finally(() => {
+    agentFeeRowsRequestInFlight.delete(cacheKey);
+  });
+
+  agentFeeRowsRequestInFlight.set(cacheKey, request);
   return request;
 };
 
@@ -273,6 +321,20 @@ const createFeeBucket = () => ({
   insurance: 0,
   all: 0,
 });
+
+const getValidTransactionRows = (rows = []) => {
+  const seenTxn = new Set();
+
+  return rows.filter((row) => {
+    if (isVoidedRow(row)) return false;
+
+    const txnKey = getTransferTxnKey(row);
+    if (seenTxn.has(txnKey)) return false;
+
+    seenTxn.add(txnKey);
+    return true;
+  });
+};
 
 const calculateTransactionSummary = (rows = []) => {
   const seenTxn = new Set();
@@ -525,6 +587,9 @@ const OfficeNumbers = () => {
   const [agentDetailData, setAgentDetailData] = useState(null);
   const [agentDetailLoading, setAgentDetailLoading] = useState(false);
   const [agentDetailError, setAgentDetailError] = useState('');
+  const [agentFeeRows, setAgentFeeRows] = useState([]);
+  const [agentFeeRowsLoading, setAgentFeeRowsLoading] = useState(false);
+  const [agentFeeRowsError, setAgentFeeRowsError] = useState('');
 
   const initialSettings = useMemo(loadSavedSettings, []);
   const [officeGoals, setOfficeGoals] = useState({});
@@ -543,6 +608,9 @@ const OfficeNumbers = () => {
   const [editingAgentGoals, setEditingAgentGoals] = useState({});
 
   const [savingKey, setSavingKey] = useState('');
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState('month');
+  const [leaderboardScope, setLeaderboardScope] = useState('both');
+  const [leaderboardAnchorDate, setLeaderboardAnchorDate] = useState('');
 
   const currentMonthValue = getCurrentMonthValue();
   const monthDetails = useMemo(() => getMonthDetails(selectedMonth), [selectedMonth]);
@@ -714,7 +782,7 @@ const OfficeNumbers = () => {
   }, [selectedMonth]);
 
   const fetchDashboardData = useCallback(async (options = {}) => {
-    const { force = false, includeAgents = viewMode === 'agent' } = options;
+    const { force = false, includeAgents = ['agent', 'leaderboard'].includes(viewMode) } = options;
 
     setLoading(true);
     setErrorMessage('');
@@ -817,6 +885,26 @@ const OfficeNumbers = () => {
     }
   }, [selectedMonth]);
 
+  const fetchAgentFeeRows = useCallback(async (agentEmail, options = {}) => {
+    const { force = false } = options;
+    const normalizedEmail = cleanStr(agentEmail).toLowerCase();
+    if (!normalizedEmail || normalizedEmail === 'unknown agent') return;
+
+    setAgentFeeRowsLoading(true);
+    setAgentFeeRowsError('');
+
+    try {
+      const rows = await getCachedAgentFeeRows(selectedMonth, normalizedEmail, force);
+      setAgentFeeRows(rows.filter((row) => canViewOffice(row.office)));
+    } catch (error) {
+      console.error('Error fetching agent fee transactions:', error);
+      setAgentFeeRowsError(error?.message || 'Unable to load agent fee transaction detail.');
+      setAgentFeeRows([]);
+    } finally {
+      setAgentFeeRowsLoading(false);
+    }
+  }, [selectedMonth, canViewOffice]);
+
   // Month/profile/settings load. Fee changes do not participate in fetching.
   useEffect(() => {
     fetchProfileAndSettings();
@@ -829,7 +917,7 @@ const OfficeNumbers = () => {
 
   // Opening Agents lazy-loads raw rows, while reusing the cached office RPC result.
   useEffect(() => {
-    if (viewMode !== 'agent') return;
+    if (!['agent', 'leaderboard'].includes(viewMode)) return;
     fetchDashboardData({ includeAgents: true });
   }, [viewMode, selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -844,8 +932,10 @@ const OfficeNumbers = () => {
   useEffect(() => {
     if (!selectedAgentEmail || viewMode !== 'office') return;
     setAgentDetailData(null);
+    setAgentFeeRows([]);
     fetchAgentDetail(selectedAgentEmail);
-  }, [selectedAgentEmail, selectedMonth, viewMode, fetchAgentDetail]);
+    fetchAgentFeeRows(selectedAgentEmail);
+  }, [selectedAgentEmail, selectedMonth, viewMode, fetchAgentDetail, fetchAgentFeeRows]);
 
   const visibleMonthlyRows = useMemo(
     () => monthlyRows.filter((row) => canViewOffice(row.office_code || row.office)),
@@ -1320,6 +1410,147 @@ const OfficeNumbers = () => {
     return result;
   }, [officeMetrics, selectedFeeType]);
 
+
+  const leaderboardData = useMemo(() => {
+    const firstOfMonth = monthDetails.firstDay;
+    const lastOfMonth = `${monthDetails.year}-${String(monthDetails.month).padStart(2, '0')}-${String(monthDetails.daysInMonth).padStart(2, '0')}`;
+    const fallbackAnchor = latestDataDate && latestDataDate.startsWith(`${selectedMonth}-`)
+      ? latestDataDate
+      : firstOfMonth;
+    const anchorDate = leaderboardAnchorDate && leaderboardAnchorDate.startsWith(`${selectedMonth}-`)
+      ? leaderboardAnchorDate
+      : fallbackAnchor;
+    const dateOnly = (row) => cleanStr(row?.date_time).slice(0, 10);
+    const toDateKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+    let startDate = firstOfMonth;
+    let endDate = lastOfMonth;
+    let periodLabel = getMonthLabel(selectedMonth);
+
+    if (leaderboardPeriod === 'day') {
+      startDate = anchorDate;
+      endDate = anchorDate;
+      periodLabel = formatDateLabel(anchorDate);
+    } else if (leaderboardPeriod === 'week') {
+      const [year, month, day] = anchorDate.split('-').map(Number);
+      const anchor = new Date(year, month - 1, day);
+      const mondayOffset = (anchor.getDay() + 6) % 7;
+      const monday = new Date(anchor);
+      monday.setDate(anchor.getDate() - mondayOffset);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const mondayKey = toDateKey(monday);
+      const sundayKey = toDateKey(sunday);
+      startDate = mondayKey < firstOfMonth ? firstOfMonth : mondayKey;
+      endDate = sundayKey > lastOfMonth ? lastOfMonth : sundayKey;
+      periodLabel = `${formatDateLabel(startDate)} – ${formatDateLabel(endDate)}`;
+    }
+
+    const periodRows = visibleAgentMonthlyRows.filter((row) => {
+      const date = dateOnly(row);
+      return date && date >= startDate && date <= endDate;
+    });
+
+    const officeGroups = new Map();
+    const agentGroups = new Map();
+
+    periodRows.forEach((row) => {
+      const office = normalizeOffice(row.office);
+      if (office && office !== 'Unknown') {
+        if (!officeGroups.has(office)) officeGroups.set(office, []);
+        officeGroups.get(office).push(row);
+      }
+
+      const agent = normalizeAgent(row);
+      if (agent && agent !== 'Unknown Agent') {
+        if (!agentGroups.has(agent)) agentGroups.set(agent, []);
+        agentGroups.get(agent).push(row);
+      }
+    });
+
+    // Keep every office and every agent from the selected report month in the ranking,
+    // even when they have zero activity in the selected day/week.
+    const offices = officeMetrics.map((officeMetric) => {
+      const officeName = officeMetric.officeName;
+      const rows = officeGroups.get(officeName) || [];
+      const summary = calculateTransactionSummary(rows);
+      const selectedFeeTotal = summary.fee_totals[selectedFeeType] || 0;
+      const selectedFeeCount = summary.fee_counts[selectedFeeType] || 0;
+      const selectedMetricCount = selectedMetricConfig.usesNbRwCount
+        ? summary.nb_rw_count
+        : selectedFeeCount;
+
+      return {
+        key: officeName,
+        name: officeName,
+        subtitle: cleanStr(officeMetric.region) || cleanStr(officeRegions[officeName]) || 'Unassigned',
+        selectedMetricCount,
+        selectedFeeTotal,
+        newBusinessCount: summary.new_business_count,
+        rewriteCount: summary.rewrite_count,
+      };
+    });
+
+    const agents = agentMetrics.map((agentMetric) => {
+      const agentEmail = agentMetric.agentEmail;
+      const rows = agentGroups.get(agentEmail) || [];
+      const summary = calculateTransactionSummary(rows);
+      const selectedFeeTotal = summary.fee_totals[selectedFeeType] || 0;
+      const selectedFeeCount = summary.fee_counts[selectedFeeType] || 0;
+      const selectedMetricCount = selectedMetricConfig.usesNbRwCount
+        ? summary.nb_rw_count
+        : selectedFeeCount;
+
+      return {
+        key: agentEmail,
+        name: agentMetric.csrName || getMostRecentCsrName(rows, agentEmail),
+        subtitle: `${agentMetric.office || 'Unknown'} · ${agentMetric.region || 'Unassigned'}`,
+        email: agentEmail,
+        selectedMetricCount,
+        selectedFeeTotal,
+        newBusinessCount: summary.new_business_count,
+        rewriteCount: summary.rewrite_count,
+      };
+    });
+
+    const sortLeaderboard = (a, b) => {
+      if (b.selectedMetricCount !== a.selectedMetricCount) {
+        return b.selectedMetricCount - a.selectedMetricCount;
+      }
+      if (b.selectedFeeTotal !== a.selectedFeeTotal) {
+        return b.selectedFeeTotal - a.selectedFeeTotal;
+      }
+      return a.name.localeCompare(b.name);
+    };
+
+    offices.sort(sortLeaderboard);
+    agents.sort(sortLeaderboard);
+
+    return {
+      offices,
+      agents,
+      periodRows,
+      startDate,
+      endDate,
+      periodLabel,
+    };
+  }, [
+    latestDataDate,
+    monthDetails.firstDay,
+    monthDetails.year,
+    monthDetails.month,
+    monthDetails.daysInMonth,
+    selectedMonth,
+    leaderboardPeriod,
+    leaderboardAnchorDate,
+    visibleAgentMonthlyRows,
+    selectedFeeType,
+    selectedMetricConfig.usesNbRwCount,
+    officeRegions,
+    officeMetrics,
+    agentMetrics,
+  ]);
+
   const updateOfficeGoal = (officeName, value) => {
     if (!isBrokerView || !canEditGoals) return;
 
@@ -1738,6 +1969,7 @@ const OfficeNumbers = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+
   const renderOfficeRow = (office) => {
     const onTrack = office.status === 'On Track';
 
@@ -1980,11 +2212,23 @@ const OfficeNumbers = () => {
             font-size: 11px;
           }
         }
+
+        .office-numbers-table tbody tr {
+          transition: background-color .15s ease;
+        }
+
+        .office-numbers-table tbody tr:hover td {
+          filter: brightness(.985);
+        }
+
+        @media (max-width: 1050px) {
+          .office-numbers-page .leaderboard-responsive-fallback { display: block; }
+        }
       `}</style>
       <div className="office-numbers-page" style={styles.page}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>{viewMode === 'office' ? 'Monthly Office Performance' : 'Monthly Agent Performance'}</h1>
+          <h1 style={styles.title}>{viewMode === 'office' ? 'Monthly Office Performance' : viewMode === 'agent' ? 'Monthly Agent Performance' : 'Performance Leaderboard'}</h1>
           <p style={styles.subtitle}>
             Switch between office and agent performance. NB/RW goals appear only in Broker Fee view; other fee views focus on counts, totals, averages, pacing, and historical comparisons.
           </p>
@@ -2041,6 +2285,16 @@ const OfficeNumbers = () => {
             >
               Agents
             </button>
+            <button
+              type="button"
+              onClick={() => { setSelectedOffice(''); setSelectedAgentEmail(''); setViewMode('leaderboard'); }}
+              style={{
+                ...styles.segmentButton,
+                ...(viewMode === 'leaderboard' ? styles.segmentButtonActive : {}),
+              }}
+            >
+              Leaderboard
+            </button>
           </div>
 
           <div style={styles.feeSelectorWrap}>
@@ -2059,7 +2313,8 @@ const OfficeNumbers = () => {
             </select>
           </div>
 
-          <label style={styles.checkboxLabel}>
+          {viewMode !== 'leaderboard' && (
+            <label style={styles.checkboxLabel}>
               <input
                 type="checkbox"
                 checked={groupByRegion}
@@ -2067,10 +2322,11 @@ const OfficeNumbers = () => {
               />
               Group by region
             </label>
+          )}
 
           <button
             type="button"
-            onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: viewMode === 'agent' }); }}
+            onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: ['agent', 'leaderboard'].includes(viewMode) }); }}
             disabled={loading || settingsLoading}
             style={styles.primaryButton}
           >
@@ -2096,7 +2352,7 @@ const OfficeNumbers = () => {
             <strong>Unable to load report</strong>
             <div>{errorMessage}</div>
           </div>
-          <button type="button" onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: viewMode === 'agent' }); }} style={styles.retryButton}>
+          <button type="button" onClick={() => { fetchProfileAndSettings(); fetchDashboardData({ force: true, includeAgents: ['agent', 'leaderboard'].includes(viewMode) }); }} style={styles.retryButton}>
             Retry
           </button>
         </div>
@@ -2115,7 +2371,13 @@ const OfficeNumbers = () => {
           detailData={agentDetailData}
           detailLoading={agentDetailLoading}
           detailError={agentDetailError}
-          onRefresh={() => fetchAgentDetail(selectedAgentEmail, { force: true })}
+          feeTransactionRows={agentFeeRows}
+          feeTransactionLoading={agentFeeRowsLoading}
+          feeTransactionError={agentFeeRowsError}
+          onRefresh={() => {
+            fetchAgentDetail(selectedAgentEmail, { force: true });
+            fetchAgentFeeRows(selectedAgentEmail, { force: true });
+          }}
           onBack={() => { setSelectedAgentEmail(''); setAgentDetailData(null); setAgentDetailError(''); }}
           onBackToSummary={() => {
             setSelectedAgentEmail('');
@@ -2211,7 +2473,39 @@ const OfficeNumbers = () => {
                 minWidth: isBrokerView ? 1320 : 1040,
               }}
             >
-              
+              {!groupByRegion && (
+              <thead>
+                <tr>
+                  <th style={styles.overviewHeaderCell}>{groupByRegion ? 'Region' : 'Office'}</th>
+                  <th style={styles.overviewHeaderCell}>{groupByRegion ? 'Offices' : 'Region'}</th>
+                  <th style={styles.overviewHeaderCell}>
+                    {selectedMetricConfig.shortCountLabel}
+                    {selectedMetricConfig.usesNbRwCount && <div style={styles.overviewHeaderSub}>NEW / RWR</div>}
+                  </th>
+                  <th style={styles.overviewHeaderCell}>
+                    {selectedFeeConfig.label}
+                    <div style={styles.overviewHeaderSub}>Fee Transactions</div>
+                  </th>
+                  <th style={styles.overviewHeaderCell}>Avg Fee</th>
+                  {isBrokerView && (
+                    <th style={{ ...styles.overviewHeaderCell, ...styles.overviewGoalHeader }}>
+                      NB/RW Count Goal
+                    </th>
+                  )}
+                  <th style={{ ...styles.overviewHeaderCell, ...styles.overviewProjectedHeader }}>
+                    {selectedMetricConfig.projectedLabel}
+                  </th>
+                  <th style={styles.overviewHeaderCell}>Last Month</th>
+                  <th style={styles.overviewHeaderCell}>Last Year</th>
+                  {isBrokerView && (
+                    <>
+                      <th style={styles.overviewHeaderCell}>Goal Progress</th>
+                      <th style={styles.overviewHeaderCell}>Status</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              )}
 
               <tbody>
                 {regionGroups.map((group) => {
@@ -2257,186 +2551,126 @@ const OfficeNumbers = () => {
                   const regionFeeAvg = regionFeeAvgDenominator !== 0
                     ? regionTotals.selectedFeeTotal / regionFeeAvgDenominator
                     : 0;
+                  const regionActualGoalPercent = regionTotals.goal > 0
+                    ? (regionTotals.selectedMetricCount / regionTotals.goal) * 100
+                    : 0;
+                  const regionProjectedGoalPercent = regionTotals.goal > 0
+                    ? (regionTotals.projectedCount / regionTotals.goal) * 100
+                    : 0;
+                  const regionOnTrack = regionTotals.goal > 0 && regionTotals.projectedCount >= regionTotals.goal;
+
+                  if (!groupByRegion) {
+                    return group.offices.map(renderOfficeRow);
+                  }
 
                   return (
                     <React.Fragment key={group.regionName || 'all-offices'}>
-                      {groupByRegion && (
-                        <>
-                          <tr>
-                            <td
-                              colSpan={isBrokerView ? 11 : 8}
-                              style={styles.regionHeaderCell}
-                            >
-                              <div style={styles.regionHeaderContent}>
-                                <strong>{group.regionName}</strong>
-                              </div>
-                            </td>
-                          </tr>
+                      <tr>
+                        <td
+                          colSpan={isBrokerView ? 11 : 8}
+                          style={styles.regionHeaderCell}
+                        >
+                          <div style={styles.regionHeaderContent}>
+                            <strong>{group.regionName}</strong>
+                          </div>
+                        </td>
+                      </tr>
 
-                          <tr>
-                            <th style={styles.regionColumnHeaderCell}>Office</th>
-                            <th style={styles.regionColumnHeaderCell}>Region</th>
-                            <th
-                              style={{
-                                ...styles.regionColumnHeaderCell,
-                                ...styles.metricCurrentHeaderCell,
-                              }}
-                            >
-                              {selectedMetricConfig.shortCountLabel}
-                            </th>
-                            <th style={styles.regionColumnHeaderCell}>
-                              {selectedFeeConfig.label}
-                            </th>
-                            <th style={styles.regionColumnHeaderCell}>Avg Fee</th>
-                            {isBrokerView && (
-                              <th
-                                style={{
-                                  ...styles.regionColumnHeaderCell,
-                                  ...styles.metricGoalHeaderCell,
-                                }}
-                              >
-                                NB/RW Count Goal
-                              </th>
-                            )}
-                            <th
-                              style={{
-                                ...styles.regionColumnHeaderCell,
-                                ...styles.metricProjectedHeaderCell,
-                              }}
-                            >
-                              {selectedMetricConfig.projectedLabel}
-                            </th>
-                            <th style={styles.regionColumnHeaderCell}>
-                              Last Month ({getMonthLabel(comparisonMonths.lastMonth.value)})
-                            </th>
-                            <th style={styles.regionColumnHeaderCell}>
-                              Last Year ({getMonthLabel(comparisonMonths.lastYear.value)})
-                            </th>
-                            {isBrokerView && (
-                              <>
-                                <th style={styles.regionColumnHeaderCell}>
-                                  Goal Progress
-                                </th>
-                                <th style={styles.regionColumnHeaderCell}>
-                                  Status
-                                </th>
-                              </>
-                            )}
-                          </tr>
-                        </>
-                      )}
+                      <tr>
+                        <th style={styles.regionColumnHeaderCell}>Office</th>
+                        <th style={styles.regionColumnHeaderCell}>Region</th>
+                        <th style={{ ...styles.regionColumnHeaderCell, ...styles.metricCurrentHeaderCell }}>
+                          {selectedMetricConfig.shortCountLabel}
+                        </th>
+                        <th style={styles.regionColumnHeaderCell}>{selectedFeeConfig.label}</th>
+                        <th style={styles.regionColumnHeaderCell}>Avg Fee</th>
+                        {isBrokerView && (
+                          <th style={{ ...styles.regionColumnHeaderCell, ...styles.metricGoalHeaderCell }}>
+                            NB/RW Count Goal
+                          </th>
+                        )}
+                        <th style={{ ...styles.regionColumnHeaderCell, ...styles.metricProjectedHeaderCell }}>
+                          {selectedMetricConfig.projectedLabel}
+                        </th>
+                        <th style={styles.regionColumnHeaderCell}>
+                          Last Month ({getMonthLabel(comparisonMonths.lastMonth.value)})
+                        </th>
+                        <th style={styles.regionColumnHeaderCell}>
+                          Last Year ({getMonthLabel(comparisonMonths.lastYear.value)})
+                        </th>
+                        {isBrokerView && (
+                          <>
+                            <th style={styles.regionColumnHeaderCell}>Goal Progress</th>
+                            <th style={styles.regionColumnHeaderCell}>Status</th>
+                          </>
+                        )}
+                      </tr>
 
                       {group.offices.map(renderOfficeRow)}
 
-                      {groupByRegion && (() => {
-                        const regionActualGoalPercent =
-                          regionTotals.goal > 0
-                            ? (regionTotals.selectedMetricCount / regionTotals.goal) * 100
-                            : 0;
-
-                        const regionProjectedGoalPercent =
-                          regionTotals.goal > 0
-                            ? (regionTotals.projectedCount / regionTotals.goal) * 100
-                            : 0;
-
-                        const regionOnTrack =
-                          regionTotals.goal > 0 &&
-                          regionTotals.projectedCount >= regionTotals.goal;
-
-                        return (
-                          <tr>
-                            <td
-                              style={{
-                                ...styles.regionTotalCell,
-                                fontSize: 12,
-                                textTransform: 'uppercase',
-                                letterSpacing: '.02em',
-                              }}
-                            >
-                              {group.regionName} Total
-                            </td>
-                            <td style={styles.regionTotalCell}>{group.regionName}</td>
-                            <td style={{...styles.regionTotalCell,...styles.metricCurrentCell}}>
-                              {formatNumber(regionTotals.selectedMetricCount)}
+                      <tr>
+                        <td style={{ ...styles.regionTotalCell, fontSize: 12, textTransform: 'uppercase', letterSpacing: '.02em' }}>
+                          {group.regionName} Total
+                        </td>
+                        <td style={styles.regionTotalCell}>{group.regionName}</td>
+                        <td style={{ ...styles.regionTotalCell, ...styles.metricCurrentCell }}>
+                          {formatNumber(regionTotals.selectedMetricCount)}
+                        </td>
+                        <td style={styles.regionTotalCell}>{formatCurrency(regionTotals.selectedFeeTotal)}</td>
+                        <td style={styles.regionTotalCell}>{formatCurrency(regionFeeAvg, 2)}</td>
+                        {isBrokerView && (
+                          <td style={{ ...styles.regionTotalCell, ...styles.metricGoalCell }}>
+                            {regionTotals.goal > 0 ? formatNumber(regionTotals.goal) : 'Not Set'}
+                          </td>
+                        )}
+                        <td style={{ ...styles.regionTotalCell, ...styles.metricProjectedCell }}>
+                          {formatDecimal(regionTotals.projectedCount)}
+                        </td>
+                        <td style={styles.regionTotalCell}>
+                          {regionTotals.hasLastMonthData ? formatNumber(regionTotals.lastMonthCount) : '—'}
+                        </td>
+                        <td style={styles.regionTotalCell}>
+                          {regionTotals.hasLastYearData ? formatNumber(regionTotals.lastYearCount) : '—'}
+                        </td>
+                        {isBrokerView && (
+                          <>
+                            <td style={styles.regionTotalCell}>
+                              {regionTotals.goal > 0 ? (
+                                <>
+                                  <div style={styles.progressText}>{Math.round(regionActualGoalPercent)}%</div>
+                                  <div style={styles.progressTrack}>
+                                    <div
+                                      style={{
+                                        ...styles.progressFill,
+                                        width: `${Math.min(regionActualGoalPercent, 100)}%`,
+                                      }}
+                                    />
+                                  </div>
+                                  <div style={styles.smallMuted}>{Math.round(regionProjectedGoalPercent)}% proj.</div>
+                                </>
+                              ) : '—'}
                             </td>
                             <td style={styles.regionTotalCell}>
-                              {formatCurrency(regionTotals.selectedFeeTotal)}
+                              <span style={
+                                regionTotals.goal <= 0
+                                  ? styles.noGoalBadge
+                                  : regionOnTrack
+                                    ? styles.onTrackBadge
+                                    : styles.behindBadge
+                              }>
+                                {regionTotals.goal <= 0 ? 'No Goal' : regionOnTrack ? 'On Track' : 'Behind'}
+                              </span>
                             </td>
-                            <td style={styles.regionTotalCell}>
-                              {formatCurrency(regionFeeAvg, 2)}
-                            </td>
+                          </>
+                        )}
+                      </tr>
 
-                            {isBrokerView && (
-                              <td style={{...styles.regionTotalCell,...styles.metricGoalCell}}>
-                                {regionTotals.goal > 0
-                                  ? formatNumber(regionTotals.goal)
-                                  : 'Not Set'}
-                              </td>
-                            )}
-
-                            <td style={{...styles.regionTotalCell,...styles.metricProjectedCell}}>
-                              {formatDecimal(regionTotals.projectedCount)}
-                            </td>
-                            <td style={styles.regionTotalCell}>
-                              {regionTotals.hasLastMonthData
-                                ? formatNumber(regionTotals.lastMonthCount)
-                                : '—'}
-                            </td>
-                            <td style={styles.regionTotalCell}>
-                              {regionTotals.hasLastYearData
-                                ? formatNumber(regionTotals.lastYearCount)
-                                : '—'}
-                            </td>
-
-                            {isBrokerView && (
-                              <>
-                                <td style={styles.regionTotalCell}>
-                                  {regionTotals.goal > 0 ? (
-                                    <>
-                                      <div style={styles.progressText}>
-                                        {Math.round(regionActualGoalPercent)}%
-                                      </div>
-                                      <div style={styles.progressTrack}>
-                                        <div
-                                          style={{
-                                            ...styles.progressFill,
-                                            width: `${Math.min(
-                                              regionActualGoalPercent,
-                                              100
-                                            )}%`,
-                                          }}
-                                        />
-                                      </div>
-                                      <div style={styles.smallMuted}>
-                                        {Math.round(regionProjectedGoalPercent)}% proj.
-                                      </div>
-                                    </>
-                                  ) : (
-                                    '—'
-                                  )}
-                                </td>
-                                <td style={styles.regionTotalCell}>
-                                  <span
-                                    style={
-                                      regionTotals.goal <= 0
-                                        ? styles.noGoalBadge
-                                        : regionOnTrack
-                                          ? styles.onTrackBadge
-                                          : styles.behindBadge
-                                    }
-                                  >
-                                    {regionTotals.goal <= 0
-                                      ? 'No Goal'
-                                      : regionOnTrack
-                                        ? 'On Track'
-                                        : 'Behind'}
-                                  </span>
-                                </td>
-                              </>
-                            )}
-                          </tr>
-                        );
-                      })()}
+                      <tr aria-hidden="true">
+                        <td
+                          colSpan={isBrokerView ? 11 : 8}
+                          style={styles.regionSpacerCell}
+                        />
+                      </tr>
                     </React.Fragment>
                   );
                 })}
@@ -2444,37 +2678,57 @@ const OfficeNumbers = () => {
 
               <tfoot>
                 <tr>
-                  <td style={styles.footerCell}>All Offices</td>
-                  <td style={styles.footerCell}>—</td>
-                  <td style={{ ...styles.footerCell, ...styles.metricCurrentCell }}>
-                    {formatNumber(totals.selectedMetricCount)}
+                  <td style={styles.footerCell}>TOTAL</td>
+                  <td style={styles.footerCell}>{formatNumber(officeMetrics.length)}</td>
+                  <td style={styles.footerCell}>
+                    <strong>{formatNumber(totals.selectedMetricCount)}</strong>
+                    {selectedMetricConfig.usesNbRwCount && (
+                      <div style={styles.smallMuted}>
+                        {formatNumber(totals.newBusinessCount)} NEW / {formatNumber(totals.rewriteCount)} RWR
+                      </div>
+                    )}
                   </td>
-                  <td style={styles.footerCell}>{formatCurrency(totals.selectedFeeTotal)}</td>
+                  <td style={styles.footerCell}>
+                    <strong>{formatCurrency(totals.selectedFeeTotal)}</strong>
+                    <div style={styles.smallMuted}>{formatNumber(totals.selectedFeeCount)} fee transaction(s)</div>
+                  </td>
                   <td style={styles.footerCell}>{formatCurrency(totals.selectedFeeAvg, 2)}</td>
-                  <td style={{ ...styles.footerCell, ...styles.metricGoalCell }}>
-                    {totals.goal > 0 ? formatNumber(totals.goal) : 'Not Set'}
-                  </td>
+                  {isBrokerView && (
+                    <td style={{ ...styles.footerCell, ...styles.metricGoalCell }}>
+                      {totals.goal > 0 ? formatNumber(totals.goal) : 'Not Set'}
+                    </td>
+                  )}
                   <td style={{ ...styles.footerCell, ...styles.metricProjectedCell }}>
                     {formatDecimal(totals.projectedCount)}
                   </td>
-                  <td style={styles.footerCell}>
-                    {totals.hasLastMonthData
-                      ? formatNumber(totals.lastMonthCount)
-                      : '—'}
-                  </td>
-                  <td style={styles.footerCell}>
-                    {totals.hasLastYearData
-                      ? formatNumber(totals.lastYearCount)
-                      : '—'}
-                  </td>
-                  <td style={styles.footerCell}>—</td>
-                  <td style={styles.footerCell}>
-                    {totals.goal <= 0
-                      ? 'No Goal'
-                      : totals.projectedCount >= totals.goal
-                        ? 'On Track'
-                        : 'Behind'}
-                  </td>
+                  <td style={styles.footerCell}>{totals.hasLastMonthData ? formatNumber(totals.lastMonthCount) : '—'}</td>
+                  <td style={styles.footerCell}>{totals.hasLastYearData ? formatNumber(totals.lastYearCount) : '—'}</td>
+                  {isBrokerView && (
+                    <>
+                      <td style={styles.footerCell}>
+                        {totals.goal > 0 ? (
+                          <>
+                            <div style={styles.progressText}>{Math.round((totals.selectedMetricCount / totals.goal) * 100)}%</div>
+                            <div style={styles.progressTrack}>
+                              <div style={{ ...styles.progressFill, width: `${Math.min((totals.selectedMetricCount / totals.goal) * 100, 100)}%` }} />
+                            </div>
+                            <div style={styles.smallMuted}>{Math.round((totals.projectedCount / totals.goal) * 100)}% proj.</div>
+                          </>
+                        ) : '—'}
+                      </td>
+                      <td style={styles.footerCell}>
+                        <span style={
+                          totals.goal <= 0
+                            ? styles.noGoalBadge
+                            : totals.projectedCount >= totals.goal
+                              ? styles.onTrackBadge
+                              : styles.behindBadge
+                        }>
+                          {totals.goal <= 0 ? 'No Goal' : totals.projectedCount >= totals.goal ? 'On Track' : 'Behind'}
+                        </span>
+                      </td>
+                    </>
+                  )}
                 </tr>
               </tfoot>
             </table>
@@ -2483,6 +2737,118 @@ const OfficeNumbers = () => {
       </div>
         </>
       )}
+
+      {viewMode === 'leaderboard' && (
+        <>
+          <div style={styles.leaderboardToolbar}>
+            <div>
+              <div style={styles.leaderboardEyebrow}>TOP PERFORMANCE</div>
+              <h2 style={styles.leaderboardTitle}>Office & Agent Leaderboard</h2>
+              <div style={styles.leaderboardSubtitle}>
+                Ranked by {selectedMetricConfig.countLabel.toLowerCase()} · {leaderboardData.periodLabel}
+              </div>
+            </div>
+            <div style={styles.leaderboardControls}>
+              <div style={styles.scopeControl}>
+                {[
+                  ['both', 'All'],
+                  ['offices', 'Offices'],
+                  ['agents', 'Agents'],
+                ].map(([scope, label]) => (
+                  <button
+                    key={scope}
+                    type="button"
+                    onClick={() => setLeaderboardScope(scope)}
+                    style={{
+                      ...styles.scopeButton,
+                      ...(leaderboardScope === scope ? styles.scopeButtonActive : {}),
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={styles.periodControl}>
+                {['day', 'week', 'month'].map((period) => (
+                  <button
+                    key={period}
+                    type="button"
+                    onClick={() => setLeaderboardPeriod(period)}
+                    style={{
+                      ...styles.periodButton,
+                      ...(leaderboardPeriod === period ? styles.periodButtonActive : {}),
+                    }}
+                  >
+                    {period === 'day' ? 'Day' : period === 'week' ? 'Week' : 'Month'}
+                  </button>
+                ))}
+              </div>
+
+              <div style={styles.leaderboardPickerWrap}>
+                <label style={styles.leaderboardPickerLabel}>
+                  {leaderboardPeriod === 'day' ? 'Choose day' : leaderboardPeriod === 'week' ? 'Choose a date in week' : 'Choose month'}
+                </label>
+                {leaderboardPeriod === 'month' ? (
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    max={currentMonthValue}
+                    onChange={(event) => {
+                      setSelectedMonth(event.target.value);
+                      setLeaderboardAnchorDate('');
+                    }}
+                    style={styles.leaderboardPicker}
+                  />
+                ) : (
+                  <input
+                    type="date"
+                    value={leaderboardAnchorDate && leaderboardAnchorDate.startsWith(`${selectedMonth}-`) ? leaderboardAnchorDate : (latestDataDate || monthDetails.firstDay)}
+                    min={monthDetails.firstDay}
+                    max={`${monthDetails.year}-${String(monthDetails.month).padStart(2, '0')}-${String(monthDetails.daysInMonth).padStart(2, '0')}`}
+                    onChange={(event) => setLeaderboardAnchorDate(event.target.value)}
+                    style={styles.leaderboardPicker}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          {loading ? (
+            <div style={styles.leaderboardEmpty}>Loading leaderboard...</div>
+          ) : leaderboardData.periodRows.length === 0 ? (
+            <div style={styles.leaderboardEmpty}>No transaction data was found for this leaderboard period.</div>
+          ) : (
+            <div
+              style={{
+                ...styles.leaderboardGrid,
+                ...(leaderboardScope === 'both' ? {} : styles.leaderboardGridSingle),
+              }}
+            >
+              {leaderboardScope !== 'agents' && (
+                <LeaderboardPanel
+                  title="All Offices"
+                  icon="🏢"
+                  rows={leaderboardData.offices}
+                  selectedMetricConfig={selectedMetricConfig}
+                  selectedFeeConfig={selectedFeeConfig}
+                  onOpen={(row) => openOfficeDetail(row.name)}
+                />
+              )}
+              {leaderboardScope !== 'offices' && (
+                <LeaderboardPanel
+                  title="All Agents"
+                  icon="🏆"
+                  rows={leaderboardData.agents}
+                  selectedMetricConfig={selectedMetricConfig}
+                  selectedFeeConfig={selectedFeeConfig}
+                />
+              )}
+            </div>
+          )}
+        </>
+      )}
+
       {viewMode === 'agent' && (
         <>
           <div style={styles.summaryGrid}>
@@ -3032,6 +3398,48 @@ const OfficeNumbers = () => {
 };
 
 
+
+const LeaderboardPanel = ({ title, icon, rows, selectedMetricConfig, selectedFeeConfig, onOpen }) => (
+  <div style={styles.leaderboardPanel}>
+    <div style={styles.leaderboardPanelHeader}>
+      <div style={styles.leaderboardPanelTitle}><span>{icon}</span>{title}</div>
+      <div style={styles.leaderboardTopBadge}>{rows.length} TOTAL</div>
+    </div>
+    <div>
+      {rows.map((row, index) => (
+        <div key={row.key} style={styles.leaderboardRow}>
+          <div style={{
+            ...styles.rankBadge,
+            ...(index === 0 ? styles.rankGold : index === 1 ? styles.rankSilver : index === 2 ? styles.rankBronze : {}),
+          }}>
+            {index + 1}
+          </div>
+          <div style={styles.leaderboardIdentity}>
+            {onOpen ? (
+              <button type="button" onClick={() => onOpen(row)} style={styles.leaderboardNameButton}>{row.name}</button>
+            ) : (
+              <div style={styles.leaderboardName}>{row.name}</div>
+            )}
+            <div style={styles.leaderboardMeta}>{row.subtitle}</div>
+            {row.email && <div style={styles.leaderboardEmail}>{row.email}</div>}
+          </div>
+          <div style={styles.leaderboardStats}>
+            <div style={styles.leaderboardMetric}>{formatNumber(row.selectedMetricCount)}</div>
+            <div style={styles.leaderboardMetricLabel}>{selectedMetricConfig.shortCountLabel}</div>
+            {selectedMetricConfig.usesNbRwCount && (
+              <div style={styles.leaderboardSplit}>{formatNumber(row.newBusinessCount)} NEW · {formatNumber(row.rewriteCount)} RWR</div>
+            )}
+          </div>
+          <div style={styles.leaderboardFee}>
+            <div style={styles.leaderboardFeeValue}>{formatCurrency(row.selectedFeeTotal)}</div>
+            <div style={styles.leaderboardMetricLabel}>{selectedFeeConfig.label}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 const MetricBar = ({ label, value, max, displayValue }) => {
   const width = max > 0 ? Math.max(2, Math.min(100, (Number(value || 0) / max) * 100)) : 0;
   return (
@@ -3254,6 +3662,9 @@ const AgentDetail = ({
   detailData,
   detailLoading,
   detailError,
+  feeTransactionRows,
+  feeTransactionLoading,
+  feeTransactionError,
   onRefresh,
   onBack,
   onBackToSummary,
@@ -3283,6 +3694,137 @@ const AgentDetail = ({
   const officeRows = Array.isArray(detailData?.offices) ? detailData.offices : [];
   const trendRows = Array.isArray(detailData?.trend) ? detailData.trend : [];
   const trendMax = Math.max(1, ...trendRows.map((row) => Number(row.nb_rw_count) || 0));
+  const [expandedFeeType, setExpandedFeeType] = useState('');
+  const [copiedValue, setCopiedValue] = useState('');
+
+  const copyAuditValue = async (value) => {
+    const text = cleanStr(value);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedValue(text);
+      window.setTimeout(() => setCopiedValue((current) => (current === text ? '' : current)), 1400);
+    } catch (error) {
+      console.error('Unable to copy value:', error);
+    }
+  };
+
+  const CopyableValue = ({ value }) => {
+    const text = cleanStr(value);
+    if (!text) return <span>—</span>;
+    const copied = copiedValue === text;
+    return (
+      <button
+        type="button"
+        onClick={() => copyAuditValue(text)}
+        style={styles.copyValueButton}
+        title={copied ? 'Copied!' : `Copy ${text}`}
+        aria-label={`Copy ${text}`}
+      >
+        <span>{text}</span>
+        <span style={copied ? styles.copyStatusCopied : styles.copyStatus}>{copied ? '✓ Copied' : '⧉ Copy'}</span>
+      </button>
+    );
+  };
+
+  const validFeeTransactionRows = useMemo(
+    () => getValidTransactionRows(Array.isArray(feeTransactionRows) ? feeTransactionRows : []),
+    [feeTransactionRows]
+  );
+
+  const enrichedFeeTransactionRows = useMemo(() => {
+    const rows = validFeeTransactionRows;
+    const receiptMap = new Map();
+
+    rows.forEach((row) => {
+      const receipt = cleanStr(row.receipt_id || row.carrier_receipt);
+      if (!receipt) return;
+      if (!receiptMap.has(receipt)) receiptMap.set(receipt, []);
+      receiptMap.get(receipt).push(row);
+    });
+
+    const scoreCandidate = (feeRow, candidate) => {
+      if (candidate === feeRow) return -Infinity;
+      if (isVoidedRow(candidate)) return -Infinity;
+
+      let score = 0;
+      const feeCustomerId = cleanStr(feeRow.customer_id);
+      const candidateCustomerId = cleanStr(candidate.customer_id);
+      const feeOffice = normalizeOffice(feeRow.office);
+      const candidateOffice = normalizeOffice(candidate.office);
+      const feeAgent = cleanStr(feeRow.agent_email).toLowerCase();
+      const candidateAgent = cleanStr(candidate.agent_email).toLowerCase();
+
+      if (feeCustomerId && candidateCustomerId && feeCustomerId === candidateCustomerId) score += 8;
+      if (feeOffice !== 'Unknown' && candidateOffice === feeOffice) score += 4;
+      if (feeAgent && candidateAgent && feeAgent === candidateAgent) score += 2;
+      if (cleanStr(candidate.policy)) score += 6;
+      if (cleanStr(candidate.type)) score += 5;
+      if (!getFeeCategory(candidate)) score += 5;
+      if (cleanStr(candidate.company) && !getFeeCategory(candidate)) score += 1;
+
+      const feeTime = new Date(feeRow.date_time || 0).getTime();
+      const candidateTime = new Date(candidate.date_time || 0).getTime();
+      if (Number.isFinite(feeTime) && Number.isFinite(candidateTime)) {
+        const minutesApart = Math.abs(feeTime - candidateTime) / 60000;
+        if (minutesApart <= 1) score += 4;
+        else if (minutesApart <= 10) score += 2;
+        else if (minutesApart <= 60) score += 1;
+      }
+
+      return score;
+    };
+
+    return rows.map((row) => {
+      const category = getFeeCategory(row);
+      const fee = parseMoney(row.fee);
+      if (!category || Math.abs(fee) <= 0.0001) return row;
+
+      const receipt = cleanStr(row.receipt_id || row.carrier_receipt);
+      const candidates = receipt ? (receiptMap.get(receipt) || []) : [];
+      const associatedRow = candidates
+        .map((candidate) => ({ candidate, score: scoreCandidate(row, candidate) }))
+        .filter((item) => Number.isFinite(item.score) && item.score > 0)
+        .sort((a, b) => b.score - a.score)[0]?.candidate || null;
+
+      if (!associatedRow) return row;
+
+      return {
+        ...row,
+        policy: cleanStr(row.policy) || cleanStr(associatedRow.policy),
+        type: cleanStr(row.type) || cleanStr(associatedRow.type),
+        related_company: cleanStr(associatedRow.company),
+        related_policy_type: cleanStr(associatedRow.policy_type),
+        related_row_id: associatedRow.id || null,
+      };
+    });
+  }, [validFeeTransactionRows]);
+
+  const feeRowsByType = useMemo(() => {
+    const buckets = {};
+    FEE_TYPE_OPTIONS.forEach((item) => { buckets[item.value] = []; });
+
+    enrichedFeeTransactionRows.forEach((row) => {
+      const category = getFeeCategory(row);
+      const fee = parseMoney(row.fee);
+      if (Math.abs(fee) <= 0.0001) return;
+
+      if (category && buckets[category]) buckets[category].push(row);
+      if (category && INSURANCE_FEE_TYPES.includes(category)) buckets.insurance.push(row);
+      buckets.all.push(row);
+    });
+
+    return buckets;
+  }, [enrichedFeeTransactionRows]);
+
+  const formatTransactionDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return cleanStr(value) || '—';
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    }).format(date);
+  };
 
   return (
     <div style={styles.detailPage}>
@@ -3464,13 +4006,117 @@ const AgentDetail = ({
                 const count = Number(agent.feeCounts?.[item.value]) || 0;
                 const total = Number(agent.feeTotals?.[item.value]) || 0;
                 const avgDenominator = item.value === 'broker' ? agent.nbRwCount : count;
+                const isExpanded = expandedFeeType === item.value;
+                const detailRows = feeRowsByType[item.value] || [];
+                const canExpand = count !== 0 || Math.abs(total) > 0.001 || detailRows.length > 0;
+
                 return (
-                  <tr key={item.value}>
-                    <td style={styles.officeCell}>{item.label}</td>
-                    <td style={styles.numberCell}>{formatNumber(count)}</td>
-                    <td style={styles.numberCell}>{formatCurrency(total)}</td>
-                    <td style={styles.numberCell}>{formatCurrency(avgDenominator ? total / avgDenominator : 0, 2)}</td>
-                  </tr>
+                  <React.Fragment key={item.value}>
+                    <tr
+                      onClick={() => canExpand && setExpandedFeeType(isExpanded ? '' : item.value)}
+                      style={canExpand ? styles.feeDrilldownRow : undefined}
+                      title={canExpand ? `View ${item.label} transaction detail` : undefined}
+                    >
+                      <td style={styles.officeCell}>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (canExpand) setExpandedFeeType(isExpanded ? '' : item.value);
+                          }}
+                          disabled={!canExpand}
+                          style={styles.feeDrilldownButton}
+                          aria-expanded={isExpanded}
+                        >
+                          <span style={styles.feeChevron}>{isExpanded ? '▾' : '›'}</span>
+                          {item.label}
+                        </button>
+                      </td>
+                      <td style={styles.numberCell}>{formatNumber(count)}</td>
+                      <td style={styles.numberCell}>{formatCurrency(total)}</td>
+                      <td style={styles.numberCell}>{formatCurrency(avgDenominator ? total / avgDenominator : 0, 2)}</td>
+                    </tr>
+
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={4} style={styles.feeDrilldownCell}>
+                          <div style={styles.feeDrilldownHeader}>
+                            <div>
+                              <strong>{item.label} Transactions</strong>
+                              <div style={styles.smallMuted}>Individual source rows for {getMonthLabel(selectedMonth)}.</div>
+                            </div>
+                            <div style={styles.detailDataPill}>{detailRows.length} source row(s)</div>
+                          </div>
+
+                          {feeTransactionLoading ? (
+                            <div style={styles.loading}>Loading fee transaction detail...</div>
+                          ) : feeTransactionError ? (
+                            <div style={styles.errorBox}><div><strong>Unable to load fee detail</strong><div>{feeTransactionError}</div></div></div>
+                          ) : detailRows.length === 0 ? (
+                            <div style={styles.emptyDetail}>No matching source rows were returned for this fee type.</div>
+                          ) : (
+                            <div style={styles.tableWrapper}>
+                              <table style={{ ...styles.table, minWidth: 1180 }}>
+                                <thead>
+                                  <tr>
+                                    <th style={styles.tableHeader}>Date</th>
+                                    <th style={styles.tableHeader}>Customer</th>
+                                    <th style={styles.tableHeader}>Policy #</th>
+                                    <th style={styles.tableHeader}>Office</th>
+                                    <th style={styles.tableHeader}>Transaction</th>
+                                    <th style={styles.tableHeader}>Company / Fee</th>
+                                    <th style={styles.tableHeader}>Receipt</th>
+                                    <th style={styles.tableHeader}>Method</th>
+                                    <th style={styles.tableHeader}>Fee</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {detailRows.map((row, index) => (
+                                    <tr key={row.id || row.sync_key || `${item.value}-${index}`}>
+                                      <td style={styles.numberCell}>{formatTransactionDate(row.date_time)}</td>
+                                      <td style={styles.officeCell}>
+                                        <div style={styles.customerPrimary}>{cleanStr(row.customer) || '—'}</div>
+                                        {cleanStr(row.customer_id) && (
+                                          <div style={styles.smallMuted}>
+                                            ID: <CopyableValue value={row.customer_id} />
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td style={styles.numberCell}><CopyableValue value={row.policy} /></td>
+                                      <td style={styles.numberCell}>{normalizeOffice(row.office)}</td>
+                                      <td style={styles.numberCell}>
+                                        <div>{cleanStr(row.type) || '—'}</div>
+                                        {cleanStr(row.related_policy_type) && cleanStr(row.related_policy_type) !== cleanStr(row.type) && (
+                                          <div style={styles.smallMuted}>{cleanStr(row.related_policy_type)}</div>
+                                        )}
+                                      </td>
+                                      <td style={styles.officeCell}>
+                                        <div>{cleanStr(row.company) || cleanStr(row.policy_type) || '—'}</div>
+                                        {cleanStr(row.related_company) && cleanStr(row.related_company) !== cleanStr(row.company) ? (
+                                          <div style={styles.smallMuted}>Policy: {cleanStr(row.related_company)}</div>
+                                        ) : cleanStr(row.policy_type) ? (
+                                          <div style={styles.smallMuted}>{cleanStr(row.policy_type)}</div>
+                                        ) : null}
+                                      </td>
+                                      <td style={styles.numberCell}>{cleanStr(row.receipt_id || row.carrier_receipt) || '—'}</td>
+                                      <td style={styles.numberCell}>{cleanStr(row.method) || '—'}</td>
+                                      <td style={{ ...styles.numberCell, fontWeight: 900 }}>{formatCurrency(parseMoney(row.fee), 2)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr>
+                                    <td colSpan={8} style={styles.footerCell}>{item.label} source total</td>
+                                    <td style={styles.footerCell}>{formatCurrency(detailRows.reduce((sum, row) => sum + parseMoney(row.fee), 0), 2)}</td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -3494,8 +4140,8 @@ const styles = {
   page: {
     minHeight: '100vh',
     padding: 28,
-    backgroundColor: '#f8fafc',
-    color: '#0f172a',
+    backgroundColor: '#f6f7f9',
+    color: '#101828',
     fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
   header: {
@@ -3536,7 +4182,7 @@ const styles = {
     border: '1px solid #cbd5e1',
     borderRadius: 8,
     background: '#fff',
-    color: '#0f172a',
+    color: '#101828',
     fontSize: 14,
     fontWeight: 800,
   },
@@ -3552,7 +4198,7 @@ const styles = {
     padding: '9px 14px',
     border: 0,
     borderRadius: 8,
-    background: '#2563eb',
+    background: '#ef3e3a',
     color: '#fff',
     cursor: 'pointer',
     fontWeight: 800,
@@ -3565,7 +4211,50 @@ const styles = {
     padding: '8px 13px', border: 0, borderRadius: 7,
     background: 'transparent', color: '#475569', cursor: 'pointer', fontWeight: 800,
   },
-  segmentButtonActive: { background: '#2563eb', color: '#fff' },
+  segmentButtonActive: { background: '#ef3e3a', color: '#fff' },
+
+  leaderboardToolbar: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    flexWrap: 'wrap', gap: 16, marginBottom: 16, padding: '16px 18px',
+    border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff',
+    boxShadow: '0 4px 14px rgba(16,24,40,.05)',
+  },
+  leaderboardEyebrow: { color: '#0f9f8f', fontSize: 10, fontWeight: 900, letterSpacing: '.08em' },
+  leaderboardTitle: { margin: '3px 0 2px', fontSize: 20, fontWeight: 900 },
+  leaderboardSubtitle: { color: '#64748b', fontSize: 12, fontWeight: 700 },
+  leaderboardControls: { display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10 },
+  scopeControl: { display: 'inline-flex', padding: 3, border: '1px solid #cbd5e1', borderRadius: 10, background: '#f8fafc' },
+  scopeButton: { padding: '8px 12px', border: 0, borderRadius: 7, background: 'transparent', color: '#475569', fontWeight: 850, cursor: 'pointer' },
+  scopeButtonActive: { background: '#24313f', color: '#fff', boxShadow: '0 2px 6px rgba(36,49,63,.16)' },
+  periodControl: { display: 'inline-flex', padding: 3, border: '1px solid #cbd5e1', borderRadius: 10, background: '#f8fafc' },
+  periodButton: { padding: '8px 16px', border: 0, borderRadius: 7, background: 'transparent', color: '#475569', fontWeight: 850, cursor: 'pointer' },
+  periodButtonActive: { background: '#0f9f8f', color: '#fff', boxShadow: '0 2px 6px rgba(15,159,143,.18)' },
+  leaderboardPickerWrap: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 },
+  leaderboardPickerLabel: { color: '#64748b', fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '.04em' },
+  leaderboardPicker: { height: 38, padding: '0 10px', border: '1px solid #cbd5e1', borderRadius: 9, background: '#fff', color: '#101828', fontSize: 12, fontWeight: 800 },
+  leaderboardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(520px, 1fr))', gap: 16, alignItems: 'start' },
+  leaderboardGridSingle: { gridTemplateColumns: 'minmax(0, 1fr)' },
+  leaderboardPanel: { overflow: 'hidden', border: '1px solid #e2e8f0', borderRadius: 14, background: '#fff', boxShadow: '0 6px 20px rgba(16,24,40,.06)' },
+  leaderboardPanelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '2px solid #f4c915', background: 'linear-gradient(90deg,#20242a,#2d333b)', color: '#fff' },
+  leaderboardPanelTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 900 },
+  leaderboardTopBadge: { padding: '4px 8px', borderRadius: 999, background: 'rgba(255,255,255,.12)', color: '#f8fafc', fontSize: 9, fontWeight: 900, letterSpacing: '.05em' },
+  leaderboardRow: { display: 'grid', gridTemplateColumns: '34px minmax(0,1fr) 118px 118px', gap: 10, alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #eef2f6' },
+  rankBadge: { width: 28, height: 28, display: 'grid', placeItems: 'center', borderRadius: 9, background: '#f1f5f9', color: '#475569', fontSize: 12, fontWeight: 900 },
+  rankGold: { background: '#fff4bf', color: '#8a6500', border: '1px solid #f4c915' },
+  rankSilver: { background: '#edf2f7', color: '#475569', border: '1px solid #cbd5e1' },
+  rankBronze: { background: '#fff0e5', color: '#9a4d16', border: '1px solid #fdba74' },
+  leaderboardIdentity: { minWidth: 0 },
+  leaderboardName: { color: '#101828', fontSize: 13, fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  leaderboardNameButton: { padding: 0, border: 0, background: 'transparent', color: '#2563eb', fontSize: 13, fontWeight: 900, cursor: 'pointer', textAlign: 'left' },
+  leaderboardMeta: { marginTop: 2, color: '#64748b', fontSize: 10, fontWeight: 800 },
+  leaderboardEmail: { marginTop: 2, color: '#94a3b8', fontSize: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  leaderboardStats: { textAlign: 'right' },
+  leaderboardMetric: { color: '#101828', fontSize: 17, fontWeight: 950 },
+  leaderboardMetricLabel: { color: '#64748b', fontSize: 9, fontWeight: 800 },
+  leaderboardSplit: { marginTop: 2, color: '#64748b', fontSize: 9, fontWeight: 700 },
+  leaderboardFee: { textAlign: 'right' },
+  leaderboardFeeValue: { color: '#0f9f8f', fontSize: 14, fontWeight: 900 },
+  leaderboardEmpty: { padding: 32, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', textAlign: 'center', color: '#64748b', fontWeight: 800 },
   commissionPanel: {
     padding: 14, marginBottom: 20, border: '1px solid #e2e8f0',
     borderRadius: 12, background: '#fff',
@@ -3574,7 +4263,7 @@ const styles = {
   ruleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 },
   ruleCard: { padding: 12, border: '1px solid #dbe3ef', borderRadius: 10, background: '#f8fafc' },
   ruleTitle: { marginBottom: 6, color: '#475569', fontSize: 12, fontWeight: 900 },
-  ruleText: { color: '#0f172a', fontSize: 13, fontWeight: 800, lineHeight: 1.45 },
+  ruleText: { color: '#101828', fontSize: 13, fontWeight: 800, lineHeight: 1.45 },
   ruleNote: { marginTop: 10, padding: 11, border: '1px solid #dbe3ef', borderRadius: 9, background: '#f8fafc', fontSize: 12, lineHeight: 1.5 },
   warningNote: { marginTop: 8, color: '#92400e', fontSize: 12, fontWeight: 700 },
   weeklyTargetLabel: { display: 'inline-flex', alignItems: 'center', gap: 8, marginLeft: 14, fontWeight: 900 },
@@ -3588,9 +4277,9 @@ const styles = {
   summaryCard: {
     padding: 14,
     border: '1px solid #e2e8f0',
-    borderRadius: 10,
+    borderRadius: 12,
     background: '#fff',
-    boxShadow: '0 1px 3px rgba(15,23,42,.05)',
+    boxShadow: '0 4px 14px rgba(16,24,40,.06)',
   },
   summaryLabel: { marginBottom: 8, color: '#64748b', fontSize: 13, fontWeight: 800 },
   summaryValue: { fontSize: 21, fontWeight: 900 },
@@ -3618,10 +4307,10 @@ const styles = {
   },
   tableCard: {
     overflow: 'hidden',
+    boxShadow: '0 6px 20px rgba(16,24,40,.07)',
     border: '1px solid #e2e8f0',
     borderRadius: 12,
     background: '#fff',
-    boxShadow: '0 1px 3px rgba(15,23,42,.05)',
   },
   tableWrapper: { overflowX: 'auto' },
   table: {
@@ -3683,7 +4372,7 @@ const styles = {
   },
   progressText: { marginBottom: 4, fontSize: 10, fontWeight: 800 },
   progressTrack: { height: 7, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0' },
-  progressFill: { height: '100%', borderRadius: 999, background: '#2563eb' },
+  progressFill: { height: '100%', borderRadius: 999, background: '#0f9f8f' },
   accessNote: {
     marginTop: 8,
     color: '#475569',
@@ -3708,12 +4397,12 @@ const styles = {
     minHeight: 34,
   },
   savedFieldText: {
-    color: '#0f172a',
+    color: '#101828',
     fontSize: 13,
     fontWeight: 800,
   },
   savedGoalValue: {
-    color: '#0f172a',
+    color: '#101828',
     fontSize: 14,
     fontWeight: 900,
   },
@@ -3731,7 +4420,7 @@ const styles = {
     padding: '6px 8px',
     border: 0,
     borderRadius: 6,
-    background: '#2563eb',
+    background: '#ef3e3a',
     color: '#fff',
     cursor: 'pointer',
     fontSize: 10,
@@ -3773,7 +4462,7 @@ const styles = {
   agentName: {
     fontSize: 13,
     fontWeight: 900,
-    color: '#0f172a',
+    color: '#101828',
     lineHeight: 1.25,
   },
   smallMuted: {
@@ -3811,17 +4500,62 @@ const styles = {
     fontWeight: 900,
   },
   difference: { marginTop: 5, fontSize: 12, fontWeight: 800 },
+  overviewHeaderCell: {
+    padding: '11px 12px',
+    borderBottom: '1px solid #334155',
+    background: 'linear-gradient(180deg, #253242 0%, #1f2937 100%)',
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '.025em',
+    whiteSpace: 'nowrap',
+  },
+  overviewHeaderSub: { marginTop: 2, color: '#dbe4ee', fontSize: 8, fontWeight: 800 },
+  overviewGoalHeader: { background: 'linear-gradient(180deg, #9b7b00 0%, #806600 100%)' },
+  overviewProjectedHeader: { background: 'linear-gradient(180deg, #26384d 0%, #203247 100%)' },
+  regionOverviewRow: { background: '#ffffff' },
+  regionOverviewCell: {
+    padding: '13px 12px',
+    borderBottom: '1px solid #e5e7eb',
+    color: '#101828',
+    fontSize: 12,
+    verticalAlign: 'middle',
+    whiteSpace: 'nowrap',
+  },
+  regionOverviewButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 9,
+    padding: 0,
+    border: 0,
+    background: 'transparent',
+    color: '#101828',
+    cursor: 'pointer',
+    font: 'inherit',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+  },
+  regionChevron: { display: 'inline-grid', placeItems: 'center', width: 16, fontSize: 18, lineHeight: 1, color: '#334155' },
   regionHeaderCell: {
-    padding: '9px 10px',
-    borderTop: '2px solid #94a3b8',
-    borderBottom: '1px solid #cbd5e1',
-    background: '#e2e8f0',
+    padding: '11px 12px',
+    borderTop: '1px solid #343a40',
+    borderBottom: '2px solid #f4c915',
+    background: 'linear-gradient(90deg, #171c22 0%, #252c34 100%)',
+    color: '#ffffff',
+    borderRadius: '10px 10px 0 0',
+  },
+  regionSpacerCell: {
+    height: 28,
+    padding: 0,
+    border: 0,
+    background: '#f8fafc',
   },
   regionColumnHeaderCell: {
     padding: '7px 8px',
     borderBottom: '1px solid #d4b106',
-    background: '#fff59d',
-    color: '#3f3f00',
+    background: '#fffaf0',
+    color: '#5b4a00',
     fontSize: 9,
     fontWeight: 900,
     textTransform: 'uppercase',
@@ -3830,19 +4564,19 @@ const styles = {
   },
 
   metricCurrentCell: {
-    background: '#f5f9ff',
+    background: '#f8fafc',
   },
   metricGoalCell: {
-    background: '#fff8dc',
+    background: '#fff8d6',
   },
   metricProjectedCell: {
-    background: '#eef7ff',
+    background: '#eff6ff',
   },
   metricCurrentHeaderCell: {
-    background: '#dbeafe',
+    background: '#eff6ff',
   },
   metricGoalHeaderCell: {
-    background: '#fde68a',
+    background: '#f4c915',
   },
   metricProjectedHeaderCell: {
     background: '#dbeafe',
@@ -3853,48 +4587,48 @@ const styles = {
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 10,
-    color: '#334155',
+    color: '#ffffff',
   },
   regionTotalCell: {
     padding: '10px 8px',
-    borderTop: '2px solid #93c5fd',
-    borderBottom: '2px solid #60a5fa',
-    background: '#dbeafe',
-    color: '#0f172a',
+    borderTop: '2px solid #f4c915',
+    borderBottom: '2px solid #e5b900',
+    background: '#fff8d6',
+    color: '#101828',
     fontWeight: 900,
     whiteSpace: 'nowrap',
     fontSize: 11,
   },
   footerCell: {
     padding: '10px 8px',
-    borderTop: '2px solid #0f172a',
-    background: '#f1f5f9',
+    borderTop: '1px solid #f4c915',
+    background: '#fffaf0',
     fontWeight: 900,
     whiteSpace: 'nowrap',
     fontSize: 11,
   },
-  officeLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#1d4ed8', cursor: 'pointer', font: 'inherit', fontWeight: 900, textDecoration: 'underline', textUnderlineOffset: 2 },
-  agentLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#1d4ed8', cursor: 'pointer', font: 'inherit', fontWeight: 900, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2 },
+  officeLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', font: 'inherit', fontWeight: 900, textDecoration: 'underline', textUnderlineOffset: 2 },
+  agentLinkButton: { padding: 0, border: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', font: 'inherit', fontWeight: 900, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: 2 },
   secondaryTextButton: { padding: 0, marginBottom: 8, border: 0, background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 12, fontWeight: 800, textDecoration: 'underline', textUnderlineOffset: 2 },
-  agentInsuranceTotal: { marginTop: 12, fontSize: 28, fontWeight: 950, color: '#0f172a' },
+  agentInsuranceTotal: { marginTop: 12, fontSize: 28, fontWeight: 950, color: '#101828' },
   agentFeeLine: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0', borderBottom: '1px solid #f1f5f9', color: '#475569', fontSize: 12 },
   detailPage: { marginBottom: 24 },
   detailTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 },
-  backButton: { padding: 0, marginBottom: 8, border: 0, background: 'transparent', color: '#2563eb', cursor: 'pointer', fontWeight: 850 },
+  backButton: { padding: 0, marginBottom: 8, border: 0, background: 'transparent', color: '#ef3e3a', cursor: 'pointer', fontWeight: 850 },
   detailTitle: { margin: 0, fontSize: 25, fontWeight: 900 },
   detailSubtitle: { marginTop: 5, color: '#64748b', fontSize: 13, fontWeight: 700 },
   detailKpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 },
   chartGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14, marginBottom: 16 },
   chartCard: { padding: 16, border: '1px solid #e2e8f0', borderRadius: 12, background: '#fff', boxShadow: '0 1px 3px rgba(15,23,42,.05)' },
-  chartTitle: { fontSize: 15, fontWeight: 900, color: '#0f172a' },
+  chartTitle: { fontSize: 15, fontWeight: 900, color: '#101828' },
   chartSubtext: { marginTop: 3, marginBottom: 14, color: '#64748b', fontSize: 11, fontWeight: 700 },
   metricBarRow: { display: 'grid', gridTemplateColumns: '90px 1fr 82px', alignItems: 'center', gap: 9, marginTop: 10 },
   metricBarLabel: { color: '#475569', fontSize: 11, fontWeight: 800 },
   metricBarTrack: { height: 12, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0' },
-  metricBarFill: { height: '100%', borderRadius: 999, background: '#2563eb' },
-  metricBarValue: { textAlign: 'right', color: '#0f172a', fontSize: 11, fontWeight: 900 },
+  metricBarFill: { height: '100%', borderRadius: 999, background: '#0f9f8f' },
+  metricBarValue: { textAlign: 'right', color: '#101828', fontSize: 11, fontWeight: 900 },
   splitTrack: { display: 'flex', height: 24, overflow: 'hidden', borderRadius: 999, background: '#e2e8f0', marginTop: 20 },
-  splitNew: { height: '100%', background: '#2563eb' },
+  splitNew: { height: '100%', background: '#0f9f8f' },
   splitRwr: { height: '100%', background: '#94a3b8' },
   splitLegend: { display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 10, color: '#475569', fontSize: 11, fontWeight: 800 },
   detailSectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, padding: 16, borderBottom: '1px solid #e2e8f0' },
@@ -3906,10 +4640,19 @@ const styles = {
   trendColumn: { flex: '1 0 54px', minWidth: 54, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 },
   trendValue: { fontSize: 10, fontWeight: 900, color: '#334155' },
   trendBarWell: { width: 28, height: 140, display: 'flex', alignItems: 'flex-end', borderRadius: 6, background: '#eff6ff', overflow: 'hidden' },
-  trendBar: { width: '100%', minHeight: 3, borderRadius: '6px 6px 0 0', background: '#2563eb' },
+  trendBar: { width: '100%', minHeight: 3, borderRadius: '6px 6px 0 0', background: '#0f9f8f' },
   trendMonth: { fontSize: 10, fontWeight: 800, color: '#475569' },
   trendSource: { width: 20, height: 20, display: 'grid', placeItems: 'center', borderRadius: 999, background: '#f1f5f9', color: '#64748b', fontSize: 9, fontWeight: 900 },
-  detailDataPill: { padding: '5px 9px', borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', fontSize: 11, fontWeight: 900 },
+  detailDataPill: { padding: '5px 9px', borderRadius: 999, background: '#fff8d6', color: '#7a5d00', fontSize: 11, fontWeight: 900 },
+  feeDrilldownRow: { cursor: 'pointer' },
+  feeDrilldownButton: { display: 'inline-flex', alignItems: 'center', gap: 8, border: 0, background: 'transparent', padding: 0, font: 'inherit', fontWeight: 900, color: 'inherit', cursor: 'pointer', textAlign: 'left' },
+  feeChevron: { display: 'inline-block', width: 14, fontSize: 18, lineHeight: 1 },
+  feeDrilldownCell: { padding: '14px 16px', background: '#f8fafc', borderTop: '1px solid #dbe4ee', borderBottom: '1px solid #dbe4ee' },
+  feeDrilldownHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
+  customerPrimary: { fontWeight: 900, color: '#101828' },
+  copyValueButton: { display: 'inline-flex', alignItems: 'center', gap: 7, border: 0, background: 'transparent', padding: '3px 0', color: '#2563eb', font: 'inherit', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' },
+  copyStatus: { fontSize: 9, fontWeight: 900, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '.03em' },
+  copyStatusCopied: { fontSize: 9, fontWeight: 900, color: '#15803d', textTransform: 'uppercase', letterSpacing: '.03em' },
   loading: { padding: '50px 24px', color: '#64748b', textAlign: 'center', fontWeight: 700 },
 };
 
