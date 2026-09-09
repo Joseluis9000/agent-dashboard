@@ -36,8 +36,10 @@ import AgentViolations from './pages/AgentViolations';
 // ✅ ADDED: Admin Commission Log page import
 import AdminCommissionLog from './pages/admin/AdminCommissionLog';
 
-// ✅ ADDED: Agent Commission Log page import
+// ✅ ADDED: Agent Tax Commission Log page import
 import AgentCommissionLog from './pages/agent/AgentCommissionLog';
+// ✅ ADDED: Agent Insurance Commission page import
+import AgentCommission from './pages/agent/AgentCommission';
 import AgentQuoteLog from './pages/agent/AgentQuoteLog';
 
 // ✅ ADDED: Commission Uploader page import
@@ -425,8 +427,12 @@ function AppRoutes() {
           <Route path="/office-eods" element={<EODHistory />} />
           <Route path="/agent/violations" element={<AgentViolations />} />
 
-          {/* ✅ ADDED: Agent commission log route */}
-          <Route path="/agent/commission" element={<AgentCommissionLog />} />
+          {/* ✅ ADDED: Agent tax commission log route */}
+          <Route path="/agent/tax-commission" element={<AgentCommissionLog />} />
+
+          {/* ✅ ADDED: Agent insurance commission route */}
+          <Route path="/agent/commission" element={<AgentCommission />} />
+
           <Route path="/agent/quotes" element={<AgentQuoteLog />} />
 
           <Route path="/uw/submit" element={<UnderwritingSubmit />} />

@@ -285,3 +285,999 @@
         min-width: 1100px; /* ensures a scrollbar appears on small screens */
     }
 }
+
+
+/* ============================================================
+   CORPORATE REPORT IMPORT
+   ============================================================ */
+
+.importToolbar {
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto 16px;
+  padding: 14px 16px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.importToolbar > div:first-child strong {
+  display: block;
+  margin-top: 2px;
+  color: #172033;
+  font-size: 14px;
+}
+
+.importToolbar p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.importEyebrow {
+  display: block;
+  color: #b91c1c;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.importToolbarActions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.eftImportButton,
+.scanningImportButton {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 13px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.eftImportButton {
+  background: #8a6800;
+}
+
+.scanningImportButton {
+  background: #237a25;
+}
+
+.importModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.importModal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid #dfe5eb;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.importModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.importModalHeader h3 {
+  margin: 3px 0;
+  color: #172033;
+  font-size: 20px;
+}
+
+.importModalHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.importCloseButton {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dce2e8;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.importOptionBar {
+  padding: 12px 20px 0;
+}
+
+.importOptionBar label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.importOptionBar select {
+  border: 1px solid #cfd8e3;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.importTextarea {
+  display: block;
+  width: calc(100% - 40px);
+  min-height: 180px;
+  margin: 14px 20px;
+  resize: vertical;
+  border: 1px solid #cfd8e3;
+  border-radius: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.importModalActions,
+.importSaveBar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.importPrimaryButton,
+.importSecondaryButton {
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.importPrimaryButton {
+  border: 1px solid #1d4ed8;
+  background: #2563eb;
+  color: #fff;
+}
+
+.importPrimaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.importSecondaryButton {
+  border: 1px solid #d6dde6;
+  background: #fff;
+  color: #475569;
+}
+
+.importSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 20px 14px;
+}
+
+.importSummaryGrid > div {
+  border: 1px solid #e1e7ed;
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 9px 10px;
+}
+
+.importSummaryGrid span {
+  display: block;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.importSummaryGrid strong {
+  display: block;
+  margin-top: 3px;
+  color: #172033;
+  font-size: 18px;
+}
+
+.importMatched {
+  border-left: 3px solid #16a34a !important;
+}
+
+.importDuplicate {
+  border-left: 3px solid #d97706 !important;
+}
+
+.importReview {
+  border-left: 3px solid #dc2626 !important;
+}
+
+.importPreviewTableWrap {
+  max-height: 350px;
+  margin: 0 20px 14px;
+  overflow: auto;
+  border: 1px solid #e1e7ed;
+  border-radius: 10px;
+}
+
+.importPreviewTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.importPreviewTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f3f6f9;
+  color: #5b6779;
+  padding: 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.importPreviewTable td {
+  padding: 8px;
+  border-top: 1px solid #eef2f6;
+  white-space: nowrap;
+}
+
+.importStatus {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 6px;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.importStatusMatched {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.importStatusDuplicate {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.importStatusReview {
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.importSaveBar {
+  justify-content: space-between;
+  border-top: 1px solid #e8edf2;
+  padding-top: 14px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.importReceipt {
+  padding: 28px 20px 24px;
+  text-align: center;
+}
+
+.importReceiptIcon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.importReceipt h3 {
+  margin: 4px 0 2px;
+}
+
+.importReceipt > p {
+  margin: 0 0 16px;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.importReceiptWeeks {
+  width: min(500px, 100%);
+  margin: 0 auto 18px;
+  border: 1px solid #e1e7ed;
+  border-radius: 10px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.importReceiptWeeks > strong {
+  display: block;
+  padding: 8px 10px;
+  background: #f8fafc;
+  font-size: 10px;
+}
+
+.importReceiptWeeks > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-top: 1px solid #eef2f6;
+  font-size: 10px;
+}
+
+@media (max-width: 800px) {
+  .importToolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .importToolbarActions {
+    width: 100%;
+  }
+
+  .eftImportButton,
+  .scanningImportButton {
+    flex: 1;
+  }
+
+  .importSummaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .importModalOverlay {
+    padding: 8px;
+  }
+}
+
+
+/* ============================================================
+   INLINE CORPORATE REPORT IMPORT
+   ============================================================ */
+
+.inlineImportSection {
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto 18px;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+.inlineImportHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid #e8edf2;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+}
+
+.inlineImportHeader h3 {
+  margin: 3px 0;
+  color: #172033;
+  font-size: 19px;
+}
+
+.inlineImportHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.inlineImportClose {
+  border: 1px solid #d6dde6;
+  border-radius: 8px;
+  background: #fff;
+  color: #566275;
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.inlineImportPasteRow {
+  padding: 14px 18px 4px;
+}
+
+.inlineImportPasteRow .importTextarea {
+  width: 100%;
+  margin: 0 0 10px;
+}
+
+.inlineImportPasteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.importSectionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px 10px;
+}
+
+.importSectionHeading h4 {
+  margin: 2px 0 2px;
+  color: #253044;
+  font-size: 14px;
+}
+
+.importSectionHeading p {
+  margin: 0;
+  color: #6b7789;
+  font-size: 10px;
+}
+
+.importSectionEyebrow {
+  color: #8a5c00;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+}
+
+.importSectionCount {
+  display: inline-flex;
+  min-width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #4b5768;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.duplicateSection {
+  margin: 0 18px 14px;
+  border: 1px solid #f2d4a5;
+  border-radius: 11px;
+  background: #fffaf2;
+  overflow: hidden;
+}
+
+.duplicateSection .importSectionEyebrow {
+  color: #b26a00;
+}
+
+.newImportSection {
+  margin: 0 18px 18px;
+  border: 1px solid #dbe3ef;
+  border-radius: 11px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.newImportSection .importSectionEyebrow {
+  color: #166534;
+}
+
+.agentAssignmentSelect {
+  width: 100%;
+  min-width: 250px;
+  border: 1px solid #cfd8e3;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 8px;
+  color: #334155;
+  font-size: 10px;
+}
+
+.agentAssignmentNeedsReview {
+  border-color: #f0a9af;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.inlineImportSection .importPreviewTableWrap {
+  margin: 0 12px 12px;
+  max-height: 430px;
+}
+
+.inlineImportSection .importSaveBar {
+  margin-top: 0;
+  padding: 12px 14px;
+}
+
+@media (max-width: 900px) {
+  .inlineImportHeader {
+    flex-direction: column;
+  }
+
+  .importSectionHeading {
+    flex-direction: column;
+  }
+
+  .agentAssignmentSelect {
+    min-width: 220px;
+  }
+}
+
+
+/* ============================================================
+   FIVE-REPORT MANAGER IMPORT TOOLBAR
+   ============================================================ */
+
+.importToolbar {
+  align-items: flex-start;
+}
+
+.importToolbarActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(125px, 1fr));
+  gap: 7px;
+  min-width: min(560px, 48%);
+}
+
+.reportImportButton {
+  min-height: 36px;
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #344155;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  font-weight: 850;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+
+.reportImportButton:hover {
+  border-color: #c7d0dc;
+  background: #f7f9fb;
+}
+
+.reportImportButtonActive {
+  border-color: #b91c1c;
+  background: #fff4f4;
+  color: #991b1b;
+  box-shadow: inset 0 0 0 1px rgba(185, 28, 28, 0.06);
+}
+
+@media (max-width: 1050px) {
+  .importToolbarActions {
+    min-width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 650px) {
+  .importToolbarActions {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* ============================================================
+   AGENT ASSIGNMENT REVIEW STATE
+   ============================================================ */
+
+.agentAssignmentNeedsReview {
+  border-color: #ef9a9a !important;
+  background: #fff1f2 !important;
+  color: #991b1b !important;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.08);
+  font-weight: 800;
+}
+
+.agentAssignmentNeedsReview:focus {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+  outline: none;
+}
+
+.agentAssignmentReady {
+  border-color: #cfd8e3;
+  background: #fff;
+  color: #334155;
+  font-weight: 500;
+}
+
+
+/* ============================================================
+   STRONG UNASSIGNED AGENT WARNING
+   ============================================================ */
+
+.agentAssignmentNeedsReview {
+  border: 2px solid #f59e0b !important;
+  background: #fff3cd !important;
+  color: #9a3412 !important;
+  font-weight: 900 !important;
+  box-shadow:
+    0 0 0 3px rgba(245, 158, 11, 0.18),
+    0 2px 6px rgba(146, 64, 14, 0.10) !important;
+}
+
+.agentAssignmentNeedsReview:hover {
+  border-color: #ea580c !important;
+  background: #ffedb5 !important;
+}
+
+.agentAssignmentNeedsReview:focus {
+  border-color: #dc2626 !important;
+  background: #fff1b8 !important;
+  color: #991b1b !important;
+  outline: none !important;
+  box-shadow:
+    0 0 0 4px rgba(220, 38, 38, 0.16),
+    0 2px 8px rgba(153, 27, 27, 0.12) !important;
+}
+
+.agentAssignmentReady {
+  border: 1px solid #cfd8e3 !important;
+  background: #fff !important;
+  color: #334155 !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+}
+
+
+/* ============================================================
+   DISQUALIFIED POLICY IMPORT
+   ============================================================ */
+
+.reportImportButton:last-child {
+  border-color: #c4b5fd;
+}
+
+.reportImportButton:last-child:hover {
+  background: #f5f3ff;
+  border-color: #8b5cf6;
+}
+
+.reportImportButton:last-child.reportImportButtonActive {
+  background: #f5f3ff;
+  border-color: #7c3aed;
+  color: #6d28d9;
+}
+
+
+/* ============================================================
+   PRIMARY PASTE WORKFLOW / COLLAPSED MANUAL ENTRY
+   ============================================================ */
+
+.manualEntryShell {
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto 22px;
+}
+
+.manualEntryToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  transition: 0.15s ease;
+}
+
+.manualEntryToggle:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.manualEntryToggleOpen {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  background: #f8fafc;
+}
+
+.manualEntryToggle > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manualEntryToggle strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.manualEntryToggle small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.manualEntryEyebrow {
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.manualEntryChevron {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #334155;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.manualEntryBody {
+  border: 1px solid #dbe3ef;
+  border-top: 0;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.manualEntryBody .formCard {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+@media (max-width: 700px) {
+  .manualEntryToggle {
+    align-items: flex-start;
+  }
+}
+
+/* Spacious, paginated review workspace. These styles only affect preview UI. */
+.reviewPage {
+  min-width: 0;
+  padding: clamp(12px, 1.25vw, 24px);
+}
+.reviewPage .header,
+.reviewPage .importToolbar,
+.reviewPage .inlineImportSection,
+.reviewPage .manualEntryShell { max-width: none; width: 100%; box-sizing: border-box; }
+.reviewPage .inlineImportSection { overflow: visible; }
+.reviewPage .importToolbar { flex-wrap: wrap; }
+.reviewPage .importToolbarActions { flex: 1 1 540px; min-width: 0; }
+.pasteInputPanel { margin: 12px 16px; border: 1px solid #dce3ec; border-radius: 9px; background: #fafbfd; }
+.pasteInputPanel > summary { cursor: pointer; padding: 11px 14px; color: #485870; font-size: 12px; font-weight: 700; }
+.pasteInputPanel .inlineImportPasteRow { padding: 2px 12px 12px; }
+.pasteInputPanel .importTextarea { min-height: 135px; max-height: 280px; font-size: 12px; }
+.reviewWorkspace { min-width: 0; padding: 0 14px 16px; color: #253247; }
+.reviewWorkspace button, .reviewWorkspace input, .reviewWorkspace select { font-family: inherit; }
+.reviewWorkspace button { cursor: pointer; }
+.reviewWorkspace button:disabled { opacity: .5; cursor: not-allowed; }
+.reviewWorkspace button:focus-visible,
+.reviewWorkspace input:focus-visible,
+.reviewWorkspace select:focus-visible,
+.reviewTableViewport:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+.reviewMetrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0 16px; }
+.reviewMetrics > div, .reviewMetrics > button { border: 1px solid #dce4ee; border-radius: 10px; background: #f8fafc; padding: 12px 14px; text-align: left; min-width: 0; }
+.reviewMetrics > button:nth-child(2) { border-left: 3px solid #16a34a; }
+.reviewMetrics > button:nth-child(3) { border-left: 3px solid #d97706; }
+.reviewMetrics > button:nth-child(4) { border-left: 3px solid #dc2626; }
+.reviewMetrics > button:hover { background: #fff; border-color: #b7c6d9; }
+.reviewMetrics span { display: block; color: #526278; font-size: 11px; font-weight: 800; }
+.reviewMetrics strong { display: block; margin: 5px 0 3px; font-size: 24px; font-weight: 850; line-height: 1.1; color: #16243b; }
+.reviewMetrics small { display: block; font-size: 10.5px; color: #6b788b; line-height: 1.35; }
+.reviewMetrics > .reviewMetricAttention { background: #fff8ed; }
+.reviewNewSection, .reviewDuplicates { min-width: 0; border: 1px solid #dae3ee; border-radius: 12px; background: #fff; overflow: hidden; }
+.reviewDuplicates { margin-bottom: 16px; border-color: #f0d2a4; background: #fffaf2; }
+.reviewSectionTop { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 15px 16px 12px; }
+.reviewSectionTop h4 { margin: 2px 0 4px; font-size: 17px; color: #17243b; font-weight: 750; }
+.reviewSectionTop h4 > span { display: inline-block; margin-left: 7px; padding: 4px 8px; background: #f0f3f8; border-radius: 99px; font-size: 11px; vertical-align: middle; color: #56687c; }
+.reviewSectionTop p { margin: 0; color: #65748a; font-size: 12px; line-height: 1.4; }
+.reviewEyebrow { font-size: 9.5px; color: #a82730; font-weight: 850; letter-spacing: .09em; }
+.reviewToolButton { border: 1px solid #cdd7e4; border-radius: 8px; background: #fff; padding: 8px 12px; min-height: 34px; font-size: 12px; font-weight: 750; color: #33465f; white-space: nowrap; }
+.reviewToolButton[aria-pressed="true"] { background: #fff3f3; border-color: #ca6c74; color: #a01927; }
+.reviewFilters { display: grid; grid-template-columns: minmax(220px, 2.5fr) minmax(115px, 1fr) minmax(155px, 1.3fr) minmax(140px, 1.2fr) 105px; align-items: end; gap: 10px; padding: 12px 16px; background: #f8fafc; border-top: 1px solid #e7edf4; border-bottom: 1px solid #e7edf4; }
+.reviewFilters label, .reviewDuplicateSearch label { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: #52617a; font-size: 10.5px; font-weight: 750; }
+.reviewFilters input, .reviewFilters select, .reviewDuplicateSearch input { width: 100%; height: 36px; border: 1px solid #cdd8e6; border-radius: 7px; background: #fff; color: #243550; padding: 6px 9px; font-size: 12px; box-sizing: border-box; min-width: 0; }
+.reviewQuickActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; }
+.reviewQuickActions > div { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.reviewFilterChip { border: 1px solid #d8e1eb; background: #fff; color: #465872; border-radius: 99px; padding: 6px 10px; font-size: 11px; min-height: 30px; }
+.reviewFilterChip strong { margin-left: 6px; }
+.reviewChipActive { color: #9a4b0c; background: #fff4dd; border-color: #e8b669; }
+.reviewWrapToggle { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: #53647b; }
+.reviewWrapToggle input { width: 15px; height: 15px; }
+.reviewPager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 16px; border-top: 1px solid #e8edf4; background: #fff; }
+.reviewRange { color: #657389; font-size: 11.5px; }
+.reviewRange strong { color: #33465e; }
+.reviewPagerButtons { display: flex; align-items: center; gap: 5px; }
+.reviewPagerButtons > button { border: 1px solid #d2dce8; background: #fff; color: #40536d; border-radius: 7px; min-height: 31px; padding: 5px 9px; font-size: 11px; font-weight: 650; }
+.reviewPagerButtons > button:hover:not(:disabled) { background: #f2f6fc; border-color: #b3c2d8; }
+.reviewPagerButtons > span { padding: 0 6px; color: #66768b; font-size: 11px; white-space: nowrap; }
+.reviewTableViewport { width: 100%; max-height: clamp(440px, 72vh, 920px); overflow: auto; border-top: 1px solid #dbe3ee; border-bottom: 1px solid #dbe3ee; background: #fff; scrollbar-gutter: stable; }
+.reviewWorkspaceExpanded .reviewTableViewport { max-height: 86vh; }
+.reviewDuplicateViewport { max-height: 360px !important; }
+.reviewDataTable { width: 100%; min-width: 1260px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.reviewDataTable th { position: sticky; top: 0; z-index: 2; padding: 10px 11px; text-align: left; background: #eef3f9; color: #52647d; font-size: 11px; font-weight: 750; border-bottom: 1px solid #cdd9e8; white-space: nowrap; }
+.reviewDataTable td { padding: 8px 11px; border-bottom: 1px solid #e8edf4; color: #253751; vertical-align: top; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+.reviewDataTable tbody tr:nth-child(4n + 3) td { background: #fcfdff; }
+.reviewDataTable tbody tr:hover > td { background: #f6f9ff; }
+.reviewDataTable th.reviewStatusColumn { width: 130px; }
+.reviewDataTable th.reviewOfficeColumn { width: 115px; }
+.reviewDataTable th.reviewCustomerColumn { width: 205px; }
+.reviewDataTable th.reviewAgentColumn { width: 285px; }
+.reviewDataTable th.reviewWeekColumn { width: 114px; }
+.reviewDataTable th.reviewAmountColumn { width: 95px; text-align: right; }
+.reviewDataTable th.reviewNotesColumn { width: 265px; }
+.reviewRowNumber { font-size: 10px; color: #78869a; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.reviewRowNumber span { font-size: 9px; }
+.reviewBadge { display: inline-block; border-radius: 6px; padding: 3px 6px; font-size: 10px; line-height: 1.25; font-weight: 800; }
+.reviewBadgeReady { color: #167240; background: #e9f8ef; }
+.reviewBadgeWarning { color: #924611; background: #fff0cf; }
+.reviewBadgeDuplicate { color: #975506; background: #fff0d2; }
+.reviewIssue { color: #a53428 !important; font-size: 11px; margin: 5px 0 0; line-height: 1.4; }
+.reviewDataTable .reviewAttentionRow > td { background: #fffbf2; }
+.reviewDataTable .reviewAttentionRow > td:first-child { box-shadow: inset 3px 0 #f2ab3b; }
+.reviewDataTable td.reviewAgentMissingCell { background: #fff6db; }
+.reviewDataTable .agentAssignmentSelect { width: 100%; min-width: 0; height: 31px; padding: 4px 6px; font-size: 11px; border-radius: 6px; box-sizing: border-box; }
+.reviewDataTable .agentAssignmentNeedsReview { background: #fff0b7 !important; border: 2px solid #ec9c18 !important; box-shadow: 0 0 0 2px rgba(236,156,24,.13) !important; font-weight: 800 !important; }
+.reviewCustomerName { display: block; font-size: 12px; font-weight: 700; }
+.reviewSecondary { display: block; color: #728097; font-size: 10.5px; line-height: 1.3; margin-top: 3px; }
+.reviewIdentifier { display: block; font-size: 11px; color: #61718a; margin-top: 2px; }
+.reviewUnlinked { display: inline-block; margin-top: 4px; color: #90620e; font-size: 10px; }
+.reviewMoney { text-align: right; font-variant-numeric: tabular-nums; font-weight: 750; white-space: nowrap !important; }
+.reviewNotesExcerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 11.5px; color: #52617a; line-height: 1.4; }
+.reviewDetailsButton { border: 0; padding: 4px 0; background: transparent; color: #255ec1; font-weight: 750; font-size: 11px; text-align: left; }
+.reviewDetailsButton:hover { text-decoration: underline; }
+.reviewFullNotes { margin: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.55; color: #40546e; }
+.reviewDataTable td.reviewExpandedCell { padding: 0; }
+.reviewDetailsPanel { border-left: 4px solid #a7bbd7; padding: 15px 20px; background: #f5f8fc; }
+.reviewDetailsTitle { color: #253c5c; font-size: 12px; font-weight: 800; margin-bottom: 9px; }
+.reviewDetailsGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px 16px; margin: 9px 0 14px; }
+.reviewDetailsGrid dt { color: #74849a; font-weight: 650; font-size: 10.5px; margin-bottom: 2px; }
+.reviewDetailsGrid dd { margin: 0; color: #344c6a; font-size: 12px; overflow-wrap: anywhere; }
+.reviewLinkNotice { color: #96620e; font-size: 11.5px; }
+.reviewDetailsPanel summary { cursor: pointer; font-size: 11px; color: #5d718c; }
+.reviewEmpty { padding: 34px 20px !important; color: #73819a !important; text-align: center; }
+.reviewSaveBar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 16px; border-top: 1px solid #dce6f2; background: #f7faff; }
+.reviewSaveBar strong { color: #233f65; font-size: 12.5px; }
+.reviewSaveBar p { margin: 4px 0 0; color: #6b7f9a; font-size: 11px; line-height: 1.4; }
+.reviewSaveBar .reviewSaveWarning { color: #9b5b08; }
+.reviewSaveBar .importPrimaryButton { white-space: nowrap; font-size: 12px; min-height: 40px; padding: 10px 15px; }
+.reviewDuplicateSearch { padding: 0 16px 12px; max-width: 440px; }
+.reviewSrOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (min-width: 1900px) {
+  .reviewDataTable { table-layout: auto; }
+  .reviewDataTable th.reviewNotesColumn { width: 30%; }
+}
+@media (max-width: 1150px) {
+  .reviewFilters { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .reviewSearchField { grid-column: 1 / -1; }
+  .reviewDetailsGrid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 680px) {
+  .reviewWorkspace { padding: 0 8px 12px; }
+  .reviewMetrics { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px; }
+  .reviewMetrics small { font-size: 10px; }
+  .reviewFilters { grid-template-columns: repeat(2, minmax(0,1fr)); padding: 10px; }
+  .reviewSectionTop, .reviewSaveBar { align-items: stretch; flex-direction: column; padding: 12px; }
+  .reviewPager { align-items: flex-start; flex-direction: column; padding: 9px 10px; gap: 8px; }
+  .reviewPagerButtons { flex-wrap: wrap; }
+  .reviewTableViewport { max-height: 68vh; }
+  .reviewDetailsGrid { grid-template-columns: 1fr; }
+}
+
+/* Policy-only receipt matching. AR/SV uses agent + week without receipt warnings. */
+.policyLinkSummary { display: grid; gap: 5px; margin-top: 7px; justify-items: start; }
+.policyLinkedLabel, .policyEligible { color: #166534; font-size: 11px; font-weight: 650; }
+.policyMatchButton { border: 1px solid #e4a548; border-radius: 7px; background: #fff3cd; color: #854d0e; padding: 6px 10px; font-size: 11px; font-weight: 750; cursor: pointer; }
+.policyLinkPanel { padding: 16px; border: 1px solid #cbd5e1; border-radius: 10px; background: #f8fafc; margin: 0 0 16px; text-align: left; }
+.policyLinkHeading { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
+.policyLinkHeading strong { color: #172033; font-size: 14px; }
+.policyLinkHeading p, .policyHelpText { margin: 5px 0 12px; font-size: 12px; line-height: 1.5; color: #526175; }
+.policySearchControls { display: flex; align-items: end; gap: 10px; margin-bottom: 10px; }
+.policySearchControls label { display: grid; gap: 5px; width: min(460px, 100%); color: #334155; font-size: 12px; font-weight: 650; }
+.policySearchControls input { min-width: 0; width: 100%; height: 38px; padding: 8px 10px; border: 1px solid #b9c6d7; border-radius: 7px; background: white; font: inherit; box-sizing: border-box; }
+.policySearchControls input:focus-visible, .policyMatchButton:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+.policyCandidateList { display: grid; gap: 9px; max-height: 480px; overflow-y: auto; }
+.policyCandidate { border: 1px solid #b9d9c8; border-radius: 9px; background: white; padding: 12px; }
+.policyCandidateBlocked { border-color: #e3d8bf; background: #fffdf7; }
+.policyCandidateTop { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
+.policyCandidateTop strong { font-size: 12px; color: #233247; overflow-wrap: anywhere; }
+.policyCandidateMeta { display: grid; gap: 4px; margin-top: 6px; font-size: 12px; color: #526175; overflow-wrap: anywhere; }
+.policyCandidate .policyEligible, .policyCandidate .reviewIssue { margin: 7px 0 0; }
+.policyEmpty { color: #854d0e; background: #fffbeb; border-radius: 7px; padding: 12px; font-size: 12px; }
+.policyLinkPanel button:disabled, .policyMatchButton:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 700px) {
+  .policyLinkHeading, .policyCandidateTop, .policySearchControls { flex-direction: column; align-items: stretch; }
+  .policySearchControls label { width: 100%; }
+  .policyLinkPanel { padding: 12px; }
+}
+
+
+/* Policy formatting tolerance, documented overrides, and broader receipt lookup. */
+.policySearchOption { display: flex; align-items: center; gap: 8px; color: #485c78; font-size: 12px; margin: 4px 0 9px; }
+.policySearchOption input, .policyConfirmCheck input { width: 16px; height: 16px; flex: 0 0 16px; accent-color: #c2410c; }
+.policyCandidateReview { border-color: #e9bf76; background: #fffaf0; }
+.policyDifferenceText { color: #8a4b08; font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
+.policyMatchNotice { display: grid; gap: 5px; background: #edf9f2; border: 1px solid #aed8c0; border-radius: 8px; padding: 11px 13px; margin: 8px 0 12px; color: #1b6540; font-size: 12px; }
+.policyOverridePanel { margin-top: 13px; padding: 14px; background: #fff; border: 1px solid #e9c486; border-radius: 9px; }
+.policyOverridePanel > strong { color: #723b0c; font-size: 13px; }
+.policyOverridePanel > p { color: #68768a; font-size: 11.5px; line-height: 1.5; }
+.policyComparisonGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+.policyComparisonGrid > div { border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 6px; padding: 9px 10px; min-width: 0; }
+.policyComparisonGrid dt { font-size: 11px; font-weight: 650; color: #65758b; margin-bottom: 4px; }
+.policyComparisonGrid dd { font-size: 13px; font-weight: 650; color: #293d58; margin: 0; overflow-wrap: anywhere; }
+.policyOverrideReason { display: grid; gap: 6px; color: #334b66; font-size: 12px; font-weight: 700; }
+.policyOverrideReason textarea { width: 100%; min-height: 74px; padding: 10px; border: 1px solid #b6c5d7; border-radius: 7px; box-sizing: border-box; resize: vertical; font: inherit; font-weight: 400; }
+.policyOverrideReason textarea:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 1px; }
+.policyConfirmCheck { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.5; color: #785020; margin-top: 11px; }
+.policyEmpty p { margin: 5px 0 0; line-height: 1.5; }
+@media (max-width: 700px) { .policyComparisonGrid { grid-template-columns: 1fr; } .policyOverridePanel { padding: 10px; } }
+
+.policyCandidateListExpanded { max-height: none; overflow: visible; }
+
+
+/* Confirmed source-office corrections; original source data stays in audit. */
+.policyOfficeCorrectionPanel { border-color: #d7a33b; background: #fffef8; }
+.policyOfficeCorrected { display: block; color: #925e0d; font-size: 10.5px; margin-top: 3px; }
+
+/* True batch progress. Indeterminate phases never display a fake percentage. */
+.importActivity { margin: 14px 18px; padding: 17px 18px; border: 1px solid #b9cef2; border-radius: 12px; background: #f4f8ff; box-shadow: 0 3px 12px rgba(28,65,122,.06); }
+.importActivityHeading { display: flex; gap: 12px; align-items: center; }
+.importActivityHeading strong { display: block; color: #1d3d6a; font-size: 14px; }
+.importActivityHeading p { margin: 4px 0 0; color: #506788; font-size: 12px; }
+.importActivityElapsed { margin-left: auto; color: #637995; font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.importActivitySpinner, .importButtonSpinner { display: inline-block; flex: 0 0 auto; border: 3px solid #d4e3fa; border-top-color: #2563eb; border-radius: 50%; width: 26px; height: 26px; box-sizing: border-box; animation: importActivitySpin .85s linear infinite; }
+.importButtonSpinner { width: 14px; height: 14px; border-width: 2px; border-color: rgba(255,255,255,.4); border-top-color: white; margin-right: 7px; vertical-align: middle; }
+.importActivityProgress { display: block; width: 100%; height: 9px; margin: 14px 0 11px; border: 0; border-radius: 99px; overflow: hidden; background: #dfe9f8; accent-color: #2563eb; }
+.importActivityProgress::-webkit-progress-bar { background: #dfe9f8; border-radius: 99px; }
+.importActivityProgress::-webkit-progress-value { background: #2563eb; border-radius: 99px; transition: width .18s ease; }
+.importActivityProgress::-moz-progress-bar { background: #2563eb; border-radius: 99px; }
+.importActivityProgress:indeterminate { background: linear-gradient(90deg, #dfe9f8 10%, #93b7f1 48%, #dfe9f8 88%); background-size: 200% 100%; animation: importActivitySweep 1.4s linear infinite; }
+.importActivityProgress:indeterminate::-webkit-progress-bar { background: transparent; }
+.importActivityFooter { display: flex; gap: 15px; justify-content: space-between; align-items: center; }
+.importActivityFooter p { margin: 0; color: #526984; font-size: 11.5px; line-height: 1.5; }
+.importActivityFooter button { flex: 0 0 auto; }
+.importActivityCancelled { margin: 12px 18px; color: #465d77; font-size: 12px; }
+.reportImportButton:disabled { opacity: .55; cursor: wait; }
+@keyframes importActivitySpin { to { transform: rotate(360deg); } }
+@keyframes importActivitySweep { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .importActivitySpinner, .importButtonSpinner, .importActivityProgress:indeterminate { animation: none; }
+  .importActivityProgress::-webkit-progress-value { transition: none; }
+}
+@media (max-width: 680px) {
+  .importActivity { margin: 10px 8px; padding: 13px; }
+  .importActivityHeading { align-items: flex-start; flex-wrap: wrap; }
+  .importActivityElapsed { margin-left: 38px; }
+  .importActivityFooter { flex-direction: column; align-items: stretch; gap: 10px; }
+}

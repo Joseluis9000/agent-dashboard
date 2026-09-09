@@ -1,1476 +1,1459 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import styles from "./AdminTaxWip.module.css";
-import { supabase } from "../../supabaseClient";
+import React from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../../supabaseClient';
+import styles from './AdminTaxWip.module.css';
+import {
+  addDaysKey,
+  calculateAgentCommission,
+  getWeekRange,
+} from '../../utils/commissionCalculations';
 
-const TABLE_TRANSFERS = "daily_eod_transfers";
-const TABLE_VIOLATIONS = "violations";
-const TABLE_DISQUALIFIED = "disqualified_policies";
-const TABLE_COMMISSION_RECORDS = "agent_commission_records";
+const TABLE_TRANSFERS = 'daily_transaction_detail_transfers';
+const TABLE_VIOLATIONS = 'violations';
+const TABLE_DISQUALIFIED = 'disqualified_policies';
+const TABLE_COMMISSION_RECORDS = 'agent_commission_records';
+const TABLE_BALANCE_LEDGER = 'agent_commission_balance_ledger';
 
-const debugTh = {
-  textAlign: "left",
-  padding: "10px 8px",
-  borderBottom: "1px solid #cbd5e1",
-  fontWeight: 900,
-  color: "#334155",
-  whiteSpace: "nowrap",
+const BUSINESS_TIME_ZONE = 'America/Los_Angeles';
+const PAGE_SIZES = [25, 50, 100];
+
+const clean = (value) => String(value ?? '').trim();
+const emailKey = (value) => clean(value).toLowerCase();
+const upper = (value) => clean(value).toUpperCase();
+const numberOrZero = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+
+const money = (value) => new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+}).format(numberOrZero(value));
+
+const percent = (value) => `${(numberOrZero(value) * 100).toFixed(1)}%`;
+
+const dateKey = (value) => {
+  const raw = clean(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
 };
 
-const debugTd = {
-  padding: "9px 8px",
-  borderBottom: "1px solid #e2e8f0",
-  whiteSpace: "nowrap",
+const displayDate = (value, long = false) => {
+  const key = dateKey(value);
+  if (!key) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    month: long ? 'long' : 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(`${key}T12:00:00Z`));
 };
 
-async function fetchAllSupabaseRows(buildQuery, pageSize = 1000, maxRows = 200000) {
+const displayDateTime = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIME_ZONE,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(d);
+};
+
+const businessDate = (value = new Date()) => {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type) => parts.find((part) => part.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+};
+
+const addDays = (key, days) => {
+  if (!dateKey(key)) return '';
+  const d = new Date(`${key}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+const mondayOf = (key) => {
+  if (!dateKey(key)) return '';
+  const d = new Date(`${key}T12:00:00Z`);
+  const day = d.getUTCDay();
+  return addDays(key, day === 0 ? -6 : 1 - day);
+};
+
+// Management schedule: production Monday-Sunday is paid Friday 18 days after Monday.
+// Example: 2026-08-24 through 2026-08-30 -> Friday 2026-09-11.
+const scheduledPayday = (weekStart) => addDays(weekStart, 18);
+
+const getPayContext = (today = businessDate()) => {
+  const currentMonday = mondayOf(today);
+  let friday = addDays(currentMonday, 4);
+  if (today > friday) friday = addDays(friday, 7);
+  return {
+    today,
+    currentMonday,
+    friday,
+    payingWeek: addDays(mondayOf(friday), -14),
+  };
+};
+
+const weekLabel = (weekStart) =>
+  `${displayDate(weekStart, true)} – ${displayDate(addDays(weekStart, 6), true)}`;
+
+
+const normalizeOffice = (value) => {
+  const match = upper(value).match(/\bCA\s*(\d{1,3})\b/);
+  return match ? `CA${match[1].padStart(3, '0')}` : clean(value);
+};
+
+async function fetchAll(buildQuery, pageSize = 1000, maxRows = 250000) {
+  const output = [];
   let from = 0;
-  let allRows = [];
 
   while (from < maxRows) {
-    const to = from + pageSize - 1;
-    const { data, error } = await buildQuery().range(from, to);
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
     if (error) throw error;
-
-    const chunk = data || [];
-    allRows = allRows.concat(chunk);
-
-    if (chunk.length < pageSize) break;
-    from += pageSize;
+    const rows = data || [];
+    output.push(...rows);
+    if (rows.length < pageSize) break;
+    from += rows.length;
   }
 
-  return allRows;
+  return output;
 }
 
-function normalizeText(value) {
-  return String(value || "").trim();
-}
 
-function normalizeCompany(value) {
-  return normalizeText(value).replace(/\s+/g, " ").toLowerCase();
-}
-
-function toNumber(value) {
-  const num = parseFloat(value);
-  return Number.isNaN(num) ? 0 : num;
-}
-
-function toDateKey(dateInput) {
-  const d = new Date(dateInput);
-  return d.toISOString().split("T")[0];
-}
-
-function addDays(dateInput, days) {
-  const d = new Date(`${String(dateInput).slice(0, 10)}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-function addDaysKey(dateInput, days) {
-  return toDateKey(addDays(dateInput, days));
-}
-
-function money(value) {
-  return `$${Number(value || 0).toFixed(2)}`;
-}
-
-function percent(value) {
-  return `${(Number(value || 0) * 100).toFixed(1)}%`;
-}
-
-function formatDate(value) {
-  if (!value) return "—";
-  return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString();
-}
-
-function formatWeekday(value) {
-  if (!value) return "—";
-  return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { weekday: "long" }
-  );
-}
-
-function csvEscape(value) {
-  const stringValue = String(value ?? "");
-  if (
-    stringValue.includes(",") ||
-    stringValue.includes('"') ||
-    stringValue.includes("\n")
-  ) {
-    return `"${stringValue.replace(/"/g, '""')}"`;
+const buildMissedBy = (result) => {
+  if (!result) return '—';
+  if (result.netRevenue < 500) {
+    return `${money(500 - result.netRevenue)} short of the $500 minimum net revenue`;
   }
-
-  return stringValue;
-}
-
-function formatDateTime(value) {
-  if (!value || value === "—") return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
-}
-
-function firstValue(row, keys) {
-  for (const key of keys) {
-    const value = row?.[key];
-    if (value !== null && value !== undefined && String(value).trim() !== "") {
-      return value;
+  if (result.commissionRate > 0) {
+    const next = result.nextTierProgress;
+    if (!next) return 'Qualified';
+    const pieces = [];
+    if (numberOrZero(next.nbNeeded) > 0) pieces.push(`${next.nbNeeded} Net NB`);
+    if (numberOrZero(next.revenueNeeded) > 0) {
+      pieces.push(`${money(next.revenueNeeded)} Gross Revenue`);
     }
+    if (numberOrZero(next.revenueOnlyNeeded) > 0) {
+      pieces.push(`or ${money(next.revenueOnlyNeeded)} revenue-only`);
+    }
+    return pieces.length ? `Next tier: ${pieces.join(' + ')}` : 'Qualified';
   }
-  return "—";
-}
 
-function getWeekRange(date) {
-  const d = new Date(date);
-  const todayUTC = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-  );
-  const dayOfWeek = todayUTC.getUTCDay();
-  const diff = todayUTC.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-  const monday = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), diff));
-  const sunday = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), diff + 6));
+  const nbShort = Math.max(8 - numberOrZero(result.netNbCount), 0);
+  const revenueShort = Math.max(2500 - numberOrZero(result.grossRevenue), 0);
+  const parts = [];
+  if (nbShort) parts.push(`${nbShort} Net NB short`);
+  if (revenueShort) parts.push(`${money(revenueShort)} Gross Revenue short`);
+  return parts.join(' / ') || 'Did not meet tier requirements';
+};
+
+const resultFromPublished = (live, saved, weekStart) => {
+  if (!saved) return {
+    ...live,
+    commissionBeforeBalance: Math.max(0, numberOrZero(live.finalPayableCommission)),
+    balanceApplied: 0,
+    payoutDate: scheduledPayday(weekStart),
+    published: false,
+  };
 
   return {
-    start: monday.toISOString().split("T")[0],
-    end: sunday.toISOString().split("T")[0],
+    ...live,
+    grossRevenue: Number(saved.gross_revenue ?? live.grossRevenue),
+    grossPay: Number(saved.gross_pay ?? live.grossPay),
+    royaltyDeduction: Number(saved.royalty_deduction ?? live.royaltyDeduction),
+    netRevenue: Number(saved.net_revenue ?? live.netRevenue),
+    grossNbCount: Number(saved.gross_nb_count ?? live.grossNbCount),
+    disqualifiedNbCount: Number(saved.disqualified_nb_count ?? live.disqualifiedNbCount),
+    netNbCount: Number(saved.net_nb_count ?? live.netNbCount),
+    tierName: saved.tier || live.tierName,
+    commissionRate: Number(saved.commission_rate ?? live.commissionRate),
+    basePayout: Number(saved.base_payout ?? live.basePayout),
+    totalDeductions: Number(saved.total_deductions ?? live.totalDeductions),
+    calculatedWeeklyCommission: Number(
+      saved.calculated_weekly_commission ?? live.calculatedWeeklyCommission
+    ),
+    commissionBeforeBalance: Number(
+      saved.commission_before_balance ??
+      (numberOrZero(saved.final_payable_commission) + numberOrZero(saved.balance_applied)) ??
+      live.finalPayableCommission
+    ),
+    balanceApplied: Number(saved.balance_applied ?? 0),
+    finalPayableCommission: Number(
+      saved.final_payable_commission ?? live.finalPayableCommission
+    ),
+    violationCount: Number(saved.violation_count ?? live.violationCount),
+    disqualifiedCount: Number(saved.disqualified_count ?? live.disqualifiedCount),
+    isLicensedCaDoi: saved.is_licensed_ca_doi !== false,
+    status: saved.status || live.status,
+    payoutDate: saved.payout_date || scheduledPayday(weekStart),
+    published: true,
+    publishedAt: saved.published_at,
+    publishedBy: saved.published_by,
   };
+};
+
+const hasPublishedDrift = (live, saved) => {
+  if (!saved) return false;
+  const compare = [
+    ['gross_revenue', live.grossRevenue],
+    ['net_revenue', live.netRevenue],
+    ['gross_nb_count', live.grossNbCount],
+    ['disqualified_nb_count', live.disqualifiedNbCount],
+    ['net_nb_count', live.netNbCount],
+    ['total_deductions', live.totalDeductions],
+  ];
+  return compare.some(([field, liveValue]) =>
+    Math.abs(numberOrZero(saved[field]) - numberOrZero(liveValue)) > 0.009
+  );
+};
+
+const paginate = (rows, page, size) => {
+  const pages = Math.max(1, Math.ceil(rows.length / size));
+  const current = Math.min(Math.max(page, 1), pages);
+  const start = (current - 1) * size;
+  return {
+    rows: rows.slice(start, start + size),
+    page: current,
+    pages,
+    total: rows.length,
+    first: rows.length ? start + 1 : 0,
+    last: Math.min(start + size, rows.length),
+  };
+};
+
+function Badge({ children, tone = 'neutral' }) {
+  return <span className={`${styles.badge} ${styles[`tone_${tone}`]}`}>{children}</span>;
 }
 
-function buildMissedBy(result) {
-  if (!result) return "—";
-  if (result.Net_Revenue < 500) return `${money(500 - result.Net_Revenue)} short of $500 net revenue`;
-  if (result.Commission_Rate > 0) return "Qualified";
-
-  const nbShort = Math.max(8 - result.Net_NB_Count, 0);
-  const revenueShort = Math.max(2500 - result.Gross_Revenue, 0);
-  const parts = [];
-
-  if (nbShort > 0) parts.push(`${nbShort} NB short`);
-  if (revenueShort > 0) parts.push(`${money(revenueShort)} revenue short`);
-
-  return parts.length ? parts.join(" / ") : "Did not meet tier rules";
+function Loading({ text = 'Loading commission data...' }) {
+  return (
+    <div className={styles.loading}>
+      <span className={styles.spinner} aria-hidden="true" />
+      <div>
+        <strong>Please wait</strong>
+        <p>{text}</p>
+      </div>
+    </div>
+  );
 }
 
-function calculateAgentCommission({
-  transfersData = [],
-  violationsData = [],
-  disqualifiedData = [],
-  grossPayInput = 0,
-  isLicensedCaDoi = false,
-  weekStartDateInput,
-}) {
-  const TARGET_FEE_HEADERS = [
-    "Broker Fee",
-    "Endorsement Fee",
-    "Reinstatement Fee",
-    "Renewal Fee",
+function Pager({ info, onPage }) {
+  return (
+    <div className={styles.pager}>
+      <span>
+        Showing <b>{info.first}-{info.last}</b> of <b>{info.total}</b> agents
+      </span>
+      <div>
+        <button type="button" disabled={info.page === 1} onClick={() => onPage(1)}>First</button>
+        <button type="button" disabled={info.page === 1} onClick={() => onPage(info.page - 1)}>Previous</button>
+        <span>{info.page} / {info.pages}</span>
+        <button type="button" disabled={info.page === info.pages} onClick={() => onPage(info.page + 1)}>Next</button>
+        <button type="button" disabled={info.page === info.pages} onClick={() => onPage(info.pages)}>Last</button>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, sub, tone = 'blue' }) {
+  return (
+    <div className={`${styles.metric} ${styles[`metric_${tone}`]}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {sub && <small>{sub}</small>}
+    </div>
+  );
+}
+
+function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
+  if (!bundle) {
+    return (
+      <section className={styles.panel}>
+        <div className={styles.empty}>Select an agent to review their commission details.</div>
+      </section>
+    );
+  }
+
+  const { agent, liveResult, displayResult, transactions, violations, disqualified } = bundle;
+  const activeViolations = violations.filter((row) => upper(row.status) !== 'VOIDED');
+  const activeDisqualified = disqualified.filter((row) => upper(row.status) !== 'VOIDED');
+  const feeRows = [
+    ['Broker Fee', liveResult.brokerFeeRevenue, liveResult.brokerFeeCount],
+    ['Endorsement Fee', liveResult.endorsementFeeRevenue, liveResult.endorsementFeeCount],
+    ['Reinstatement Fee', liveResult.reinstatementFeeRevenue, liveResult.reinstatementFeeCount],
+    ['Renewal Fee', liveResult.renewalFeeRevenue, liveResult.renewalFeeCount],
   ];
 
-  const TARGET_FEE_LOOKUP = TARGET_FEE_HEADERS.reduce((acc, header) => {
-    acc[normalizeCompany(header)] = header;
-    return acc;
-  }, {});
+  return (
+    <section className={styles.agentDetail}>
+      <header className={styles.detailHeader}>
+        <div>
+          <span className={styles.eyebrow}>AGENT COMMISSION REVIEW</span>
+          <h2>{agent.full_name || agent.email}</h2>
+          <p>{agent.email} · {agent.offices.join(', ') || 'Office not identified'}</p>
+        </div>
+        <div className={styles.detailBadges}>
+          <Badge tone={publishedRecord ? 'green' : 'amber'}>
+            {publishedRecord ? 'PUBLISHED' : 'DRAFT'}
+          </Badge>
+          <Badge tone={displayResult.finalPayableCommission > 0 ? 'green' : 'neutral'}>
+            {displayResult.status}
+          </Badge>
+        </div>
+      </header>
 
-  const getFeeHeader = (row) => TARGET_FEE_LOOKUP[normalizeCompany(row.company)] || "";
+      {publishedRecord && hasPublishedDrift(liveResult, publishedRecord) && (
+        <div className={styles.warningBox}>
+          <strong>Source data changed after this commission was published.</strong>
+          <p>
+            The published amount remains the agent-facing final result. Live source values are shown
+            in the detail below so management can investigate without silently rewriting history.
+          </p>
+        </div>
+      )}
 
-  const weekStartDate = toDateKey(weekStartDateInput);
-  const weekEndDate = toDateKey(addDays(weekStartDateInput, 6));
-  const payoutDate = toDateKey(addDays(weekEndDate, 14));
+      <div className={styles.detailMetrics}>
+        <Metric label="Cash commission payable" value={money(displayResult.finalPayableCommission)} sub={displayResult.tierName} tone="green" />
+        <Metric label="Net NB" value={displayResult.netNbCount} sub={`${displayResult.grossNbCount} gross · ${displayResult.disqualifiedNbCount} disqualified`} />
+        <Metric label="Gross revenue" value={money(displayResult.grossRevenue)} />
+        <Metric label="Current AR / SV balance" value={balance == null ? '—' : money(balance)} sub={displayResult.balanceApplied > 0 ? `${money(displayResult.balanceApplied)} will be / was applied` : 'No balance application'} tone="amber" />
+      </div>
 
-  const rowsByReceipt = transfersData.reduce((acc, row, index) => {
-    const receiptId = row.receipt_id || `NO_RECEIPT_${row.sync_key || index}`;
-    if (!acc[receiptId]) acc[receiptId] = [];
-    acc[receiptId].push(row);
-    return acc;
-  }, {});
+      <div className={styles.detailGrid}>
+        <section className={styles.subPanel}>
+          <h3>Commission calculation</h3>
+          <dl className={styles.calcList}>
+            <div><dt>Gross Revenue</dt><dd>{money(displayResult.grossRevenue)}</dd></div>
+            <div><dt>20% Royalty</dt><dd>− {money(displayResult.royaltyDeduction)}</dd></div>
+            <div><dt>Gross Pay</dt><dd>− {money(displayResult.grossPay)}</dd></div>
+            <div className={styles.calcStrong}><dt>Net Revenue</dt><dd>{money(displayResult.netRevenue)}</dd></div>
+            <div><dt>{displayResult.tierName} Rate</dt><dd>{percent(displayResult.commissionRate)}</dd></div>
+            <div><dt>Base Commission</dt><dd>{money(displayResult.basePayout)}</dd></div>
+            <div><dt>Violation Deductions</dt><dd>− {money(displayResult.totalDeductions)}</dd></div>
+            <div className={styles.calcStrong}><dt>Commission Before AR / SV</dt><dd>{money(displayResult.commissionBeforeBalance ?? displayResult.finalPayableCommission + numberOrZero(displayResult.balanceApplied))}</dd></div>
+            <div><dt>AR / Scanning Balance Applied</dt><dd>− {money(displayResult.balanceApplied || 0)}</dd></div>
+            <div className={styles.calcFinal}><dt>Cash Commission Payable</dt><dd>{money(displayResult.finalPayableCommission)}</dd></div>
+          </dl>
+        </section>
 
-  const targetFeeRows = transfersData.filter((row) => Boolean(getFeeHeader(row)));
+        <section className={styles.subPanel}>
+          <h3>Qualification</h3>
+          <div className={styles.qualifyHero}>
+            <strong>{displayResult.tierName} · {percent(displayResult.commissionRate)}</strong>
+            <p>{buildMissedBy(displayResult)}</p>
+          </div>
+          <dl className={styles.infoGrid}>
+            <div><dt>Licensed</dt><dd>{displayResult.isLicensedCaDoi ? 'Yes' : 'No'}</dd></div>
+            <div><dt>Violations</dt><dd>{displayResult.violationCount}</dd></div>
+            <div><dt>Disqualified</dt><dd>{displayResult.disqualifiedCount}</dd></div>
+            <div><dt>Scheduled payday</dt><dd>{displayDate(scheduledPayday(weekStart))}</dd></div>
+          </dl>
+          {publishedRecord && (
+            <p className={styles.publishedMeta}>
+              Published {displayDateTime(publishedRecord.published_at)} by {publishedRecord.published_by || 'management'}
+            </p>
+          )}
+        </section>
+      </div>
 
-  const countUncancelledPositiveFees = (rows) => {
-    const rowsByCompany = rows.reduce((acc, row) => {
-      const company = getFeeHeader(row) || normalizeText(row.company);
-      if (!acc[company]) acc[company] = [];
-      acc[company].push(row);
-      return acc;
-    }, {});
+      <section className={styles.subPanel}>
+        <h3>Commissionable revenue breakdown</h3>
+        <div className={styles.feeGrid}>
+          {feeRows.map(([category, revenue, count]) => (
+            <Metric key={category} label={category} value={money(revenue)} sub={`${count} active item${count === 1 ? '' : 's'}`} />
+          ))}
+        </div>
+      </section>
 
-    let count = 0;
+      <div className={styles.detailGrid}>
+        <section className={styles.subPanel}>
+          <div className={styles.subHeader}>
+            <div><h3>Violations & charges</h3><p>Assigned to this commission week.</p></div>
+            <Badge tone={activeViolations.length ? 'amber' : 'green'}>{activeViolations.length}</Badge>
+          </div>
+          <div className={styles.compactList}>
+            {activeViolations.length ? activeViolations.map((row) => (
+              <div key={row.id}>
+                <div>
+                  <strong>{row.violation_category || row.violation_type || 'Violation'}</strong>
+                  <small>{row.client_name || row.policy_number || row.customer_id || 'Client not recorded'}</small>
+                  <small>{clean(row.details) || 'No explanation stored.'}</small>
+                </div>
+                <b>− {money(row.fee_amount)}</b>
+              </div>
+            )) : <p className={styles.emptySmall}>No active violations.</p>}
+          </div>
+        </section>
 
-    Object.values(rowsByCompany).forEach((companyRows) => {
-      const positives = companyRows
-        .filter((row) => toNumber(row.fee) > 0)
-        .map((row) => toNumber(row.fee));
+        <section className={styles.subPanel}>
+          <div className={styles.subHeader}>
+            <div><h3>Disqualified policies</h3><p>Verified production exclusions for this week.</p></div>
+            <Badge tone={activeDisqualified.length ? 'purple' : 'green'}>{activeDisqualified.length}</Badge>
+          </div>
+          <div className={styles.compactList}>
+            {activeDisqualified.length ? activeDisqualified.map((row) => (
+              <div key={row.id}>
+                <div>
+                  <strong>{row.policy_number || row.linked_receipt_id || 'Policy'}</strong>
+                  <small>{row.client_name || 'Customer not recorded'}</small>
+                  <small>{clean(row.details) || 'No explanation stored.'}</small>
+                </div>
+                <Badge tone={row.linked_sync_key ? 'green' : 'amber'}>
+                  {row.linked_sync_key ? 'RECEIPT LINKED' : 'LINK MISSING'}
+                </Badge>
+              </div>
+            )) : <p className={styles.emptySmall}>No active disqualified policies.</p>}
+          </div>
+        </section>
+      </div>
 
-      const negatives = companyRows
-        .filter((row) => toNumber(row.fee) < 0)
-        .map((row) => Math.abs(toNumber(row.fee)));
-
-      const usedPositiveIndexes = new Set();
-
-      negatives.forEach((negativeAmount) => {
-        const matchIndex = positives.findIndex(
-          (positiveAmount, index) =>
-            positiveAmount === negativeAmount &&
-            !usedPositiveIndexes.has(index)
-        );
-        if (matchIndex !== -1) usedPositiveIndexes.add(matchIndex);
-      });
-
-      positives.forEach((_, index) => {
-        if (!usedPositiveIndexes.has(index)) count += 1;
-      });
-    });
-
-    return count;
-  };
-
-  const buildFeeBreakdown = () => {
-    const breakdown = {};
-
-    TARGET_FEE_HEADERS.forEach((header) => {
-      const rows = targetFeeRows.filter((row) => getFeeHeader(row) === header);
-      const revenue = rows.reduce((sum, row) => sum + toNumber(row.fee), 0);
-      const count = countUncancelledPositiveFees(rows);
-
-      breakdown[header] = {
-        revenue: Number(revenue.toFixed(2)),
-        count,
-      };
-    });
-
-    return breakdown;
-  };
-
-  const feeBreakdown = buildFeeBreakdown();
-
-  const grossRevenue = TARGET_FEE_HEADERS.reduce(
-    (sum, header) => sum + feeBreakdown[header].revenue,
-    0
+      <details className={styles.productionDetails}>
+        <summary>View source transaction log ({transactions.length} rows)</summary>
+        <div className={styles.tableViewport}>
+          <table className={styles.dataTable}>
+            <thead>
+              <tr>
+                <th>Date</th><th>Customer</th><th>Receipt</th><th>Policy</th>
+                <th>Type</th><th>Company</th><th>Fee</th><th>Office</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((row, index) => (
+                <tr key={row.sync_key || row.id || index}>
+                  <td>{displayDate(row.date_time)}</td>
+                  <td>{row.customer || '—'}</td>
+                  <td>{row.receipt_id || '—'}</td>
+                  <td>{row.policy || '—'}</td>
+                  <td>{row.type || '—'}</td>
+                  <td>{row.company || '—'}</td>
+                  <td>{money(row.fee)}</td>
+                  <td>{row.office || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
   );
-
-  const netFeeItemCount = TARGET_FEE_HEADERS.reduce(
-    (sum, header) => sum + feeBreakdown[header].count,
-    0
-  );
-
-  const syncKeyToTransferRow = transfersData.reduce((acc, row) => {
-    if (row.sync_key) acc[row.sync_key] = row;
-    return acc;
-  }, {});
-
-  const grossNewBusinessReceiptIds = new Set();
-
-  Object.entries(rowsByReceipt).forEach(([receiptId, receiptRows]) => {
-    const hasNewBusiness = receiptRows.some((row) =>
-      ["NEW", "RWR"].includes(normalizeText(row.type).toUpperCase())
-    );
-
-    if (!hasNewBusiness) return;
-
-    const brokerFeeRows = receiptRows.filter((row) => getFeeHeader(row) === "Broker Fee");
-    const activeBrokerFeeCount = countUncancelledPositiveFees(brokerFeeRows);
-
-    if (activeBrokerFeeCount > 0) grossNewBusinessReceiptIds.add(receiptId);
-  });
-
-  const grossNbCount = grossNewBusinessReceiptIds.size;
-
-  const validDisqualifiedRows = disqualifiedData.filter(
-    (row) => normalizeText(row.status).toLowerCase() !== "voided"
-  );
-
-  const disqualifiedNewBusinessReceiptIds = new Set();
-
-  validDisqualifiedRows.forEach((disqualifiedRow) => {
-    const linkedTransfer = syncKeyToTransferRow[disqualifiedRow.linked_sync_key];
-    if (!linkedTransfer?.receipt_id) return;
-
-    const receiptRows = rowsByReceipt[linkedTransfer.receipt_id] || [];
-    const isNewBusinessReceipt = receiptRows.some((row) =>
-      ["NEW", "RWR"].includes(normalizeText(row.type).toUpperCase())
-    );
-
-    if (isNewBusinessReceipt) disqualifiedNewBusinessReceiptIds.add(linkedTransfer.receipt_id);
-  });
-
-  const disqualifiedNbCount = disqualifiedNewBusinessReceiptIds.size;
-  const netNbCount = Math.max(grossNbCount - disqualifiedNbCount, 0);
-
-  const grossPay = toNumber(grossPayInput);
-  const royaltyDeduction = grossRevenue * 0.2;
-  const netRevenue = grossRevenue - royaltyDeduction - grossPay;
-
-  let commissionRate = 0;
-  let tier = "Tier 0";
-
-  if (netRevenue >= 500) {
-    if (netNbCount >= 24 && grossRevenue >= 5000) {
-      commissionRate = 0.15;
-      tier = "Tier 3";
-    } else if ((netNbCount >= 17 && grossRevenue >= 3500) || grossRevenue >= 5000) {
-      commissionRate = 0.125;
-      tier = "Tier 2";
-    } else if (netNbCount >= 8 || grossRevenue >= 2500) {
-      commissionRate = 0.1;
-      tier = "Tier 1";
-    }
-  }
-
-  const basePayout = netRevenue >= 500 ? netRevenue * commissionRate : 0;
-
-  const validViolations = violationsData.filter(
-    (row) => normalizeText(row.status).toLowerCase() !== "voided"
-  );
-
-  const totalDeductions = validViolations.reduce(
-    (sum, row) => sum + toNumber(row.fee_amount),
-    0
-  );
-
-  const calculatedWeeklyCommission = basePayout - totalDeductions;
-  const finalPayableCommission = isLicensedCaDoi ? calculatedWeeklyCommission : 0;
-
-  let status = "Payable";
-
-  if (netRevenue < 500) {
-    status = "No Commission - Below $500 Net Revenue Threshold";
-  } else if (commissionRate === 0) {
-    status = "No Commission - Did Not Meet Tier Requirements";
-  } else if (!isLicensedCaDoi) {
-    status = "Withheld - Unlicensed";
-  }
-
-  const result = {
-    Gross_Revenue: Number(grossRevenue.toFixed(2)),
-    Gross_Pay: Number(grossPay.toFixed(2)),
-    Royalty_Deduction: Number(royaltyDeduction.toFixed(2)),
-
-    Broker_Fee_Revenue: feeBreakdown["Broker Fee"].revenue,
-    Broker_Fee_Count: feeBreakdown["Broker Fee"].count,
-    Endorsement_Fee_Revenue: feeBreakdown["Endorsement Fee"].revenue,
-    Endorsement_Fee_Count: feeBreakdown["Endorsement Fee"].count,
-    Reinstatement_Fee_Revenue: feeBreakdown["Reinstatement Fee"].revenue,
-    Reinstatement_Fee_Count: feeBreakdown["Reinstatement Fee"].count,
-    Renewal_Fee_Revenue: feeBreakdown["Renewal Fee"].revenue,
-    Renewal_Fee_Count: feeBreakdown["Renewal Fee"].count,
-    Fee_Breakdown: feeBreakdown,
-
-    Gross_NB_Count: grossNbCount,
-    Disqualified_NB_Count: disqualifiedNbCount,
-    Net_NB_Count: netNbCount,
-    Net_Fee_Item_Count: netFeeItemCount,
-
-    Net_Revenue: Number(netRevenue.toFixed(2)),
-    Tier: tier,
-    Commission_Rate: commissionRate,
-    Base_Payout: Number(basePayout.toFixed(2)),
-    Total_Deductions: Number(totalDeductions.toFixed(2)),
-    Calculated_Weekly_Commission: Number(calculatedWeeklyCommission.toFixed(2)),
-    Final_Payable_Commission: Number(finalPayableCommission.toFixed(2)),
-
-    week_start_date: weekStartDate,
-    week_end_date: weekEndDate,
-    payout_date: payoutDate,
-    is_licensed_ca_doi: isLicensedCaDoi,
-    status,
-    Violation_Count: validViolations.length,
-    Disqualified_Count: validDisqualifiedRows.length,
-  };
-
-  return {
-    ...result,
-    Missed_By: buildMissedBy(result),
-  };
 }
 
 export default function AdminTaxWip() {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const week = useMemo(() => getWeekRange(currentDate), [currentDate]);
+  const today = businessDate();
+  const payContext = useMemo(() => getPayContext(today), [today]);
+  const [anchorDate, setAnchorDate] = useState(() =>
+    new Date(`${payContext.payingWeek}T12:00:00`)
+  );
 
-  const [agents, setAgents] = useState([]);
-  const [selectedAgentEmail, setSelectedAgentEmail] = useState("");
+  const week = useMemo(() => getWeekRange(anchorDate), [anchorDate]);
+  const weekStart = week.weekStart;
+  const weekEnd = week.weekEnd;
+  const nextWeekStart = useMemo(() => addDaysKey(weekEnd, 1), [weekEnd]);
+
+  const [transactions, setTransactions] = useState([]);
+  const [violations, setViolations] = useState([]);
+  const [disqualified, setDisqualified] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [publishedRecords, setPublishedRecords] = useState([]);
+  const [balanceLedger, setBalanceLedger] = useState([]);
 
   const [grossPayByAgent, setGrossPayByAgent] = useState({});
   const [licenseByAgent, setLicenseByAgent] = useState({});
+  const [selectedEmail, setSelectedEmail] = useState('');
 
-  const [weeklyTransfersData, setWeeklyTransfersData] = useState([]);
-  const [weeklyViolationsData, setWeeklyViolationsData] = useState([]);
-  const [weeklyDisqualifiedData, setWeeklyDisqualifiedData] = useState([]);
-
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [publishStatus, setPublishStatus] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadingText, setLoadingText] = useState('Loading commission week...');
+  const [error, setError] = useState('');
+  const [publishStatus, setPublishStatus] = useState('');
   const [publishing, setPublishing] = useState(false);
-  const [isPublished, setIsPublished] = useState(false);
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [officeFilter, setOfficeFilter] = useState('');
+  const [sort, setSort] = useState('attention');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const loadWeeklyData = useCallback(async () => {
     setLoading(true);
-    setLoadError("");
-    setPublishStatus("");
-    setIsPublished(false);
-
-    const weekStart = week.start;
-    const nextWeekStart = addDaysKey(week.start, 7);
+    setError('');
+    setPublishStatus('');
+    setLoadingText('Loading production, violations, policies and published records...');
 
     try {
-      const [
-        transfersResult,
-        violationsResult,
-        disqualifiedResult,
-        publishedRecordsResult,
-      ] = await Promise.all([
-        fetchAllSupabaseRows(
-          () =>
-            supabase
-              .from(TABLE_TRANSFERS)
-              .select("*")
-              .gte("date_time", weekStart)
-              .lt("date_time", nextWeekStart)
-              .not("agent_email", "is", null)
-              .order("agent_email", { ascending: true })
-              .order("date_time", { ascending: true })
-              .order("sync_key", { ascending: true }),
-          1000,
-          200000
+      const [tx, vio, dp, published, allProfiles, ledger] = await Promise.all([
+        fetchAll(() =>
+          supabase
+            .from(TABLE_TRANSFERS)
+            .select('*')
+            .gte('date_time', `${weekStart} 00:00:00`)
+            .lt('date_time', `${nextWeekStart} 00:00:00`)
+            .not('agent_email', 'is', null)
+            .order('agent_email', { ascending: true })
+            .order('date_time', { ascending: true })
+            .order('sync_key', { ascending: true })
         ),
-
-        fetchAllSupabaseRows(
-          () =>
-            supabase
-              .from(TABLE_VIOLATIONS)
-              .select("*")
-              .eq("week_start_date", week.start)
-              .order("created_at", { ascending: true }),
-          1000,
-          200000
+        fetchAll(() =>
+          supabase
+            .from(TABLE_VIOLATIONS)
+            .select('*')
+            .or(`deduction_week_start.eq.${weekStart},and(deduction_week_start.is.null,week_start_date.eq.${weekStart})`)
+            .order('created_at', { ascending: true })
         ),
-
-        fetchAllSupabaseRows(
-          () =>
-            supabase
-              .from(TABLE_DISQUALIFIED)
-              .select("*")
-              .eq("week_start_date", week.start)
-              .order("created_at", { ascending: true }),
-          1000,
-          200000
+        fetchAll(() =>
+          supabase
+            .from(TABLE_DISQUALIFIED)
+            .select('*')
+            .or(`deduction_week_start.eq.${weekStart},and(deduction_week_start.is.null,week_start_date.eq.${weekStart})`)
+            .order('created_at', { ascending: true })
         ),
-
-        fetchAllSupabaseRows(
-          () =>
-            supabase
-              .from(TABLE_COMMISSION_RECORDS)
-              .select("*")
-              .eq("week_start_date", week.start)
-              .order("final_payable_commission", { ascending: false }),
-          1000,
-          200000
+        fetchAll(() =>
+          supabase
+            .from(TABLE_COMMISSION_RECORDS)
+            .select('*')
+            .eq('week_start_date', weekStart)
+            .order('agent_email', { ascending: true })
+        ),
+        fetchAll(() =>
+          supabase
+            .from('profiles')
+            .select('id,email,full_name,office,region,role')
+            .not('email', 'is', null)
+            .order('full_name', { ascending: true })
+        ),
+        fetchAll(() =>
+          supabase
+            .from(TABLE_BALANCE_LEDGER)
+            .select('id,agent_email,category,amount,entry_type,entry_date,linked_violation_id')
+            .in('category', ['AR', 'SCANNING'])
+            .order('id', { ascending: true })
         ),
       ]);
 
-      const uniqueEmails = [
-        ...new Set(
-          transfersResult
-            .map((row) => normalizeText(row.agent_email))
-            .filter(Boolean)
-        ),
-      ].sort((a, b) => a.localeCompare(b));
+      setTransactions(tx);
+      setViolations(vio);
+      setDisqualified(dp);
+      setPublishedRecords(published);
+      setProfiles(allProfiles);
+      setBalanceLedger(ledger);
 
-      const profiles =
-        uniqueEmails.length > 0
-          ? await fetchAllSupabaseRows(
-              () =>
-                supabase
-                  .from("profiles")
-                  .select("email, full_name")
-                  .in("email", uniqueEmails)
-                  .order("full_name", { ascending: true }),
-              1000,
-              200000
-            )
-          : [];
-
-      const profileMap = profiles.reduce((acc, profile) => {
-        acc[normalizeText(profile.email).toLowerCase()] =
-          profile.full_name || profile.email;
-        return acc;
-      }, {});
-
-      const activeAgents = uniqueEmails.map((email) => ({
-        email,
-        full_name: profileMap[email.toLowerCase()] || email,
-      }));
-
-      const savedPublishedRecords = publishedRecordsResult || [];
-      const hasPublishedRecords = savedPublishedRecords.length > 0;
-
-      setWeeklyTransfersData(transfersResult || []);
-      setWeeklyViolationsData(violationsResult || []);
-      setWeeklyDisqualifiedData(disqualifiedResult || []);
-      setIsPublished(hasPublishedRecords);
-
-      if (hasPublishedRecords) {
-        setPublishStatus(
-          `Loaded published commission week with ${savedPublishedRecords.length} saved records.`
-        );
-      }
-
-      setAgents(activeAgents);
-
-      setSelectedAgentEmail((current) =>
-        activeAgents.some((agent) => agent.email === current)
-          ? current
-          : activeAgents[0]?.email || ""
+      const publishedMap = new Map(
+        published.map((record) => [emailKey(record.agent_email), record])
       );
 
-      setGrossPayByAgent((prev) => {
-        const next = { ...prev };
-
-        activeAgents.forEach((agent) => {
-          const savedRecord = savedPublishedRecords.find(
-            (record) =>
-              normalizeText(record.agent_email).toLowerCase() ===
-              agent.email.toLowerCase()
-          );
-
-          if (savedRecord) {
-            next[agent.email] = String(toNumber(savedRecord.gross_pay));
-          } else if (next[agent.email] === undefined) {
-            next[agent.email] = "";
-          }
+      setGrossPayByAgent((prior) => {
+        const next = { ...prior };
+        publishedMap.forEach((record, email) => {
+          next[email] = String(numberOrZero(record.gross_pay));
         });
-
         return next;
       });
 
-      setLicenseByAgent((prev) => {
-        const next = { ...prev };
-
-        activeAgents.forEach((agent) => {
-          const savedRecord = savedPublishedRecords.find(
-            (record) =>
-              normalizeText(record.agent_email).toLowerCase() ===
-              agent.email.toLowerCase()
-          );
-
-          if (savedRecord) {
-            next[agent.email] = savedRecord.is_licensed_ca_doi !== false;
-          } else if (next[agent.email] === undefined) {
-            next[agent.email] = true;
-          }
+      setLicenseByAgent((prior) => {
+        const next = { ...prior };
+        publishedMap.forEach((record, email) => {
+          next[email] = record.is_licensed_ca_doi !== false;
         });
-
         return next;
       });
-    } catch (error) {
-      setLoadError(error?.message || "Failed to load commission week data.");
-      setWeeklyTransfersData([]);
-      setWeeklyViolationsData([]);
-      setWeeklyDisqualifiedData([]);
-      setIsPublished(false);
-      setAgents([]);
-      setSelectedAgentEmail("");
+    } catch (loadError) {
+      console.error('Unable to load commission manager:', loadError);
+      setError(loadError?.message || 'Unable to load commission data.');
+      setTransactions([]);
+      setViolations([]);
+      setDisqualified([]);
+      setPublishedRecords([]);
+      setProfiles([]);
+      setBalanceLedger([]);
     } finally {
       setLoading(false);
     }
-  }, [week.start]);
+  }, [weekStart, nextWeekStart]);
 
   useEffect(() => {
     loadWeeklyData();
   }, [loadWeeklyData]);
 
-  const transfersByAgent = useMemo(() => {
-    return weeklyTransfersData.reduce((acc, row) => {
-      const email = normalizeText(row.agent_email);
-      if (!email) return acc;
-      if (!acc[email]) acc[email] = [];
-      acc[email].push(row);
-      return acc;
-    }, {});
-  }, [weeklyTransfersData]);
+  const profileMap = useMemo(
+    () => new Map(profiles.map((profile) => [emailKey(profile.email), profile])),
+    [profiles]
+  );
+
+  const publishedMap = useMemo(
+    () => new Map(publishedRecords.map((record) => [emailKey(record.agent_email), record])),
+    [publishedRecords]
+  );
+
+  const txByAgent = useMemo(() => {
+    const map = new Map();
+    transactions.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (!email) return;
+      if (!map.has(email)) map.set(email, []);
+      map.get(email).push(row);
+    });
+    return map;
+  }, [transactions]);
 
   const violationsByAgent = useMemo(() => {
-    return weeklyViolationsData.reduce((acc, row) => {
-      const email = normalizeText(row.agent_email);
-      if (!email) return acc;
-      if (!acc[email]) acc[email] = [];
-      acc[email].push(row);
-      return acc;
-    }, {});
-  }, [weeklyViolationsData]);
+    const map = new Map();
+    violations.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (!email) return;
+      if (!map.has(email)) map.set(email, []);
+      map.get(email).push(row);
+    });
+    return map;
+  }, [violations]);
 
-  const disqualifiedByAgent = useMemo(() => {
-    return weeklyDisqualifiedData.reduce((acc, row) => {
-      const email = normalizeText(row.agent_email);
-      if (!email) return acc;
-      if (!acc[email]) acc[email] = [];
-      acc[email].push(row);
-      return acc;
-    }, {});
-  }, [weeklyDisqualifiedData]);
+  const dpByAgent = useMemo(() => {
+    const map = new Map();
+    disqualified.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (!email) return;
+      if (!map.has(email)) map.set(email, []);
+      map.get(email).push(row);
+    });
+    return map;
+  }, [disqualified]);
+
+  const balancesByAgent = useMemo(() => {
+    const map = new Map();
+    balanceLedger.forEach((entry) => {
+      const email = emailKey(entry.agent_email);
+      if (!email) return;
+      map.set(email, (map.get(email) || 0) + numberOrZero(entry.amount));
+    });
+    return map;
+  }, [balanceLedger]);
+
+
+  const linkedBalancesByAgent = useMemo(() => {
+    const obligations = new Map();
+    balanceLedger.forEach((entry) => {
+      const email = emailKey(entry.agent_email);
+      const violationId = clean(entry.linked_violation_id);
+      const category = upper(entry.category);
+      if (!email || !violationId || !['AR', 'SCANNING'].includes(category)) return;
+      const key = `${email}|${category}|${violationId}`;
+      obligations.set(key, (obligations.get(key) || 0) + numberOrZero(entry.amount));
+    });
+    const totals = new Map();
+    obligations.forEach((amount, key) => {
+      if (amount <= 0.009) return;
+      const email = key.split('|')[0];
+      totals.set(email, (totals.get(email) || 0) + amount);
+    });
+    return totals;
+  }, [balanceLedger]);
+
+  const currentWeekLinkedBalancesByAgent = useMemo(() => {
+    const currentIds = new Map();
+    violations.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (email && row?.id !== null && row?.id !== undefined) {
+        currentIds.set(String(row.id), email);
+      }
+    });
+
+    const perViolation = new Map();
+    balanceLedger.forEach((entry) => {
+      const violationId = clean(entry.linked_violation_id);
+      const email = emailKey(entry.agent_email);
+      const category = upper(entry.category);
+      if (!violationId || !email || !['AR', 'SCANNING'].includes(category)) return;
+      if (currentIds.get(violationId) !== email) return;
+      const key = `${email}|${category}|${violationId}`;
+      perViolation.set(key, (perViolation.get(key) || 0) + numberOrZero(entry.amount));
+    });
+
+    const totals = new Map();
+    perViolation.forEach((amount, key) => {
+      if (amount <= 0.009) return;
+      const email = key.split('|')[0];
+      totals.set(email, (totals.get(email) || 0) + amount);
+    });
+    return totals;
+  }, [balanceLedger, violations]);
+
+  const agentEmails = useMemo(() => {
+    const set = new Set();
+    transactions.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (email) set.add(email);
+    });
+    violations.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (email) set.add(email);
+    });
+    disqualified.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (email) set.add(email);
+    });
+    publishedRecords.forEach((row) => {
+      const email = emailKey(row.agent_email);
+      if (email) set.add(email);
+    });
+    return [...set];
+  }, [transactions, violations, disqualified, publishedRecords]);
 
   const commissionRows = useMemo(() => {
-    const rows = agents.map((agent) => {
-      const result = calculateAgentCommission({
-        transfersData: transfersByAgent[agent.email] || [],
-        violationsData: violationsByAgent[agent.email] || [],
-        disqualifiedData: disqualifiedByAgent[agent.email] || [],
-        grossPayInput: grossPayByAgent[agent.email] || 0,
-        isLicensedCaDoi: licenseByAgent[agent.email] !== false,
-        weekStartDateInput: week.start,
+    return agentEmails.map((email) => {
+      const profile = profileMap.get(email);
+      const agentTransactions = txByAgent.get(email) || [];
+      const agentViolations = violationsByAgent.get(email) || [];
+      const agentDisqualified = dpByAgent.get(email) || [];
+      const publishedRecord = publishedMap.get(email);
+
+      const grossPayValue =
+        publishedRecord
+          ? numberOrZero(publishedRecord.gross_pay)
+          : grossPayByAgent[email] === undefined || grossPayByAgent[email] === ''
+            ? 0
+            : numberOrZero(grossPayByAgent[email]);
+
+      const licensed =
+        publishedRecord
+          ? publishedRecord.is_licensed_ca_doi !== false
+          : licenseByAgent[email] !== false;
+
+      const liveResult = calculateAgentCommission({
+        transactions: agentTransactions,
+        violations: agentViolations,
+        disqualifiedPolicies: agentDisqualified,
+        grossPay: grossPayValue,
+        isLicensedCaDoi: licensed,
+        weekStart,
       });
 
-      return {
-        agent,
-        result,
-        transfers: transfersByAgent[agent.email] || [],
-        violations: violationsByAgent[agent.email] || [],
-        disqualified: disqualifiedByAgent[agent.email] || [],
+      const currentBalance = Math.max(0, balancesByAgent.get(email) || 0);
+      const linkedBalance = Math.max(0, linkedBalancesByAgent.get(email) || 0);
+      const currentWeekLinkedBalance = Math.max(0, currentWeekLinkedBalancesByAgent.get(email) || 0);
+      const commissionBeforeBalance = Math.max(0, numberOrZero(liveResult.commissionBeforeBalance ?? liveResult.finalPayableCommission));
+
+      // Current-week AR/SV is already deducted inside calculateAgentCommission.
+      // Preview its ledger settlement first so we do not subtract the same
+      // violation again as carried balance.
+      const weeklyViolationLedgerApplied = licensed
+        ? Math.min(numberOrZero(liveResult.basePayout), numberOrZero(liveResult.totalDeductions), currentWeekLinkedBalance)
+        : 0;
+      const carriedBalanceAfterWeekly = Math.max(0, currentBalance - weeklyViolationLedgerApplied);
+      const previewBalanceApplied = Math.min(commissionBeforeBalance, carriedBalanceAfterWeekly);
+      const previewCashPayable = Math.max(0, commissionBeforeBalance - previewBalanceApplied);
+
+      const draftResult = {
+        ...liveResult,
+        commissionBeforeBalance,
+        balanceApplied: previewBalanceApplied,
+        finalPayableCommission: previewCashPayable,
       };
-    });
 
-    return rows.sort((a, b) => {
-      if (!isPublished) {
-        return (a.agent.full_name || a.agent.email).localeCompare(
-          b.agent.full_name || b.agent.email
-        );
-      }
+      const displayResult = publishedRecord
+        ? resultFromPublished(liveResult, publishedRecord, weekStart)
+        : draftResult;
 
-      if (a.result.Final_Payable_Commission !== b.result.Final_Payable_Commission) {
-        return b.result.Final_Payable_Commission - a.result.Final_Payable_Commission;
-      }
+      const offices = [...new Set(
+        agentTransactions.map((row) => normalizeOffice(row.office)).filter(Boolean)
+      )].sort();
 
-      return (a.agent.full_name || a.agent.email).localeCompare(
-        b.agent.full_name || b.agent.email
-      );
+      const grossPayReady =
+        Boolean(publishedRecord) ||
+        (grossPayByAgent[email] !== undefined && grossPayByAgent[email] !== '');
+
+      return {
+        email,
+        agent: {
+          email,
+          full_name: profile?.full_name || publishedRecord?.agent_name || email,
+          office: profile?.office,
+          region: profile?.region,
+          offices,
+        },
+        transactions: agentTransactions,
+        violations: agentViolations,
+        disqualified: agentDisqualified,
+        publishedRecord,
+        liveResult,
+        displayResult,
+        grossPayReady,
+        balance: currentBalance,
+        linkedBalance,
+        currentWeekLinkedBalance,
+        weeklyViolationLedgerApplied,
+        carriedBalanceAfterWeekly,
+        autoBalanceReady: currentBalance <= linkedBalance + 0.009,
+        drift: hasPublishedDrift(liveResult, publishedRecord),
+      };
     });
   }, [
-    agents,
-    transfersByAgent,
+    agentEmails,
+    profileMap,
+    txByAgent,
     violationsByAgent,
-    disqualifiedByAgent,
+    dpByAgent,
+    publishedMap,
     grossPayByAgent,
     licenseByAgent,
-    week.start,
-    isPublished,
+    balancesByAgent,
+    linkedBalancesByAgent,
+    currentWeekLinkedBalancesByAgent,
+    weekStart,
   ]);
 
-  const selectedAgentBundle = useMemo(() => {
-    return (
-      commissionRows.find((row) => row.agent.email === selectedAgentEmail) ||
-      commissionRows[0] ||
-      null
-    );
-  }, [commissionRows, selectedAgentEmail]);
+  useEffect(() => {
+    if (!commissionRows.length) {
+      setSelectedEmail('');
+      return;
+    }
+    if (!commissionRows.some((row) => row.email === selectedEmail)) {
+      setSelectedEmail(commissionRows[0].email);
+    }
+  }, [commissionRows, selectedEmail]);
 
-  const selectedResult = selectedAgentBundle?.result || null;
-  const selectedTransfersData = useMemo(
-    () => selectedAgentBundle?.transfers || [],
-    [selectedAgentBundle]
+  const allPublished =
+    commissionRows.length > 0 &&
+    commissionRows.every((row) => Boolean(row.publishedRecord));
+
+  const missingGrossPayCount = commissionRows.filter(
+    (row) => !row.publishedRecord && !row.grossPayReady
+  ).length;
+
+  const linkedPolicyMissingCount = commissionRows.reduce(
+    (sum, row) =>
+      sum +
+      row.disqualified.filter(
+        (item) => upper(item.status) !== 'VOIDED' && !clean(item.linked_sync_key)
+      ).length,
+    0
   );
-  const selectedViolationsData = selectedAgentBundle?.violations || [];
-  const selectedDisqualifiedData = selectedAgentBundle?.disqualified || [];
 
-  const weekUploadStatus = useMemo(() => {
-    return Array.from({ length: 7 }).map((_, index) => {
-      const dateKey = addDaysKey(week.start, index);
-      const rows = weeklyTransfersData.filter(
-        (row) => String(row.date_time || "").slice(0, 10) === dateKey
-      );
+  const unlinkedBalanceCount = commissionRows.filter(
+    (row) => row.balance > 0.009 && !row.autoBalanceReady
+  ).length;
 
-      return {
-        date: dateKey,
-        rows: rows.length,
-        status: rows.length > 0 ? "Uploaded" : "Missing Data - Upload Needed",
-      };
+  const offices = useMemo(
+    () => [...new Set(commissionRows.flatMap((row) => row.agent.offices))].sort(),
+    [commissionRows]
+  );
+
+  const filteredRows = useMemo(() => {
+    const terms = clean(search).toLowerCase().split(/\s+/).filter(Boolean);
+
+    const rows = commissionRows.filter((row) => {
+      if (officeFilter && !row.agent.offices.includes(officeFilter)) return false;
+
+      const payable = row.displayResult.finalPayableCommission > 0;
+      if (statusFilter === 'payable' && !payable) return false;
+      if (statusFilter === 'nonpayable' && payable) return false;
+      if (statusFilter === 'needs_input' && row.grossPayReady) return false;
+      if (statusFilter === 'violations' && row.displayResult.violationCount <= 0) return false;
+      if (statusFilter === 'disqualified' && row.displayResult.disqualifiedCount <= 0) return false;
+      if (statusFilter === 'balance' && row.balance <= 0) return false;
+      if (statusFilter === 'drift' && !row.drift) return false;
+
+      const haystack = [
+        row.agent.full_name,
+        row.email,
+        row.agent.office,
+        row.agent.region,
+        ...row.agent.offices,
+        row.displayResult.status,
+        row.displayResult.tierName,
+      ].join(' ').toLowerCase();
+
+      return terms.every((term) => haystack.includes(term));
     });
-  }, [week.start, weeklyTransfersData]);
 
-  const weekHasMissingData = weekUploadStatus.some((day) => day.rows === 0);
+    return [...rows].sort((a, b) => {
+      if (sort === 'name') {
+        return a.agent.full_name.localeCompare(b.agent.full_name);
+      }
+      if (sort === 'payable') {
+        return b.displayResult.finalPayableCommission - a.displayResult.finalPayableCommission;
+      }
+      if (sort === 'balance') {
+        return b.balance - a.balance || a.agent.full_name.localeCompare(b.agent.full_name);
+      }
 
-  const weeklyTotals = useMemo(() => {
+      const attentionA =
+        Number(!a.grossPayReady) +
+        Number(a.drift) +
+        Number(a.displayResult.violationCount > 0) +
+        Number(a.displayResult.disqualifiedCount > 0) +
+        Number(!a.displayResult.isLicensedCaDoi);
+      const attentionB =
+        Number(!b.grossPayReady) +
+        Number(b.drift) +
+        Number(b.displayResult.violationCount > 0) +
+        Number(b.displayResult.disqualifiedCount > 0) +
+        Number(!b.displayResult.isLicensedCaDoi);
+
+      return attentionB - attentionA || a.agent.full_name.localeCompare(b.agent.full_name);
+    });
+  }, [commissionRows, officeFilter, search, statusFilter, sort]);
+
+  const pageInfo = paginate(filteredRows, page, pageSize);
+  const selectedBundle = commissionRows.find((row) => row.email === selectedEmail) || null;
+
+  const totals = useMemo(() => {
     return commissionRows.reduce(
       (acc, row) => {
-        acc.grossRevenue += row.result.Gross_Revenue;
-        acc.grossPay += row.result.Gross_Pay;
-        acc.netRevenue += row.result.Net_Revenue;
-        acc.finalPayable += row.result.Final_Payable_Commission;
-        acc.violations += row.result.Violation_Count;
-        acc.disqualified += row.result.Disqualified_Count;
-        if (row.result.Final_Payable_Commission > 0) acc.payableAgents += 1;
+        const result = row.displayResult;
+        acc.finalPayable += result.finalPayableCommission;
+        acc.grossRevenue += result.grossRevenue;
+        acc.grossPay += result.grossPay;
+        acc.violations += result.violationCount;
+        acc.disqualified += result.disqualifiedCount;
+        acc.balance += Math.max(0, row.balance);
+        if (result.finalPayableCommission > 0) acc.payableAgents += 1;
         else acc.nonPayableAgents += 1;
         return acc;
       },
       {
+        finalPayable: 0,
         grossRevenue: 0,
         grossPay: 0,
-        netRevenue: 0,
-        finalPayable: 0,
         violations: 0,
         disqualified: 0,
+        balance: 0,
         payableAgents: 0,
         nonPayableAgents: 0,
       }
     );
   }, [commissionRows]);
 
-  const feeBreakdownRows = useMemo(() => {
-    if (!selectedResult?.Fee_Breakdown) return [];
-    return Object.entries(selectedResult.Fee_Breakdown).map(([category, data]) => ({
-      category,
-      revenue: data.revenue,
-      count: data.count,
-    }));
-  }, [selectedResult]);
-
-  const debugTransferRows = useMemo(() => {
-    return [...selectedTransfersData].sort((a, b) => {
-      const dateA = new Date(a.date_time || 0).getTime();
-      const dateB = new Date(b.date_time || 0).getTime();
-      if (dateA !== dateB) return dateA - dateB;
-      return String(a.sync_key || "").localeCompare(String(b.sync_key || ""));
-    });
-  }, [selectedTransfersData]);
-
-  const debugCompanySummary = useMemo(() => {
-    const summary = {};
-    selectedTransfersData.forEach((row) => {
-      const company = normalizeText(row.company) || "Blank Company";
-      if (!summary[company]) summary[company] = { rows: 0, revenue: 0 };
-      summary[company].rows += 1;
-      summary[company].revenue += toNumber(row.fee);
-    });
-    return Object.entries(summary)
-      .map(([company, data]) => ({
-        company,
-        rows: data.rows,
-        revenue: Number(data.revenue.toFixed(2)),
-      }))
-      .sort((a, b) => a.company.localeCompare(b.company));
-  }, [selectedTransfersData]);
-
-  const goToPreviousWeek = () => {
-    const newDate = new Date(currentDate);
-    newDate.setDate(newDate.getDate() - 7);
-    setCurrentDate(newDate);
+  const jumpToWeek = (value) => {
+    const monday = mondayOf(value);
+    if (!monday) return;
+    setAnchorDate(new Date(`${monday}T12:00:00`));
+    setPage(1);
   };
 
-  const goToNextWeek = () => {
-    const newDate = new Date(currentDate);
-    newDate.setDate(newDate.getDate() + 7);
-    setCurrentDate(newDate);
+  const jumpByPayday = (value) => {
+    const pay = dateKey(value);
+    if (!pay) return;
+    jumpToWeek(addDays(mondayOf(pay), -14));
   };
 
   const handlePublish = async () => {
-    if (commissionRows.length === 0) {
-      setPublishStatus("No commission rows to publish.");
+    if (!commissionRows.length || allPublished || publishing) return;
+
+    if (missingGrossPayCount > 0) {
+      setPublishStatus(
+        `${missingGrossPayCount} agent(s) still need Gross Pay entered. Enter a value, including 0 when intentional, before publishing.`
+      );
       return;
     }
 
-    const confirmMessage = weekHasMissingData
-      ? "Some days show missing EOD data. Publish anyway?"
-      : "Publish commission records for this week?";
+    if (linkedPolicyMissingCount > 0) {
+      setPublishStatus(
+        `${linkedPolicyMissingCount} active disqualified polic${linkedPolicyMissingCount === 1 ? 'y is' : 'ies are'} missing a verified transaction link. Resolve them before publishing.`
+      );
+      return;
+    }
 
-    if (!window.confirm(confirmMessage)) return;
+    if (unlinkedBalanceCount > 0) {
+      setPublishStatus(
+        `${unlinkedBalanceCount} agent balance account(s) contain outstanding AR / scanning amounts that are not fully tied to individual violations. Review those ledger accounts before publishing so FIFO repayment history stays accurate.`
+      );
+      return;
+    }
+
+    const confirmText =
+      `Publish commission week ${weekLabel(weekStart)}?\n\n` +
+      `${commissionRows.length} agents\n` +
+      `${money(totals.finalPayable)} total payable\n` +
+      `Scheduled payday: ${displayDate(scheduledPayday(weekStart))}\n\n` +
+      `Publishing will automatically apply available commission to the oldest outstanding AR / scanning violations first, then freeze the cash-payable result agents see.`;
+
+    if (!window.confirm(confirmText)) return;
 
     setPublishing(true);
-    setPublishStatus("");
+    setPublishStatus('');
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const payload = commissionRows.map((row) => {
+        const result = row.liveResult;
+        return {
+          agent_email: row.email,
+          agent_name: row.agent.full_name,
+          gross_revenue: result.grossRevenue,
+          gross_pay: result.grossPay,
+          royalty_deduction: result.royaltyDeduction,
+          net_revenue: result.netRevenue,
+          gross_nb_count: result.grossNbCount,
+          disqualified_nb_count: result.disqualifiedNbCount,
+          net_nb_count: result.netNbCount,
+          broker_fee_revenue: result.brokerFeeRevenue,
+          endorsement_fee_revenue: result.endorsementFeeRevenue,
+          reinstatement_fee_revenue: result.reinstatementFeeRevenue,
+          renewal_fee_revenue: result.renewalFeeRevenue,
+          commission_rate: result.commissionRate,
+          tier: result.tierName,
+          base_payout: result.basePayout,
+          total_deductions: result.totalDeductions,
+          calculated_weekly_commission: result.calculatedWeeklyCommission,
+          commission_before_balance: Math.max(0, numberOrZero(result.finalPayableCommission)),
+          violation_count: result.violationCount,
+          disqualified_count: result.disqualifiedCount,
+          is_licensed_ca_doi: result.isLicensedCaDoi,
+          status: result.status,
+        };
+      });
 
-      const publishedBy = user?.email || "admin";
+      const { data: publishResult, error: publishError } = await supabase.rpc(
+        'publish_commission_week_with_balance_application',
+        {
+          p_week_start: weekStart,
+          p_week_end: weekEnd,
+          p_payout_date: scheduledPayday(weekStart),
+          p_records: payload,
+        }
+      );
 
-      const payload = commissionRows.map(({ agent, result }) => ({
-        agent_email: agent.email,
-        agent_name: agent.full_name,
-        week_start_date: result.week_start_date,
-        week_end_date: result.week_end_date,
-        payout_date: result.payout_date,
-        gross_revenue: result.Gross_Revenue,
-        gross_pay: result.Gross_Pay,
-        royalty_deduction: result.Royalty_Deduction,
-        net_revenue: result.Net_Revenue,
-        gross_nb_count: result.Gross_NB_Count,
-        disqualified_nb_count: result.Disqualified_NB_Count,
-        net_nb_count: result.Net_NB_Count,
-        broker_fee_revenue: result.Broker_Fee_Revenue,
-        endorsement_fee_revenue: result.Endorsement_Fee_Revenue,
-        reinstatement_fee_revenue: result.Reinstatement_Fee_Revenue,
-        renewal_fee_revenue: result.Renewal_Fee_Revenue,
-        commission_rate: result.Commission_Rate,
-        tier: result.Tier,
-        base_payout: result.Base_Payout,
-        total_deductions: result.Total_Deductions,
-        calculated_weekly_commission: result.Calculated_Weekly_Commission,
-        final_payable_commission: result.Final_Payable_Commission,
-        violation_count: result.Violation_Count,
-        disqualified_count: result.Disqualified_Count,
-        is_licensed_ca_doi: result.is_licensed_ca_doi,
-        status: result.status,
-        published_at: new Date().toISOString(),
-        published_by: publishedBy,
-      }));
+      if (publishError) throw publishError;
 
-      const { error } = await supabase
-        .from(TABLE_COMMISSION_RECORDS)
-        .upsert(payload, { onConflict: "agent_email,week_start_date" });
-
-      if (error) throw error;
-      setIsPublished(true);
-      setPublishStatus(`Published ${payload.length} commission records successfully.`);
-    } catch (error) {
-      setPublishStatus(error?.message || "Failed to publish commission records.");
+      const appliedTotal = (publishResult?.agents || []).reduce(
+        (sum, item) => sum + numberOrZero(item.balance_applied),
+        0
+      );
+      setPublishStatus(
+        `Published ${payload.length} commission records. ${money(appliedTotal)} was automatically applied to outstanding AR / scanning balances.`
+      );
+      await loadWeeklyData();
+    } catch (publishError) {
+      console.error('Publish failed:', publishError);
+      setPublishStatus(`Publish failed: ${publishError?.message || 'Unknown error'}`);
     } finally {
       setPublishing(false);
     }
   };
 
-  const handleExportCsv = () => {
-    if (!isPublished) {
-      setPublishStatus("Publish the commission week before exporting the final CSV.");
-      return;
-    }
-
-    if (commissionRows.length === 0) {
-      setPublishStatus("No commission rows to export.");
-      return;
-    }
+  const exportCsv = () => {
+    const rows = commissionRows.map((row) => {
+      const result = row.displayResult;
+      return [
+        row.agent.full_name,
+        row.email,
+        weekStart,
+        weekEnd,
+        scheduledPayday(weekStart),
+        result.grossRevenue,
+        result.grossPay,
+        result.royaltyDeduction,
+        result.netRevenue,
+        result.grossNbCount,
+        result.disqualifiedNbCount,
+        result.netNbCount,
+        result.tierName,
+        result.commissionRate,
+        result.basePayout,
+        result.totalDeductions,
+        result.calculatedWeeklyCommission,
+        result.finalPayableCommission,
+        result.violationCount,
+        result.disqualifiedCount,
+        row.balance,
+        result.isLicensedCaDoi ? 'Licensed' : 'Unlicensed',
+        result.status,
+        buildMissedBy(result),
+        row.publishedRecord?.published_at || '',
+        row.publishedRecord?.published_by || '',
+      ];
+    });
 
     const headers = [
-      "Agent Name",
-      "Agent Email",
-      "Week Start",
-      "Week End",
-      "Payout Date",
-      "Gross Revenue",
-      "Gross Pay",
-      "Royalty Deduction",
-      "Net Revenue",
-      "Gross NB",
-      "Disqualified NB",
-      "Net NB",
-      "Tier",
-      "Commission Rate",
-      "Base Payout",
-      "Total Deductions",
-      "Calculated Commission",
-      "Final Payable Commission",
-      "Violation Count",
-      "Disqualified Count",
-      "License Status",
-      "Status",
-      "Missed By",
+      'Agent Name', 'Agent Email', 'Week Start', 'Week End', 'Scheduled Payday',
+      'Gross Revenue', 'Gross Pay', 'Royalty Deduction', 'Net Revenue',
+      'Gross NB', 'Disqualified NB', 'Net NB', 'Tier', 'Commission Rate',
+      'Base Commission', 'Violation Deductions', 'Calculated Commission',
+      'Final Payable Commission', 'Violation Count', 'Disqualified Count',
+      'Current AR/SV Balance', 'License Status', 'Status', 'Qualification / Next Tier',
+      'Published At', 'Published By',
     ];
 
-    const rows = commissionRows.map(({ agent, result }) => [
-      agent.full_name || agent.email,
-      agent.email,
-      result.week_start_date,
-      result.week_end_date,
-      result.payout_date,
-      result.Gross_Revenue,
-      result.Gross_Pay,
-      result.Royalty_Deduction,
-      result.Net_Revenue,
-      result.Gross_NB_Count,
-      result.Disqualified_NB_Count,
-      result.Net_NB_Count,
-      result.Tier,
-      result.Commission_Rate,
-      result.Base_Payout,
-      result.Total_Deductions,
-      result.Calculated_Weekly_Commission,
-      result.Final_Payable_Commission,
-      result.Violation_Count,
-      result.Disqualified_Count,
-      result.is_licensed_ca_doi ? "Licensed" : "Unlicensed",
-      result.status,
-      result.Missed_By,
-    ]);
+    const csvCell = (value) => {
+      let text = String(value ?? '');
+      if (/^[\s]*[=+@-]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
 
-    const csv = [headers, ...rows]
-      .map((row) => row.map(csvEscape).join(","))
-      .join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    link.href = url;
-    link.setAttribute(
-      "download",
-      `commission-week-${week.start}-to-${week.end}.csv`
+    const blob = new Blob(
+      ['\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')],
+      { type: 'text/csv;charset=utf-8;' }
     );
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `commissions_${weekStart}_${allPublished ? 'published' : 'draft'}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  if (loading) {
+    return (
+      <main className={styles.dashboard}>
+        <Loading text={loadingText} />
+      </main>
+    );
+  }
 
   return (
-    <div className={styles.wrap}>
-      <header className={styles.header}>
+    <main className={styles.dashboard}>
+      <header className={styles.topHeader}>
         <div>
-          <h1 className={styles.title}>Commission Manager</h1>
-          <div className={styles.subTitle}>
-            Commission week • {formatDate(week.start)} - {formatDate(week.end)}
-            {isPublished ? " • Published" : " • Draft"}
-          </div>
+          <span className={styles.eyebrow}>COMMISSION OPERATIONS</span>
+          <h1>Commission Manager</h1>
+          <p>Review the production week, resolve exceptions, and publish the same result agents see.</p>
         </div>
-
-        <div className={styles.controls}>
-          <button className={styles.btn} onClick={goToPreviousWeek}>
-            ← Previous Week
-          </button>
-          <button className={styles.btn} onClick={goToNextWeek}>
-            Next Week →
-          </button>
-          <button className={styles.btn} onClick={loadWeeklyData}>
-            Refresh
-          </button>
+        <div className={styles.headerActions}>
+          <button type="button" onClick={loadWeeklyData}>Refresh</button>
+          <button type="button" onClick={exportCsv} disabled={!commissionRows.length}>Export CSV</button>
           <button
-            className={styles.btn}
+            type="button"
+            className={styles.publishButton}
             onClick={handlePublish}
-            disabled={publishing || commissionRows.length === 0 || isPublished}
-            style={{
-              background: isPublished ? "#94a3b8" : "#16a34a",
-              color: "white",
-              borderColor: isPublished ? "#94a3b8" : "#16a34a",
-            }}
+            disabled={publishing || allPublished || !commissionRows.length}
           >
-            {isPublished ? "Published" : publishing ? "Publishing..." : "Publish Week"}
-          </button>
-
-          <button
-            className={styles.btn}
-            onClick={handleExportCsv}
-            disabled={!isPublished || commissionRows.length === 0}
-            style={{
-              background: isPublished ? "#2563eb" : "#cbd5e1",
-              color: isPublished ? "white" : "#475569",
-              borderColor: isPublished ? "#2563eb" : "#cbd5e1",
-            }}
-          >
-            Export CSV
+            {allPublished ? 'Published' : publishing ? 'Publishing...' : 'Publish Week'}
           </button>
         </div>
       </header>
 
-      {loadError && <div className={styles.error}>{loadError}</div>}
+      <section className={styles.payHero}>
+        <div>
+          <span className={styles.heroKicker}>
+            {weekStart === payContext.payingWeek ? 'UPCOMING FRIDAY PAYOUT' : 'SELECTED COMMISSION WEEK'}
+          </span>
+          <h2>{weekLabel(weekStart)}</h2>
+          <p>Production / commission week</p>
+          <div className={styles.quickWeeks}>
+            <button
+              type="button"
+              className={weekStart === payContext.payingWeek ? styles.quickActive : ''}
+              onClick={() => jumpToWeek(payContext.payingWeek)}
+            >
+              Paying this Friday
+            </button>
+            <button
+              type="button"
+              className={weekStart === addDays(payContext.payingWeek, 7) ? styles.quickActive : ''}
+              onClick={() => jumpToWeek(addDays(payContext.payingWeek, 7))}
+            >
+              Next payout
+            </button>
+            <button
+              type="button"
+              className={weekStart === payContext.currentMonday ? styles.quickActive : ''}
+              onClick={() => jumpToWeek(payContext.currentMonday)}
+            >
+              Current production
+            </button>
+          </div>
+        </div>
 
+        <div className={styles.payDate}>
+          <span>Scheduled payday</span>
+          <strong>Friday, {displayDate(scheduledPayday(weekStart), true)}</strong>
+          <small>{allPublished ? 'Published commission week' : 'Draft · not final until published'}</small>
+          {publishedRecords[0] && (
+            <small>
+              Published {displayDateTime(publishedRecords[0].published_at)} by {publishedRecords[0].published_by || 'management'}
+            </small>
+          )}
+        </div>
+      </section>
+
+      <section className={styles.weekTools}>
+        <div className={styles.weekSteps}>
+          <button type="button" onClick={() => jumpToWeek(addDays(weekStart, -7))}>←</button>
+          <button type="button" onClick={() => jumpToWeek(addDays(weekStart, 7))}>→</button>
+        </div>
+        <label>
+          Jump by production date
+          <input
+            type="date"
+            value={weekStart}
+            onChange={(event) => jumpToWeek(event.target.value)}
+          />
+        </label>
+        <label>
+          Or scheduled payday
+          <input
+            type="date"
+            value={scheduledPayday(weekStart)}
+            onChange={(event) => jumpByPayday(event.target.value)}
+          />
+        </label>
+        <span>
+          Production is Monday-Sunday. The scheduled payout is the Friday two weeks later.
+        </span>
+      </section>
+
+      {error && <div className={styles.errorBox}>{error}</div>}
       {publishStatus && (
-        <div
-          className={styles.tableCard}
-          style={{
-            padding: 14,
-            marginBottom: 16,
-            borderLeft: publishStatus.toLowerCase().includes("failed")
-              ? "5px solid #dc2626"
-              : "5px solid #16a34a",
-          }}
-        >
-          <strong>{publishStatus}</strong>
+        <div className={publishStatus.toLowerCase().includes('failed') ? styles.errorBox : styles.noticeBox}>
+          {publishStatus}
         </div>
       )}
 
-      {loading ? (
-        <div className={styles.tableCard} style={{ padding: 40, textAlign: "center" }}>
-          Loading commission week...
+      <section className={styles.metrics}>
+        <Metric label="Cash commission payable" value={money(totals.finalPayable)} sub={`${totals.payableAgents} agents with cash payable`} tone="green" />
+        <Metric label="Gross revenue" value={money(totals.grossRevenue)} sub={`${commissionRows.length} agents in review`} />
+        <Metric label="Gross pay entered" value={money(totals.grossPay)} sub={missingGrossPayCount ? `${missingGrossPayCount} still need input` : 'All agent inputs complete'} tone={missingGrossPayCount ? 'amber' : 'green'} />
+        <Metric label="Current AR / SV balances" value={money(totals.balance)} sub="Available commission will be applied FIFO at publish" tone="amber" />
+      </section>
+
+      <section className={styles.readinessPanel}>
+        <div>
+          <span className={styles.eyebrow}>PUBLISH READINESS</span>
+          <h2>{allPublished ? 'This week is published' : missingGrossPayCount || linkedPolicyMissingCount ? 'Review required before publishing' : 'Ready for final review'}</h2>
         </div>
-      ) : (
-        <>
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
-            <MetricCard label="Total Payable" value={money(weeklyTotals.finalPayable)} strong />
-            <MetricCard label="Payable Agents" value={weeklyTotals.payableAgents} />
-            <MetricCard label="Non-Payable Agents" value={weeklyTotals.nonPayableAgents} />
-            <MetricCard label="Week EOD Rows" value={weeklyTransfersData.length} />
-          </section>
+        <div className={styles.readinessItems}>
+          <div className={missingGrossPayCount ? styles.readinessBad : styles.readinessGood}>
+            <strong>{missingGrossPayCount}</strong><span>Gross pay inputs missing</span>
+          </div>
+          <div className={linkedPolicyMissingCount ? styles.readinessBad : styles.readinessGood}>
+            <strong>{linkedPolicyMissingCount}</strong><span>Disqualified policies without receipt link</span>
+          </div>
+          <div className={unlinkedBalanceCount ? styles.readinessBad : styles.readinessGood}>
+            <strong>{unlinkedBalanceCount}</strong><span>Balances not fully linked for FIFO</span>
+          </div>
+          <div className={styles.readinessNeutral}>
+            <strong>{totals.violations}</strong><span>Active violation deductions</span>
+          </div>
+        </div>
+      </section>
 
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
-            <MetricCard label="Gross Revenue" value={money(weeklyTotals.grossRevenue)} />
-            <MetricCard label="Gross Pay Entered" value={money(weeklyTotals.grossPay)} />
-            <MetricCard label="Violations" value={weeklyTotals.violations} />
-            <MetricCard label="Disqualified" value={weeklyTotals.disqualified} />
-          </section>
+      <section className={styles.panel}>
+        <header className={styles.panelHeader}>
+          <div>
+            <span className={styles.eyebrow}>WEEKLY COMMISSION REVIEW</span>
+            <h2>Agent commissions</h2>
+            <p>
+              Gross pay and licensing are editable until the week is published. Published rows use the saved final snapshot.
+            </p>
+          </div>
+        </header>
 
-          <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-            <h3 style={{ marginTop: 0 }}>Commission Tier Rules / How Agents Qualify</h3>
+        <div className={styles.filters}>
+          <label className={styles.searchLabel}>
+            Search agents
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+              placeholder="Name, email, office, region..."
+            />
+          </label>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4, minmax(180px, 1fr))",
-                gap: 12,
-              }}
-            >
-              <InfoRow
-                label="Minimum Requirement"
-                value="Agent must have at least $500 net revenue after deductions to qualify for any commission."
-              />
+          <label>
+            Office
+            <select value={officeFilter} onChange={(event) => { setOfficeFilter(event.target.value); setPage(1); }}>
+              <option value="">All offices</option>
+              {offices.map((office) => <option key={office}>{office}</option>)}
+            </select>
+          </label>
 
-              <InfoRow
-                label="Tier 1 - 10%"
-                value="8+ Net NBs OR $2,500+ gross revenue."
-              />
+          <label>
+            Show
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+              <option value="all">All agents</option>
+              <option value="payable">Payable commission</option>
+              <option value="nonpayable">No payable commission</option>
+              <option value="needs_input">Gross pay needs input</option>
+              <option value="violations">Has violations</option>
+              <option value="disqualified">Has disqualified policies</option>
+              <option value="balance">Has AR / SV balance</option>
+              <option value="drift">Published source changed</option>
+            </select>
+          </label>
 
-              <InfoRow
-                label="Tier 2 - 12.5%"
-                value="17+ Net NBs and $3,500+ gross revenue OR $5,000+ gross revenue."
-              />
+          <label>
+            Sort
+            <select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}>
+              <option value="attention">Attention first</option>
+              <option value="name">Agent name</option>
+              <option value="payable">Highest commission</option>
+              <option value="balance">Highest AR / SV balance</option>
+            </select>
+          </label>
 
-              <InfoRow
-                label="Tier 3 - 15%"
-                value="24+ Net NBs and $5,000+ gross revenue."
-              />
-            </div>
+          <label>
+            Rows
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+              {PAGE_SIZES.map((size) => <option key={size}>{size}</option>)}
+            </select>
+          </label>
+        </div>
 
-            <div
-              style={{
-                marginTop: 12,
-                background: "#f8fafc",
-                border: "1px solid #e2e8f0",
-                borderRadius: 12,
-                padding: 12,
-                fontSize: 13,
-                lineHeight: 1.5,
-                color: "#334155",
-                fontWeight: 700,
-              }}
-            >
-              <strong>How the system calculates it:</strong> Gross revenue includes Broker Fee,
-              Endorsement Fee, Renewal Fee, and Reinstatement Fee from the company column.
-              Negative fee rows subtract from revenue. NB count is based on NEW/RWR receipts
-              with an active Broker Fee. Disqualified NBs are removed from the final Net NB count.
-              Violations are deducted from the calculated commission. Unlicensed agents are
-              withheld even if they otherwise qualify.
-            </div>
-          </section>
+        <Pager info={pageInfo} onPage={setPage} />
 
-          <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-            <h3 style={{ marginTop: 0 }}>Commission Week Upload Checklist</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(140px, 1fr))", gap: 10 }}>
-              {weekUploadStatus.map((day) => {
-                const missing = day.rows === 0;
+        <div className={styles.tableViewport}>
+          <table className={styles.dataTable}>
+            <thead>
+              <tr>
+                <th>Agent / office</th>
+                <th>Gross pay</th>
+                <th>Licensed</th>
+                <th>Gross / net revenue</th>
+                <th>Net NB</th>
+                <th>Tier / rate</th>
+                <th>Viol. / Disq.</th>
+                <th>AR / SV balance</th>
+                <th>Cash payable</th>
+                <th>Status / next step</th>
+                <th>Review</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageInfo.rows.map((row) => {
+                const result = row.displayResult;
+                const published = Boolean(row.publishedRecord);
+                const needsAttention =
+                  !row.grossPayReady ||
+                  row.drift ||
+                  !result.isLicensedCaDoi ||
+                  result.violationCount > 0 ||
+                  result.disqualifiedCount > 0;
+
                 return (
-                  <div
-                    key={day.date}
-                    style={{
-                      background: missing ? "#fef2f2" : "#ecfdf5",
-                      border: `1px solid ${missing ? "#fecaca" : "#bbf7d0"}`,
-                      borderRadius: 12,
-                      padding: 12,
-                    }}
+                  <tr
+                    key={row.email}
+                    className={`${needsAttention ? styles.attentionRow : ''} ${selectedEmail === row.email ? styles.selectedRow : ''}`}
                   >
-                    <div style={{ fontWeight: 900 }}>{formatWeekday(day.date)}</div>
-                    <div style={{ marginTop: 4, fontWeight: 900 }}>{formatDate(day.date)}</div>
-                    <div style={{ marginTop: 6, fontWeight: 800 }}>{day.rows} rows</div>
-                    <div style={{ marginTop: 6, fontSize: 12, fontWeight: 900, color: missing ? "#dc2626" : "#15803d" }}>
-                      {day.status}
-                    </div>
-                  </div>
+                    <td>
+                      <strong>{row.agent.full_name}</strong>
+                      <small>{row.email}</small>
+                      <small>{row.agent.offices.join(', ') || row.agent.office || 'Office not identified'}</small>
+                      {published && <Badge tone="green">Published</Badge>}
+                      {row.drift && <Badge tone="amber">Source changed</Badge>}
+                    </td>
+
+                    <td>
+                      <input
+                        className={`${styles.grossPayInput} ${!row.grossPayReady ? styles.inputRequired : ''}`}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={
+                          published
+                            ? String(numberOrZero(row.publishedRecord.gross_pay))
+                            : grossPayByAgent[row.email] ?? ''
+                        }
+                        disabled={published}
+                        placeholder="Required"
+                        onChange={(event) =>
+                          setGrossPayByAgent((prior) => ({
+                            ...prior,
+                            [row.email]: event.target.value,
+                          }))
+                        }
+                      />
+                      {!row.grossPayReady && <small className={styles.warningText}>Required before publish</small>}
+                    </td>
+
+                    <td>
+                      <label className={styles.licenseToggle}>
+                        <input
+                          type="checkbox"
+                          checked={
+                            published
+                              ? row.publishedRecord.is_licensed_ca_doi !== false
+                              : licenseByAgent[row.email] !== false
+                          }
+                          disabled={published}
+                          onChange={(event) =>
+                            setLicenseByAgent((prior) => ({
+                              ...prior,
+                              [row.email]: event.target.checked,
+                            }))
+                          }
+                        />
+                        <span>{result.isLicensedCaDoi ? 'Licensed' : 'Unlicensed'}</span>
+                      </label>
+                    </td>
+
+                    <td>
+                      <strong>{money(result.grossRevenue)}</strong>
+                      <small>Net {money(result.netRevenue)}</small>
+                    </td>
+
+                    <td>
+                      <strong>{result.netNbCount}</strong>
+                      <small>{result.grossNbCount} gross · {result.disqualifiedNbCount} disq.</small>
+                    </td>
+
+                    <td>
+                      <strong>{result.tierName}</strong>
+                      <small>{percent(result.commissionRate)}</small>
+                    </td>
+
+                    <td>
+                      <strong>{result.violationCount} / {result.disqualifiedCount}</strong>
+                      <small>{money(result.totalDeductions)} deductions</small>
+                    </td>
+
+                    <td>
+                      <strong>{money(row.balance)}</strong>
+                      <small>{row.autoBalanceReady ? 'FIFO ready' : 'Needs ledger review before publish'}</small>
+                    </td>
+
+                    <td className={styles.payableCell}>
+                      <strong>{money(result.finalPayableCommission)}</strong>
+                      <small>{published ? `${money(result.balanceApplied || 0)} balance applied` : `${money(result.balanceApplied || 0)} projected to balance`}</small>
+                    </td>
+
+                    <td>
+                      <Badge tone={result.finalPayableCommission > 0 ? 'green' : 'neutral'}>
+                        {result.status}
+                      </Badge>
+                      <small>{buildMissedBy(result)}</small>
+                    </td>
+
+                    <td>
+                      <button
+                        type="button"
+                        className={styles.linkButton}
+                        onClick={() => setSelectedEmail(row.email)}
+                      >
+                        {selectedEmail === row.email ? 'Selected' : 'Review agent'}
+                      </button>
+                    </td>
+                  </tr>
                 );
               })}
+            </tbody>
+          </table>
+
+          {!pageInfo.total && (
+            <div className={styles.empty}>
+              No agents match these filters.
             </div>
-          </section>
+          )}
+        </div>
 
-          <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-            <h3 style={{ marginTop: 0 }}>
-              All Agents Commission Review / Gross Pay Entry
-            </h3>
+        <Pager info={pageInfo} onPage={setPage} />
+      </section>
 
-            <div
-              style={{
-                marginBottom: 12,
-                color: isPublished ? "#15803d" : "#64748b",
-                fontWeight: 800,
-              }}
-            >
-              {isPublished
-                ? "Published view: gross pays are locked and agents are sorted by top earners."
-                : "Draft view: agents stay alphabetical while gross pays are being entered."}
-            </div>
+      <AgentDetail
+        bundle={selectedBundle}
+        publishedRecord={selectedBundle?.publishedRecord}
+        balance={selectedBundle?.balance}
+        weekStart={weekStart}
+      />
 
-            <div style={{ overflowX: "auto", maxHeight: 620, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc", position: "sticky", top: 0 }}>
-                    <th style={debugTh}>Agent</th>
-                    <th style={debugTh}>Gross Pay</th>
-                    <th style={debugTh}>Licensed</th>
-                    <th style={debugTh}>Gross Revenue</th>
-                    <th style={debugTh}>Net Revenue</th>
-                    <th style={debugTh}>NB</th>
-                    <th style={debugTh}>Tier</th>
-                    <th style={debugTh}>Rate</th>
-                    <th style={debugTh}>Viol.</th>
-                    <th style={debugTh}>Disq.</th>
-                    <th style={debugTh}>Final Payable</th>
-                    <th style={debugTh}>Status / Missed By</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {commissionRows.length === 0 ? (
-                    <tr>
-                      <td style={debugTd} colSpan={12}>No agents with EOD transfer data found for this week.</td>
-                    </tr>
-                  ) : (
-                    commissionRows.map(({ agent, result }) => {
-                      const isSelected = selectedAgentEmail === agent.email;
-                      const payable = result.Final_Payable_Commission > 0;
-                      const negativeCommission = result.Final_Payable_Commission < 0;
-                      const missedByNb = String(result.Missed_By || "").includes("NB short");
-                      const hasWarning =
-                        result.Violation_Count > 0 ||
-                        result.Disqualified_Count > 0 ||
-                        !result.is_licensed_ca_doi ||
-                        missedByNb ||
-                        negativeCommission;
-
-                      return (
-                        <tr
-                          key={agent.email}
-                          onClick={() => setSelectedAgentEmail(agent.email)}
-                          style={{
-                            cursor: "pointer",
-                            background: isSelected
-                              ? "#dbeafe"
-                              : missedByNb
-                                ? "#fef9c3"
-                                : negativeCommission
-                                  ? "#fef2f2"
-                                  : payable
-                                    ? "#ecfdf5"
-                                    : hasWarning
-                                      ? "#fff7ed"
-                                      : "white",
-                            borderBottom: "1px solid #e2e8f0",
-                          }}
-                        >
-                          <td style={debugTd}>
-                            <strong>{agent.full_name || agent.email}</strong>
-                            <div style={{ color: "#64748b", fontSize: 12 }}>{agent.email}</div>
-                          </td>
-                          <td style={debugTd} onClick={(e) => e.stopPropagation()}>
-                            <input
-                              className={styles.input}
-                              type="number"
-                              step="0.01"
-                              value={grossPayByAgent[agent.email] || ""}
-                              disabled={isPublished}
-                              onChange={(e) =>
-                                setGrossPayByAgent((prev) => ({
-                                  ...prev,
-                                  [agent.email]: e.target.value,
-                                }))
-                              }
-                              placeholder="0.00"
-                              style={{
-                                width: 110,
-                                background: isPublished ? "#f1f5f9" : "white",
-                                cursor: isPublished ? "not-allowed" : "text",
-                              }}
-                            />
-                          </td>
-                          <td style={debugTd} onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={licenseByAgent[agent.email] !== false}
-                              disabled={isPublished}
-                              onChange={(e) =>
-                                setLicenseByAgent((prev) => ({
-                                  ...prev,
-                                  [agent.email]: e.target.checked,
-                                }))
-                              }
-                            />
-                          </td>
-                          <td style={debugTd}>{money(result.Gross_Revenue)}</td>
-                          <td style={debugTd}>{money(result.Net_Revenue)}</td>
-                          <td style={debugTd}>{result.Net_NB_Count} / gross {result.Gross_NB_Count}</td>
-                          <td style={debugTd}>{result.Tier}</td>
-                          <td style={debugTd}>{percent(result.Commission_Rate)}</td>
-                          <td style={debugTd}>{result.Violation_Count}</td>
-                          <td style={debugTd}>{result.Disqualified_Count}</td>
-                          <td
-                            style={{
-                              ...debugTd,
-                              fontSize: 15,
-                              fontWeight: 950,
-                              color: negativeCommission ? "#dc2626" : payable ? "#15803d" : "#0f172a",
-                              background: negativeCommission ? "#fee2e2" : payable ? "#dcfce7" : undefined,
-                            }}
-                          >
-                            {money(result.Final_Payable_Commission)}
-                          </td>
-                          <td
-                            style={{
-                              ...debugTd,
-                              whiteSpace: "normal",
-                              minWidth: 260,
-                              background: missedByNb ? "#fef08a" : undefined,
-                            }}
-                          >
-                            <strong>{result.status}</strong>
-                            <div
-                              style={{
-                                color: missedByNb ? "#854d0e" : "#64748b",
-                                fontSize: 12,
-                                fontWeight: missedByNb ? 900 : 500,
-                                marginTop: 4,
-                              }}
-                            >
-                              {result.Missed_By}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          {selectedAgentBundle && selectedResult ? (
-            <>
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
-                <MetricCard label={`Selected: ${selectedAgentBundle.agent.full_name}`} value={money(selectedResult.Final_Payable_Commission)} strong />
-                <MetricCard label="Calculated Commission" value={money(selectedResult.Calculated_Weekly_Commission)} />
-                <MetricCard label="Tier" value={selectedResult.Tier} />
-                <MetricCard label="Commission Rate" value={percent(selectedResult.Commission_Rate)} />
-              </section>
-
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
-                <MetricCard label="Gross Revenue" value={money(selectedResult.Gross_Revenue)} />
-                <MetricCard label="Royalty Deduction" value={money(selectedResult.Royalty_Deduction)} />
-                <MetricCard label="Gross Pay" value={money(selectedResult.Gross_Pay)} />
-                <MetricCard label="Net Revenue" value={money(selectedResult.Net_Revenue)} />
-              </section>
-
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14, marginBottom: 16 }}>
-                <MetricCard label="Gross NB Count" value={selectedResult.Gross_NB_Count} />
-                <MetricCard label="Disqualified NB" value={selectedResult.Disqualified_NB_Count} />
-                <MetricCard label="Net NB Count" value={selectedResult.Net_NB_Count} />
-                <MetricCard label="Total Deductions" value={money(selectedResult.Total_Deductions)} />
-              </section>
-
-              <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-                <h3 style={{ marginTop: 0 }}>Selected Agent Fee Category Breakdown</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px, 1fr))", gap: 14 }}>
-                  {feeBreakdownRows.map((row) => (
-                    <MetricCard key={row.category} label={`${row.category} (${row.count})`} value={money(row.revenue)} />
-                  ))}
-                </div>
-              </section>
-
-              <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-                <h3 style={{ marginTop: 0 }}>Selected Agent Commission Summary</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                  <InfoRow label="Agent" value={selectedAgentBundle.agent.full_name || selectedAgentBundle.agent.email} />
-                  <InfoRow label="Week Start" value={formatDate(selectedResult.week_start_date)} />
-                  <InfoRow label="Week End" value={formatDate(selectedResult.week_end_date)} />
-                  <InfoRow label="Expected Payout Date" value={formatDate(selectedResult.payout_date)} />
-                  <InfoRow label="License Status" value={selectedResult.is_licensed_ca_doi ? "Licensed" : "Unlicensed"} />
-                  <InfoRow label="Status" value={selectedResult.status} />
-                </div>
-              </section>
-
-              <section className={styles.content}>
-                <div className={styles.tableCard}>
-                  <h3 style={{ padding: "14px 14px 0" }}>Selected Agent Source Records</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, padding: 14 }}>
-                    <SourceBox title="EOD Transfer Rows" value={selectedTransfersData.length} />
-                    <SourceBox title="Violations" value={selectedViolationsData.length} />
-                    <SourceBox title="Disqualified Policies" value={selectedDisqualifiedData.length} />
-                  </div>
-                </div>
-              </section>
-
-              <section className={styles.tableCard} style={{ padding: 16, marginTop: 16, marginBottom: 16 }}>
-                <h3 style={{ marginTop: 0 }}>Debug: Violations / Disqualified Details</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-                  <div>
-                    <h4 style={{ margin: "0 0 10px" }}>Violations</h4>
-                    <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                        <thead>
-                          <tr style={{ background: "#f8fafc" }}>
-                            <th style={debugTh}>Date</th>
-                            <th style={debugTh}>Violation</th>
-                            <th style={debugTh}>Fee</th>
-                            <th style={debugTh}>Status</th>
-                            <th style={debugTh}>Reason / Note</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedViolationsData.length === 0 ? (
-                            <tr><td style={debugTd} colSpan={5}>No violations loaded for this agent/week.</td></tr>
-                          ) : (
-                            selectedViolationsData.map((row, index) => {
-                              const status = firstValue(row, ["status"]);
-                              const isVoided = String(status).toLowerCase() === "voided";
-                              return (
-                                <tr key={row.id || row.sync_key || index} style={{ background: isVoided ? "#f8fafc" : "#fff7ed", borderBottom: "1px solid #e2e8f0" }}>
-                                  <td style={debugTd}>{formatDateTime(firstValue(row, ["created_at", "date_time", "date"]))}</td>
-                                  <td style={debugTd}><strong>{firstValue(row, ["violation_type", "violation", "type", "category", "reason_type"])}</strong></td>
-                                  <td style={debugTd}>{money(firstValue(row, ["fee_amount", "fee", "amount"]))}</td>
-                                  <td style={debugTd}>{status}</td>
-                                  <td style={{ ...debugTd, whiteSpace: "normal", minWidth: 260 }}>{firstValue(row, ["note", "notes", "reason", "description", "comment", "comments"])}</td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 style={{ margin: "0 0 10px" }}>Disqualified Policies</h4>
-                    <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                        <thead>
-                          <tr style={{ background: "#f8fafc" }}>
-                            <th style={debugTh}>Date</th>
-                            <th style={debugTh}>Policy / Receipt</th>
-                            <th style={debugTh}>Status</th>
-                            <th style={debugTh}>Linked Sync Key</th>
-                            <th style={debugTh}>Reason / Note</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {selectedDisqualifiedData.length === 0 ? (
-                            <tr><td style={debugTd} colSpan={5}>No disqualified policies loaded for this agent/week.</td></tr>
-                          ) : (
-                            selectedDisqualifiedData.map((row, index) => {
-                              const status = firstValue(row, ["status"]);
-                              const isVoided = String(status).toLowerCase() === "voided";
-                              return (
-                                <tr key={row.id || row.linked_sync_key || index} style={{ background: isVoided ? "#f8fafc" : "#fef2f2", borderBottom: "1px solid #e2e8f0" }}>
-                                  <td style={debugTd}>{formatDateTime(firstValue(row, ["created_at", "date_time", "date"]))}</td>
-                                  <td style={debugTd}><strong>{firstValue(row, ["policy_number", "policy", "receipt_id", "customer_name", "named_insured"])}</strong></td>
-                                  <td style={debugTd}>{status}</td>
-                                  <td style={debugTd}>{firstValue(row, ["linked_sync_key", "sync_key"])}</td>
-                                  <td style={{ ...debugTd, whiteSpace: "normal", minWidth: 260 }}>{firstValue(row, ["note", "notes", "reason", "disqualification_reason", "description", "comment", "comments"])}</td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className={styles.tableCard} style={{ padding: 16, marginTop: 16, marginBottom: 16 }}>
-                <h3 style={{ marginTop: 0 }}>Debug: Company Summary</h3>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc" }}>
-                        <th style={debugTh}>Company</th>
-                        <th style={debugTh}>Rows</th>
-                        <th style={debugTh}>Fee Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {debugCompanySummary.length === 0 ? (
-                        <tr><td style={debugTd} colSpan={3}>No transfer rows loaded for this agent/week.</td></tr>
-                      ) : (
-                        debugCompanySummary.map((row) => {
-                          const isTargetFee = ["Broker Fee", "Endorsement Fee", "Reinstatement Fee", "Renewal Fee"].includes(row.company);
-                          return (
-                            <tr key={row.company} style={{ background: isTargetFee ? "#ecfdf5" : "white" }}>
-                              <td style={debugTd}><strong>{row.company}</strong></td>
-                              <td style={debugTd}>{row.rows}</td>
-                              <td style={debugTd}>{money(row.revenue)}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <section className={styles.tableCard} style={{ padding: 16, marginBottom: 16 }}>
-                <h3 style={{ marginTop: 0 }}>Debug: EOD Transfer Rows</h3>
-                <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc" }}>
-                        <th style={debugTh}>Date</th>
-                        <th style={debugTh}>Company</th>
-                        <th style={debugTh}>Fee</th>
-                        <th style={debugTh}>Type</th>
-                        <th style={debugTh}>Receipt ID</th>
-                        <th style={debugTh}>Sync Key</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {debugTransferRows.length === 0 ? (
-                        <tr><td style={debugTd} colSpan={6}>No transfer rows loaded for this agent/week.</td></tr>
-                      ) : (
-                        debugTransferRows.map((row, index) => {
-                          const company = normalizeText(row.company);
-                          const normalizedCompany = company.replace(/\s+/g, " ").toLowerCase();
-                          const isTargetFee = ["broker fee", "endorsement fee", "reinstatement fee", "renewal fee"].includes(normalizedCompany);
-                          return (
-                            <tr key={row.sync_key || `${row.receipt_id || "row"}-${index}`} style={{ background: isTargetFee ? "#ecfdf5" : "white", borderBottom: "1px solid #e2e8f0" }}>
-                              <td style={debugTd}>{formatDate(row.date_time)}</td>
-                              <td style={debugTd}><strong>{company || "—"}</strong></td>
-                              <td style={debugTd}>{money(row.fee)}</td>
-                              <td style={debugTd}>{row.type || "—"}</td>
-                              <td style={debugTd}>{row.receipt_id || "—"}</td>
-                              <td style={debugTd}>{row.sync_key || "—"}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            </>
-          ) : null}
-        </>
-      )}
-    </div>
-  );
-}
-
-function MetricCard({ label, value, strong = false }) {
-  return (
-    <div className={styles.tableCard} style={{ padding: 18, borderLeft: strong ? "5px solid #2563eb" : undefined }}>
-      <div style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>{label}</div>
-      <div style={{ marginTop: 8, fontSize: strong ? 30 : 24, fontWeight: 900, color: strong ? "#2563eb" : "#0f172a" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function InfoRow({ label, value }) {
-  return (
-    <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 12 }}>
-      <div style={{ color: "#64748b", fontSize: 12, fontWeight: 800 }}>{label}</div>
-      <div style={{ marginTop: 4, fontWeight: 800 }}>{value || "—"}</div>
-    </div>
-  );
-}
-
-function SourceBox({ title, value }) {
-  return (
-    <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: 14 }}>
-      <div style={{ color: "#64748b", fontSize: 13, fontWeight: 800 }}>{title}</div>
-      <div style={{ fontSize: 24, fontWeight: 900, marginTop: 6 }}>{value}</div>
-    </div>
+      <footer className={styles.footerNote}>
+        <strong>Important:</strong> publishing now applies available commission to the oldest outstanding linked AR / scanning violations first. The remainder is saved as cash commission payable, and each balance application is written to the repayment ledger.
+      </footer>
+    </main>
   );
 }

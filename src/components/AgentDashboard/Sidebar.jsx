@@ -50,7 +50,8 @@ const Sidebar = ({ onLogout }) => {
     // Regionals intentionally keep the same floor / agent tools.
     const items = [
       { path: dashboardPath, label: 'Dashboard', icon: Home },
-      { path: '/agent/commission', label: 'Tax Commission Log', icon: DollarSign },
+      { path: '/agent/commission', label: 'Insurance Commission', icon: DollarSign },
+      { path: '/agent/tax-commission', label: 'Tax Commission', icon: DollarSign },
       { path: '/agent/violations', label: 'My Violations', icon: ShieldAlert },
       ...(!isRegional && !isSupervisor
         ? [{ path: '/agent/quotes', label: 'My Quotes', icon: ClipboardList }]
