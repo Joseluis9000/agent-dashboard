@@ -964,6 +964,34 @@ const reviewNotes = (row) => [
 const isDisqualifiedRow = (row) =>
   row?.source_report_type === 'DISQUALIFIED' || row?.violation_type === 'Disqualified Policy';
 
+const isSheetMark = (value) =>
+  ['x', 'yes', 'y', 'true', '1', 'checked', 'approved'].includes(normalizeText(value));
+
+// Exception columns are a decision, not just notes:
+//   Yes = exception approved -> do not import as disqualified.
+//   No  = exception denied   -> continue through normal disqualification review.
+// If an approver is present but neither/both decisions are marked, force review.
+const getDisqualificationExceptionState = (row) => {
+  if (!isDisqualifiedRow(row)) return { state: 'none', skip: false, needsReview: false };
+  const yes = isSheetMark(row?.exception_yes);
+  const no = isSheetMark(row?.exception_no);
+  const approver = String(row?.exception_by || '').trim();
+  if (yes && no) return { state: 'conflict', skip: false, needsReview: true,
+    message: 'Both Exception Yes and No are marked. Correct the source row before importing.' };
+  if (yes) return { state: 'approved', skip: true, needsReview: false,
+    message: `Exception approved${approver ? ` by ${approver}` : ''}. This policy will not be imported as disqualified.` };
+  if (no) return { state: 'denied', skip: false, needsReview: false,
+    message: `Exception denied${approver ? ` by ${approver}` : ''}. Continue with the normal disqualification process.` };
+  if (approver) return { state: 'undecided', skip: false, needsReview: true,
+    message: `Exception reviewer ${approver} is listed, but neither Yes nor No is marked.` };
+  return { state: 'none', skip: false, needsReview: false };
+};
+
+const isMissingTransactionAgent = (value) => {
+  const normalized = normalizeText(value);
+  return !normalized || ['email not found', 'not found', 'unknown', 'n/a', 'na', 'none'].includes(normalized);
+};
+
 const policyEmailKey = (value) => String(value ?? '').trim().toLowerCase();
 const policyOfficeKey = (value) => {
   const match = String(value ?? '').trim().toUpperCase().match(/^(CA\d{3})(?:\b|\.)/);
@@ -1052,6 +1080,8 @@ const hasApprovedPolicyOverride = (source, transaction, assignedEmail) => {
 const getPolicyCoreIssues = (source, transaction, assignedEmail) => {
   if (!transaction) return ['Find and select the policy transaction by receipt number.'];
   const problems = [];
+  const managerOverride = source?.policy_link_override?.kind === 'manager_override' &&
+    hasApprovedPolicyOverride(source, transaction, assignedEmail);
   if (!String(transaction.sync_key ?? '').trim()) problems.push('Transaction has no sync key.');
   if (!String(transaction.receipt_id ?? '').trim()) problems.push('Transaction has no receipt number.');
   if (isVoidedPolicyTransaction(transaction)) problems.push('This transaction is voided.');
@@ -1069,12 +1099,13 @@ const getPolicyCoreIssues = (source, transaction, assignedEmail) => {
   }
   if (!policyEmailKey(assignedEmail)) {
     problems.push('Select a valid agent for this policy.');
-  } else if (policyEmailKey(assignedEmail) !== policyEmailKey(transaction.agent_email)) {
-    problems.push('Receipt belongs to a different agent. Check the agent assignment.');
+  } else if (isMissingTransactionAgent(transaction.agent_email)) {
+    if (!managerOverride) problems.push('Transaction has no usable agent email. Verify the sheet agent and use Manager override to link this receipt.');
+  } else if (policyEmailKey(assignedEmail) !== policyEmailKey(transaction.agent_email) && !managerOverride) {
+    problems.push('Receipt belongs to a different agent. Correct the agent assignment or use Manager override after verification.');
   }
   return problems;
 };
-
 // A different store is never treated as formatting. An office correction is
 // offered only after an exact receipt lookup and matching policy/customer,
 // date, agent and NEW/RWR checks. The original source identity stays intact.
@@ -1164,11 +1195,83 @@ const clearPolicyLink = (row) => ({
   policy_link_audit: null,
 });
 
+const getManagerPolicyOverridePlan = (source, transaction, assignedEmail, requestedReceipt = '', includeAlternate = false) => {
+  const errors = [];
+  const receiptFields = receiptMatchFields(transaction, requestedReceipt, includeAlternate);
+  if (!receiptFields.length) errors.push('Enter and search the exact receipt before using Manager override.');
+  if (!transaction || !String(transaction.sync_key ?? '').trim()) errors.push('The transaction needs a sync key.');
+  if (!transaction || !String(transaction.receipt_id ?? '').trim()) errors.push('The transaction needs a receipt number.');
+  if (transaction && isVoidedPolicyTransaction(transaction)) errors.push('A voided transaction cannot be linked.');
+  if (transaction && (!['NEW', 'RWR'].includes(String(transaction.type ?? '').trim().toUpperCase()) ||
+      /\b(?:broker fee|endorsement fee|renewal fee|reinstatement fee|convenience fee|payment fee|installment fee)\b/i.test(String(transaction.company ?? '')))) {
+    errors.push('Manager override can only use the NEW/RWR policy line, not a fee/payment line.');
+  }
+  const sourceDate = parseUsDateToKey(source?.transaction_date);
+  const transactionDate = getUploadedDateOnly(transaction?.date_time);
+  if (!sourceDate || sourceDate !== transactionDate) {
+    errors.push('Source date must match the selected transaction date before an override can be used.');
+  }
+  const sameCustomerName = !!normalizeKeyText(source?.client_name) &&
+    normalizeKeyText(source.client_name) === normalizeKeyText(transaction?.customer);
+  const sameCustomerId = !!String(source?.customer_id ?? '').trim() &&
+    String(source.customer_id).trim() === String(transaction?.customer_id ?? '').trim();
+  if (!sameCustomerName && !sameCustomerId) {
+    errors.push('Customer name or customer ID must match before Manager override is allowed.');
+  }
+  if (!policyEmailKey(assignedEmail)) errors.push('Choose a valid agent before using Manager override.');
+  return { errors: [...new Set(errors)], receiptFields, sourceDate, transactionDate };
+};
+
 const attachPolicyTransaction = (row, candidate, canonicalEmail, method = 'receipt selection', confirmation = null) => {
   const correctingOffice = confirmation?.kind === 'office_correction';
+  const managerOverride = confirmation?.kind === 'manager_override';
   if (correctingOffice) {
     row = correctPolicySourceOffice(row, candidate, canonicalEmail, confirmation);
   }
+
+  let effectiveEmail = canonicalEmail;
+  if (managerOverride) {
+    const reason = String(confirmation?.reason ?? '').trim();
+    const requestedEmail = policyEmailKey(confirmation?.agent_email || canonicalEmail);
+    const requestedOffice = policyOfficeKey(confirmation?.office_code || candidate?.office || row.office_code);
+    const plan = getManagerPolicyOverridePlan(row, candidate, requestedEmail,
+      confirmation?.requestedReceipt, !!confirmation?.includeAlternate);
+    if (plan.errors.length) throw new Error(plan.errors.join(' '));
+    if (confirmation?.confirmed !== true || reason.length < 10) {
+      throw new Error('Confirm the Manager override and provide a reason of at least 10 characters.');
+    }
+    if (!requestedOffice || requestedOffice !== policyOfficeKey(candidate?.office)) {
+      throw new Error(`For a Manager override, the corrected office must match the transaction office ${candidate?.office || '(missing)'}.`);
+    }
+    const candidateAgent = isMissingTransactionAgent(candidate?.agent_email) ? '' : policyEmailKey(candidate.agent_email);
+    if (candidateAgent && requestedEmail !== candidateAgent) {
+      throw new Error(`The selected transaction belongs to ${candidate.agent_email}. Choose that agent, or verify a different receipt.`);
+    }
+
+    const originalOffice = policyOfficeKey(row.office_code);
+    const correction = originalOffice !== requestedOffice ? {
+      version: 1, original_office: String(row.office_code || ''), from_office: originalOffice,
+      corrected_office: requestedOffice, reason, confirmed_same_customer: true,
+      confirmed_at: new Date().toISOString(), requested_receipt: String(confirmation.requestedReceipt || '').trim(),
+      receipt_id: String(candidate.receipt_id || ''), sync_key: String(candidate.sync_key || ''),
+      policy_from_sheet: String(row.policy_number ?? ''), transaction_policy: String(candidate.policy ?? ''),
+      source_customer: String(row.client_name ?? ''), transaction_customer: String(candidate.customer ?? ''),
+      transaction_date: getUploadedDateOnly(candidate.date_time), assigned_agent: requestedEmail,
+      original_source_fingerprint: row.source_fingerprint || null, manager_override: true,
+    } : null;
+
+    row = {
+      ...clearPolicyLink(row),
+      office_code: requestedOffice,
+      agent_email: requestedEmail,
+      source_office_raw: row.source_office_raw || String(row.office_code || ''),
+      source_office_corrections: correction
+        ? [...(row.source_office_corrections || []), correction]
+        : (row.source_office_corrections || []),
+    };
+    effectiveEmail = requestedEmail;
+  }
+
   const comparison = comparePolicyNumbers(row.policy_number, candidate?.policy, row.office_code);
   let approval = null;
   if (confirmation && !correctingOffice) {
@@ -1178,23 +1281,24 @@ const attachPolicyTransaction = (row, candidate, canonicalEmail, method = 'recei
       throw new Error('Enter the receipt number, confirm the same customer/transaction, and provide a reason of at least 10 characters.');
     }
     approval = {
-      version: 1, reason, confirmed_same_customer: true,
+      version: 1, kind: managerOverride ? 'manager_override' : 'policy_override', reason, confirmed_same_customer: true,
       requested_receipt: String(confirmation.requestedReceipt).trim(),
       include_alternate: !!confirmation.includeAlternate, receipt_match_fields: fields,
-      source_binding: policySourceBinding(row, canonicalEmail),
+      source_binding: policySourceBinding(row, effectiveEmail),
       transaction_binding: policyTransactionBinding(candidate), confirmed_at: new Date().toISOString(),
+      transaction_agent_missing: isMissingTransactionAgent(candidate?.agent_email),
+      manager_selected_agent: effectiveEmail,
+      manager_corrected_office: policyOfficeKey(row.office_code),
     };
   }
   const proposed = { ...row, policy_link_override: approval };
-  const problems = getPolicyCandidateIssues(proposed, candidate, canonicalEmail);
+  const problems = getPolicyCandidateIssues(proposed, candidate, effectiveEmail);
   if (problems.length) throw new Error(problems.join(' '));
   const policyWeek = getWeekRange(`${row.transaction_date}T12:00:00`);
   const selectedAt = approval?.confirmed_at || new Date().toISOString();
   return {
     ...proposed,
-    // Do not rewrite the source policy or fingerprint. The selected transaction
-    // can contain a typo/placeholder and is linked by its durable sync key.
-    agent_email: canonicalEmail,
+    agent_email: effectiveEmail,
     selected_match: candidate,
     linked_eod_transfer_id: candidate.id ?? null,
     linked_sync_key: candidate.sync_key,
@@ -1202,25 +1306,29 @@ const attachPolicyTransaction = (row, candidate, canonicalEmail, method = 'recei
     linked_receipt_sync_keys: [candidate.sync_key],
     linked_receipt_row_ids: candidate.id == null ? [] : [candidate.id],
     policy_link_verified: true,
-    policy_link_method: correctingOffice ? 'manager-confirmed source office correction' : approval ? 'manager-confirmed policy number difference' : `${method} (${comparison.kind})`,
+    policy_link_method: correctingOffice ? 'manager-confirmed source office correction'
+      : managerOverride ? 'manager override with verified receipt'
+        : approval ? 'manager-confirmed policy number difference' : `${method} (${comparison.kind})`,
     policy_link_audit: {
-      version: 1, method: correctingOffice ? 'source_office_correction' : approval ? 'manual_policy_override' : comparison.kind, selected_at: selectedAt,
+      version: 1,
+      method: correctingOffice ? 'source_office_correction' : managerOverride ? 'manager_override' : approval ? 'manual_policy_override' : comparison.kind,
+      selected_at: selectedAt,
       source_policy: String(row.policy_number ?? ''), transaction_policy: String(candidate.policy ?? ''),
       source_customer: String(row.client_name ?? ''), transaction_customer: String(candidate.customer ?? ''),
       receipt_id: String(candidate.receipt_id), sync_key: String(candidate.sync_key),
       office: policyOfficeKey(candidate.office), transaction_date: getUploadedDateOnly(candidate.date_time),
-      assigned_agent: canonicalEmail, transaction_type: String(candidate.type ?? ''),
+      transaction_agent: String(candidate.agent_email || ''), assigned_agent: effectiveEmail, transaction_type: String(candidate.type ?? ''),
       reason: correctingOffice
         ? `Source office corrected from ${row.source_office_corrections[row.source_office_corrections.length - 1].from_office} to ${row.office_code}. ${String(confirmation.reason).trim()}`
         : approval?.reason || comparison.explanation,
       requested_receipt: approval?.requested_receipt || null,
       confirmed_same_customer: approval ? true : null,
+      manager_override: managerOverride,
     },
     policy_link_error: '', assignment_conflict: '', match_status: 'matched',
     deduction_week_start: policyWeek.start, deduction_week_end: policyWeek.end,
   };
 };
-
 // Keep audit data in the existing details field: no destructive source updates
 // and no new schema is required. manager_email/imported_by remain the DB actor fields.
 const appendPolicyLinkAudit = (details, row, savedBy = '') => {
@@ -1237,23 +1345,27 @@ const appendPolicyLinkAudit = (details, row, savedBy = '') => {
 
 const getImportReadiness = (row, canonicalEmail) => {
   const errors = getImportParseErrors(row);
-  const requiresTransaction = isDisqualifiedRow(row);
+  const exception = getDisqualificationExceptionState(row);
+  const requiresTransaction = isDisqualifiedRow(row) && !exception.skip;
   const linkVerified = requiresTransaction && hasVerifiedPolicyLink(row, canonicalEmail);
   const transactionRequired = requiresTransaction && !linkVerified;
-  const ready = !row.is_duplicate && errors.length === 0 && !!canonicalEmail &&
-    !row.assignment_conflict && !transactionRequired;
+  const ready = !row.is_duplicate && !exception.skip && !exception.needsReview &&
+    errors.length === 0 && !!canonicalEmail && !row.assignment_conflict && !transactionRequired;
   const statusLabel = row.is_duplicate ? 'Already Imported'
-    : errors.length ? 'Fix Source Data'
-      : !canonicalEmail ? 'Select Agent'
-        : row.assignment_conflict ? 'Check Agent'
-          : transactionRequired ? 'Match Receipt Required' : 'Ready to import';
-  const issue = row.is_duplicate ? '' : errors.length ? errors.join(' ')
-    : !canonicalEmail ? 'Select a valid agent before importing.'
-      : row.assignment_conflict || (transactionRequired
-        ? row.policy_link_error || 'A verified policy transaction is required. Search by receipt number.' : '');
-  return { errors, requiresTransaction, linkVerified, transactionRequired, ready, statusLabel, issue };
+    : exception.skip ? 'Exception Approved — Skipped'
+      : exception.needsReview ? 'Check Exception Decision'
+        : errors.length ? 'Fix Source Data'
+          : !canonicalEmail ? 'Select Agent'
+            : row.assignment_conflict ? 'Check Agent'
+              : transactionRequired ? 'Match Receipt Required' : 'Ready to import';
+  const issue = row.is_duplicate ? ''
+    : exception.skip || exception.needsReview ? exception.message
+      : errors.length ? errors.join(' ')
+        : !canonicalEmail ? 'Select a valid agent before importing.'
+          : row.assignment_conflict || (transactionRequired
+            ? row.policy_link_error || 'A verified policy transaction is required. Search by receipt number.' : '');
+  return { errors, exception, skipped: exception.skip, requiresTransaction, linkVerified, transactionRequired, ready, statusLabel, issue };
 };
-
 const POLICY_TRANSACTION_COLUMNS = 'id,sync_key,agent_email,customer_id,customer,receipt_id,carrier_receipt,reference,date_time,type,policy,company,csr,office,premium,fee,total,voided';
 
 // Read every page. Never treat the first 150 office transactions as the whole day.
@@ -1378,7 +1490,7 @@ const buildImportReviewEntries = (rows, agents, config, selectedWeekStart) => {
     const agent = directory.get(reviewEmailKey(row.agent_email));
     const canonicalEmail = agent?.email || '';
     const readiness = getImportReadiness(row, canonicalEmail);
-    const { errors, ready, statusLabel, issue, transactionRequired, linkVerified, requiresTransaction } = readiness;
+    const { errors, ready, statusLabel, issue, transactionRequired, linkVerified, requiresTransaction, skipped, exception } = readiness;
     const isManual = !!row.manually_assigned || row.match_status === 'agent_assigned';
     const sourceDate = row.report_date || row.transaction_date || row.source_date_raw || '';
     const deductionWeek = config.usesTransactionWeek
@@ -1398,7 +1510,7 @@ const buildImportReviewEntries = (rows, agents, config, selectedWeekStart) => {
     return {
       row, originalIndex, key: `preview-${originalIndex}`, canonicalEmail, agent,
       errors, ready, isManual, statusLabel, issue, sourceDate, deductionWeek, notes,
-      transactionRequired, linkVerified, requiresTransaction,
+      transactionRequired, linkVerified, requiresTransaction, skipped, exception,
       searchText: fields.filter((value) => value !== null && value !== undefined)
         .join(' ').toLowerCase(),
     };
@@ -1414,6 +1526,7 @@ const filterImportReviewEntries = (entries, query, office, status, sort) => {
     if (status === 'ready' && !entry.ready) return false;
     if (status === 'manual' && !entry.isManual) return false;
     if (status === 'unlinked' && !entry.transactionRequired) return false;
+    if (status === 'skipped' && !entry.skipped) return false;
     return true;
   });
   return filtered.sort((a, b) => {
@@ -1529,11 +1642,16 @@ function PolicyReceiptMatcher({ row, originalIndex, agentOptions, onLink, onUnli
   const [reviewKind, setReviewKind] = useState('policy');
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideConfirmed, setOverrideConfirmed] = useState(false);
+  const [overrideOffice, setOverrideOffice] = useState('');
+  const [overrideAgent, setOverrideAgent] = useState('');
   const requestVersion = useRef(0);
   const contextKey = [row.source_fingerprint, row.policy_number, row.office_code,
     row.transaction_date, row.agent_email].join('|');
 
-  const resetConfirmation = () => { setOverrideKey(''); setOverrideReason(''); setOverrideConfirmed(false); setReviewKind('policy'); };
+  const resetConfirmation = () => {
+    setOverrideKey(''); setOverrideReason(''); setOverrideConfirmed(false); setReviewKind('policy');
+    setOverrideOffice(''); setOverrideAgent('');
+  };
   useEffect(() => {
     requestVersion.current += 1;
     setSearching(false); setResults(row.policy_search_results || []); setSearched(false); setError('');
@@ -1638,14 +1756,32 @@ function PolicyReceiptMatcher({ row, originalIndex, agentOptions, onLink, onUnli
           const officePlan = getPolicyOfficeCorrectionPlan(row, candidate, effectiveEmail, receipt, includeAlternate);
           const officeDiffers = !!officePlan.fromOffice && !!officePlan.toOffice && officePlan.fromOffice !== officePlan.toOffice;
           const canCorrectOffice = officeDiffers && officePlan.errors.length === 0;
+          const managerPlan = getManagerPolicyOverridePlan(row, candidate, effectiveEmail, receipt, includeAlternate);
+          const onlyCorrectableCoreProblems = coreProblems.length > 0 && coreProblems.every((problem) =>
+            /office differs|different agent|no usable agent email/i.test(problem));
+          const canManagerOverride = managerPlan.errors.length === 0 &&
+            (onlyCorrectableCoreProblems || (!comparison.matches && coreProblems.length === 0));
           const open = overrideKey === candidateKey;
           const officeOpen = open && reviewKind === 'office';
+          const managerOpen = open && reviewKind === 'manager';
           return (
             <article className={`${styles.policyCandidate} ${coreProblems.length ? styles.policyCandidateBlocked : !comparison.matches && !approved ? styles.policyCandidateReview : ''}`}
               key={candidateKey}>
               <div className={styles.policyCandidateTop}>
                 <strong>Receipt {candidate.receipt_id || 'missing'} | {candidate.type || 'No type'} | {candidate.policy || 'No policy'}</strong>
-                {canCorrectOffice ? (
+                {canManagerOverride && !selected ? (
+                  <button type="button" className={styles.policyMatchButton} disabled={disabled || searching}
+                    onClick={() => {
+                      setOverrideKey(managerOpen ? '' : candidateKey); setReviewKind('manager');
+                      setOverrideReason(''); setOverrideConfirmed(false);
+                      setOverrideOffice(policyOfficeKey(candidate.office) || policyOfficeKey(row.office_code));
+                      setOverrideAgent(isMissingTransactionAgent(candidate.agent_email)
+                        ? (canonical(row.agent_email) || effectiveEmail)
+                        : (canonical(candidate.agent_email) || candidate.agent_email));
+                    }}>
+                    {managerOpen ? 'Cancel override' : 'Manager override'}
+                  </button>
+                ) : canCorrectOffice ? (
                   <button type="button" className={styles.policyMatchButton} disabled={disabled || searching}
                     onClick={() => { setOverrideKey(officeOpen ? '' : candidateKey); setReviewKind('office'); setOverrideReason(''); setOverrideConfirmed(false); }}>
                     {officeOpen ? 'Cancel correction' : 'Review office correction'}
@@ -1671,6 +1807,49 @@ function PolicyReceiptMatcher({ row, originalIndex, agentOptions, onLink, onUnli
                   : approved ? <p className={styles.policyEligible}>Policy difference confirmed: {row.policy_link_override.reason}</p>
                     : <p className={styles.policyDifferenceText}>{comparison.explanation}
                         {!canConfirm && ' Enter and search the receipt number to enable a documented manual match.'}</p>}
+              {managerOpen && canManagerOverride && !selected && <div className={`${styles.policyOverridePanel} ${styles.policyManagerOverridePanel}`}>
+                <strong>Manager override — correct the source assignment and link this verified receipt</strong>
+                <p className={styles.policyHelpText}>Use this only after verifying the receipt/customer. The source row is corrected in this import only; the transaction table is not edited.</p>
+                <div className={styles.policyOverrideFields}>
+                  <label>Office to use
+                    <input type="text" value={overrideOffice} disabled={disabled || searching}
+                      onChange={(event) => setOverrideOffice(event.target.value.toUpperCase())} />
+                  </label>
+                  <label>Agent to charge / disqualify
+                    <select value={overrideAgent} disabled={disabled || searching}
+                      onChange={(event) => setOverrideAgent(event.target.value)}>
+                      <option value="">Select agent</option>
+                      {agentOptions.map((agent) => <option key={agent.email} value={agent.email}>
+                        {agent.full_name ? `${agent.full_name} — ${agent.email}` : agent.email}
+                      </option>)}
+                    </select>
+                  </label>
+                </div>
+                <dl className={styles.policyComparisonGrid}>
+                  <div><dt>Sheet office</dt><dd>{row.office_code || '(missing)'}</dd></div>
+                  <div><dt>Transaction office</dt><dd>{candidate.office || '(missing)'}</dd></div>
+                  <div><dt>Sheet agent</dt><dd>{canonical(row.agent_email) || row.agent_email || '(missing)'}</dd></div>
+                  <div><dt>Transaction agent</dt><dd>{candidate.agent_email || '(missing)'}</dd></div>
+                  <div><dt>Sheet policy</dt><dd>{row.policy_number || '(missing)'}</dd></div>
+                  <div><dt>Transaction policy</dt><dd>{candidate.policy || '(missing)'}</dd></div>
+                </dl>
+                <label className={styles.policyOverrideReason}>Why is this override correct?
+                  <textarea value={overrideReason} maxLength={1200} disabled={disabled || searching}
+                    placeholder="Example: receipt/customer verified. Transaction has Email Not Found, so I am keeping the agent from the manager sheet."
+                    onChange={(event) => setOverrideReason(event.target.value)} />
+                </label>
+                <label className={styles.policyConfirmCheck}>
+                  <input type="checkbox" checked={overrideConfirmed} disabled={disabled || searching}
+                    onChange={(event) => setOverrideConfirmed(event.target.checked)} />
+                  I verified this receipt belongs to this customer and approve these corrected values for this disqualification.
+                </label>
+                <button type="button" className={styles.importPrimaryButton}
+                  disabled={disabled || searching || !overrideConfirmed || overrideReason.trim().length < 10 || !overrideOffice || !overrideAgent}
+                  onClick={() => choose(candidate, { kind: 'manager_override', reason: overrideReason, confirmed: overrideConfirmed,
+                    requestedReceipt: receipt, includeAlternate, office_code: overrideOffice, agent_email: overrideAgent })}>
+                  Apply override and link receipt
+                </button>
+              </div>}
               {officeOpen && canCorrectOffice && !selected && <div className={`${styles.policyOverridePanel} ${styles.policyOfficeCorrectionPanel}`}>
                 <strong>Correct this record's source office and link the verified receipt</strong>
                 <dl className={styles.policyComparisonGrid}>
@@ -1816,7 +1995,7 @@ function ImportReviewTable({ entries, agentOptions, config, expandedRows, onTogg
             const expanded = expandedRows.has(entry.key);
             return (
               <React.Fragment key={entry.key}>
-                <tr className={!readOnly && !entry.ready ? styles.reviewAttentionRow : ''}
+                <tr className={!readOnly && !entry.ready && !entry.skipped ? styles.reviewAttentionRow : entry.skipped ? styles.reviewSkippedRow : ''}
                   data-original-index={entry.originalIndex}>
                   <td>
                     <div className={styles.reviewRowNumber}>
@@ -1949,7 +2128,8 @@ function ImportReviewWorkspace({ rows, agents, config, weekStart, onAssign, onLi
   const pageInfo = getImportReviewPage(filtered, page, pageSize);
   const duplicatePageInfo = getImportReviewPage(filteredDuplicates, duplicatePage, 10);
   const readyTotal = newEntries.filter((entry) => entry.ready).length;
-  const reviewTotal = newEntries.length - readyTotal;
+  const skippedTotal = newEntries.filter((entry) => entry.skipped).length;
+  const reviewTotal = newEntries.filter((entry) => !entry.ready && !entry.skipped).length;
   const hiddenReady = readyTotal - filtered.filter((entry) => entry.ready).length;
   const filtersActive = !!query || !!office || status !== 'all';
   const unlinkedCount = newEntries.filter((entry) => entry.transactionRequired).length;
@@ -2042,6 +2222,7 @@ function ImportReviewWorkspace({ rows, agents, config, weekStart, onAssign, onLi
             <option value="all">All new rows</option><option value="review">Needs review</option>
             <option value="ready">Ready to import</option><option value="manual">Manual / name assigned</option>
             {isPolicy && <option value="unlinked">Receipt match required</option>}
+            {isPolicy && <option value="skipped">Approved exceptions — skipped</option>}
           </select></label>
           <label>Sort by<select aria-label="Sort by" value={sort} disabled={busy}
             onChange={(event) => { setSort(event.target.value); setPage(1); }}>
@@ -2066,6 +2247,11 @@ function ImportReviewWorkspace({ rows, agents, config, weekStart, onAssign, onLi
               onClick={() => chooseStatus(status === 'unlinked' ? 'all' : 'unlinked')}>
               Receipt match required <strong>{unlinkedCount}</strong>
             </button>}
+            {isPolicy && skippedTotal > 0 && <button type="button" disabled={busy} aria-pressed={status === 'skipped'}
+              className={`${styles.reviewFilterChip} ${status === 'skipped' ? styles.reviewChipActive : ''}`}
+              onClick={() => chooseStatus(status === 'skipped' ? 'all' : 'skipped')}>
+              Approved exceptions skipped <strong>{skippedTotal}</strong>
+            </button>}
             {filtersActive && <button type="button" className={styles.reviewDetailsButton}
               onClick={resetFilters} disabled={busy}>Clear filters</button>}
           </div>
@@ -2082,7 +2268,8 @@ function ImportReviewWorkspace({ rows, agents, config, weekStart, onAssign, onLi
             <p>Search, office filters and pagination only change the view. They do not limit this import.</p>
             {(hiddenReady > 0 || reviewTotal > 0) && <p className={styles.reviewSaveWarning}>
               {hiddenReady > 0 ? `${hiddenReady} ready rows are hidden by the current filters and will also be imported. ` : ''}
-              {reviewTotal > 0 ? `${reviewTotal} rows needing review will not be imported.` : ''}
+              {reviewTotal > 0 ? `${reviewTotal} rows needing review will not be imported. ` : ''}
+              {skippedTotal > 0 ? `${skippedTotal} approved exception row(s) will be skipped.` : ''}
             </p>}
           </div>
           <button type="button" className={styles.importPrimaryButton} onClick={onSave}
@@ -2789,10 +2976,11 @@ const EnterViolation = () => {
     counts.total += 1;
     const state = getImportReadiness(row, getCanonicalAgentEmail(row.agent_email));
     if (row.is_duplicate) counts.duplicates += 1;
+    else if (state.skipped) counts.skipped += 1;
     else if (state.ready) counts.matched += 1;
     else counts.review += 1;
     return counts;
-  }, { total: 0, matched: 0, duplicates: 0, review: 0, unmatched: 0 });
+  }, { total: 0, matched: 0, duplicates: 0, review: 0, unmatched: 0, skipped: 0 });
 
   const buildImportedDetails = (row, savedBy = '') => {
     const parts = [`Imported from ${row.source_report_type} report.`];
@@ -2826,6 +3014,8 @@ const EnterViolation = () => {
     if (row.exception_by) parts.push(`Exception by: ${row.exception_by}.`);
     if (row.exception_yes) parts.push(`Exception Yes: ${row.exception_yes}.`);
     if (row.exception_no) parts.push(`Exception No: ${row.exception_no}.`);
+    const exceptionState = getDisqualificationExceptionState(row);
+    if (exceptionState.state !== 'none') parts.push(`Exception decision: ${exceptionState.state}.`);
     if (row.source_agent_email) {
       parts.push(`Sheet email: ${row.source_agent_email}.`);
     }
