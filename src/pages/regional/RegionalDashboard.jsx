@@ -536,6 +536,22 @@ export default function RegionalDashboard() {
     loadScoreboard();
   }, [loadScoreboard]);
 
+  useEffect(() => {
+    if (!supabaseClient) return undefined;
+
+    const channel = supabaseClient
+      .channel(`regional-scoreboard-${region || 'shared'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scoreboard_uploads' }, (payload) => {
+        const reportDate = payload?.new?.report_date || payload?.old?.report_date || localDateKey();
+        loadScoreboard(reportDate);
+      })
+      .subscribe();
+
+    return () => {
+      supabaseClient.removeChannel(channel);
+    };
+  }, [supabaseClient, region, loadScoreboard]);
+
   const handleScoreboardUpload = useCallback(async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';

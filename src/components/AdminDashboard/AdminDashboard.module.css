@@ -1581,3 +1581,1752 @@
   .regionGrid { grid-template-columns: 1fr; }
   .sectionTitleRow { flex-direction: column; }
 }
+
+/* =====================================================
+   SHARED G&P SCOREBOARD
+   ===================================================== */
+.scoreboardSection { overflow: visible; }
+
+.scoreboardLiveBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  border: 1px solid #abefc6;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #027a48;
+  padding: 6px 9px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+.scoreboardLiveBadge > span { width: 7px; height: 7px; border-radius: 50%; background: #12b76a; box-shadow: 0 0 0 4px rgba(18,183,106,.10); }
+
+.scoreboardOverviewCard {
+  overflow: hidden;
+  border: 1px solid #dfe4eb;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
+  box-shadow: 0 7px 20px rgba(15,23,42,.05);
+}
+.scoreboardOverviewTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 15px;
+  border-bottom: 1px solid #edf0f4;
+}
+.scoreboardDateLabel { display: block; color: #b48712; font-size: 10px; font-weight: 900; letter-spacing: .075em; }
+.scoreboardDate { display: block; margin-top: 5px; color: #172033; font-size: 18px; }
+.scoreboardAsOf { text-align: right; }
+.scoreboardAsOf span { display: block; color: #98a2b3; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .055em; }
+.scoreboardAsOf strong { display: block; margin-top: 4px; color: #344054; font-size: 15px; }
+
+.scoreboardMetricGrid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); background: #15191f; }
+.scoreboardMetricGrid > div { position: relative; padding: 18px 20px; }
+.scoreboardMetricGrid > div + div { border-left: 1px solid rgba(255,204,51,.16); }
+.scoreboardMetricGrid span { display: block; color: #ffcc33; font-size: 9px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.scoreboardMetricGrid strong { display: block; margin-top: 5px; color: #fff; font-size: 27px; line-height: 1; }
+.scoreboardMetricGrid small { display: block; margin-top: 5px; color: #aeb7c3; font-size: 9px; }
+
+.scoreboardUploadMeta { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 14px 20px; border-bottom: 1px solid #edf0f4; background: #fff; }
+.scoreboardUploadMeta > div:first-child span, .scoreboardRegionCount span { display: block; color: #98a2b3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.scoreboardUploadMeta > div:first-child strong { display: inline-block; margin-top: 3px; color: #344054; font-size: 12px; }
+.scoreboardUploadMeta > div:first-child small { margin-left: 7px; color: #b48712; font-size: 9px; font-weight: 900; }
+.scoreboardRegionCount { text-align: right; }
+.scoreboardRegionCount strong { display: block; margin-top: 2px; color: #101828; font-size: 20px; line-height: 1; }
+
+.hiddenScoreboardInput { display: none; }
+.scoreboardActions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; background: #fbfcfd; }
+.scoreboardActions button, .scoreboardModalUploadButton {
+  appearance: none;
+  border-radius: 10px;
+  padding: 9px 13px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+.scoreboardActions button:hover:not(:disabled), .scoreboardModalUploadButton:hover:not(:disabled) { transform: translateY(-1px); }
+.scoreboardActions button:disabled, .scoreboardModalUploadButton:disabled { cursor: wait; opacity: .58; }
+.scoreboardUploadButton, .scoreboardModalUploadButton { border: 1px solid #d7dde6; background: #fff; color: #344054; }
+.scoreboardViewButton { border: 1px solid #cf302c; background: linear-gradient(180deg, #ef493e 0%, #d93632 100%); color: #fff; box-shadow: 0 7px 16px rgba(239,73,62,.18); }
+.scoreboardEmpty { padding: 34px 20px; color: #98a2b3; font-size: 12px; text-align: center; }
+
+.scoreboardModalBackdrop { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; padding: 22px; background: rgba(10,14,20,.78); backdrop-filter: blur(3px); }
+.scoreboardModal { width: min(1240px, 96vw); max-height: 94vh; overflow: auto; border: 1px solid rgba(255,255,255,.09); border-radius: 18px; background: #f6f8fb; box-shadow: 0 30px 80px rgba(0,0,0,.34); }
+.scoreboardModalHeader { position: sticky; top: 0; z-index: 6; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px; border-bottom: 1px solid #2c323b; background: linear-gradient(120deg, #14171c 0%, #1b2027 62%, #242a32 100%); color: #fff; }
+.scoreboardModalEyebrow { display: block; color: #ffcc33; font-size: 10px; font-weight: 900; letter-spacing: .09em; }
+.scoreboardModalHeader h2 { margin: 5px 0 5px; color: #fff; font-size: 23px; letter-spacing: -.025em; }
+.scoreboardModalHeader p { margin: 0; color: #aeb7c3; font-size: 11px; }
+.scoreboardModalHeader p strong { color: #fff; }
+.scoreboardCloseButton { display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; background: rgba(255,255,255,.06); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
+.scoreboardCloseButton:hover { background: rgba(239,73,62,.22); border-color: rgba(239,73,62,.45); }
+
+.scoreboardToolbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid #e1e6ed; background: #fff; }
+.scoreboardScopeToggle, .scoreboardViewTabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid #e1e6ed; border-radius: 11px; background: #f4f6f8; }
+.scoreboardScopeToggle button, .scoreboardViewTabs button { border: 0; border-radius: 8px; background: transparent; color: #667085; padding: 7px 11px; font-size: 10px; font-weight: 900; cursor: pointer; }
+.scoreboardScopeToggle button:disabled { opacity: .45; cursor: not-allowed; }
+.scoreboardScopeActive, .scoreboardViewActive { background: #15191f !important; color: #ffcc33 !important; box-shadow: 0 3px 8px rgba(15,23,42,.13); }
+.scoreboardRegionSelect { min-width: 190px; border: 1px solid #d9e0e8; border-radius: 10px; background: #fff; color: #344054; padding: 8px 10px; font-size: 11px; font-weight: 800; outline: none; }
+.scoreboardRegionSelect:focus { border-color: #e5bd37; box-shadow: 0 0 0 3px rgba(255,204,51,.18); }
+.scoreboardToolbarSpacer { flex: 1; }
+.scoreboardModalUploadButton { border-color: #d8dee7; }
+
+.scoreboardBoardHeader { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 17px 20px 13px; background: #fff; }
+.scoreboardBoardHeader > div:first-child strong { display: block; color: #162033; font-size: 16px; }
+.scoreboardBoardHeader > div:first-child span { display: block; margin-top: 2px; color: #98a2b3; font-size: 9px; text-transform: uppercase; font-weight: 800; }
+.scoreboardBoardAsOf { text-align: right; }
+.scoreboardBoardAsOf span { display: block; color: #98a2b3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.scoreboardBoardAsOf strong { display: block; margin-top: 3px; color: #344054; font-size: 13px; }
+
+.scoreboardSummaryGrid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0 18px; overflow: hidden; border-radius: 13px; background: #15191f; }
+.scoreboardSummaryGrid > div { padding: 15px 18px; }
+.scoreboardSummaryGrid > div + div { border-left: 1px solid rgba(255,204,51,.16); }
+.scoreboardSummaryGrid span { display: block; color: #ffcc33; font-size: 9px; font-weight: 900; letter-spacing: .06em; }
+.scoreboardSummaryGrid strong { display: block; margin-top: 4px; color: #fff; font-size: 24px; }
+.scoreboardViewTabs { margin: 13px 18px 0; width: fit-content; background: #fff; }
+.scoreboardModalBody { padding: 14px 18px 20px; }
+.scoreboardMainGrid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.scoreboardRegionStack { display: flex; flex-direction: column; gap: 13px; }
+.scoreboardRegionCard { overflow: hidden; border: 1px solid #e0e5ec; border-radius: 13px; background: #fff; box-shadow: 0 4px 12px rgba(15,23,42,.035); }
+.scoreboardRegionTitle { min-height: 46px; display: flex; align-items: center; padding: 9px 13px; border-bottom: 1px solid #edf0f4; background: linear-gradient(180deg,#fff 0%,#fbfcfd 100%); }
+.scoreboardRegionTitle img { display: block; max-width: 168px; max-height: 30px; object-fit: contain; }
+.scoreboardRegionTitle strong { color: #344054; font-size: 12px; text-transform: uppercase; }
+.scoreboardTableHeader, .scoreboardTableRow, .scoreboardTotalRow { display: grid; grid-template-columns: minmax(120px, 2fr) repeat(3,minmax(70px,1fr)); align-items: center; }
+.scoreboardTableHeader { padding: 8px 12px; background: #f6f8fa; color: #667085; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.scoreboardTableRow { padding: 8px 12px; border-top: 1px solid #f0f2f5; color: #475467; font-size: 10px; }
+.scoreboardTableRow strong { color: #1d2939; }
+.scoreboardTableRow span:not(:first-child), .scoreboardTableHeader span:not(:first-child), .scoreboardTotalRow span { text-align: right; font-variant-numeric: tabular-nums; }
+.scoreboardTotalRow { padding: 9px 12px; border-top: 1px solid #ead47f; background: #fff8db; color: #775d0b; font-size: 10px; font-weight: 900; }
+.scoreboardLeadersRail { position: sticky; top: 160px; display: flex; flex-direction: column; gap: 13px; }
+.scoreboardRankingCard { overflow: hidden; border: 1px solid #e0e5ec; border-radius: 13px; background: #fff; }
+.scoreboardRankingTitle { padding: 11px 12px; border-bottom: 1px solid #edf0f4; background: #15191f; color: #ffcc33; font-size: 10px; font-weight: 900; letter-spacing: .055em; text-transform: uppercase; }
+.scoreboardRankingHeader, .scoreboardRankingRow { display: grid; grid-template-columns: 28px minmax(0,1fr) 42px 68px 60px; align-items: center; gap: 6px; }
+.scoreboardRankingHeader { padding: 7px 9px; background: #f6f8fa; color: #98a2b3; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.scoreboardRankingRow { padding: 8px 9px; border-top: 1px solid #f0f2f5; color: #667085; font-size: 9px; }
+.scoreboardRankingRow > span:nth-last-child(-n+3), .scoreboardRankingHeader > span:nth-last-child(-n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+.scoreboardRankingRow div { min-width: 0; }
+.scoreboardRankingRow div strong { display: block; overflow: hidden; color: #344054; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.scoreboardRankingRow div small { display: block; margin-top: 2px; color: #98a2b3; font-size: 8px; }
+.scoreboardRankNumber { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: #fff8db; color: #8b6911; font-weight: 900; }
+.scoreboardRankingEmpty { padding: 15px; color: #98a2b3; font-size: 10px; text-align: center; }
+.scoreboardAgentBoard { overflow: hidden; border: 1px solid #e0e5ec; border-radius: 13px; background: #fff; }
+.scoreboardAgentBoardHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #edf0f4; }
+.scoreboardAgentBoardHeader strong { color: #344054; font-size: 12px; }
+.scoreboardAgentBoardHeader span { color: #98a2b3; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.scoreboardAgentTable { overflow-x: auto; }
+.scoreboardAgentHeader, .scoreboardAgentRow { min-width: 760px; display: grid; grid-template-columns: minmax(180px,2fr) 85px minmax(120px,1fr) 60px 90px 90px; align-items: center; gap: 8px; }
+.scoreboardAgentHeader { padding: 8px 12px; background: #f6f8fa; color: #667085; font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.scoreboardAgentRow { padding: 9px 12px; border-top: 1px solid #f0f2f5; color: #667085; font-size: 10px; }
+.scoreboardAgentRow strong { color: #344054; }
+.scoreboardAgentRow span:nth-last-child(-n+3), .scoreboardAgentHeader span:nth-last-child(-n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 980px) {
+  .scoreboardMainGrid { grid-template-columns: 1fr; }
+  .scoreboardLeadersRail { position: static; display: grid; grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 700px) {
+  .scoreboardModalBackdrop { padding: 8px; }
+  .scoreboardModal { width: 100%; max-height: 97vh; border-radius: 14px; }
+  .scoreboardModalHeader { padding: 16px; }
+  .scoreboardModalHeader h2 { font-size: 19px; }
+  .scoreboardToolbar { align-items: stretch; flex-wrap: wrap; }
+  .scoreboardToolbarSpacer { display: none; }
+  .scoreboardRegionSelect { flex: 1; min-width: 150px; }
+  .scoreboardModalUploadButton { width: 100%; }
+  .scoreboardMetricGrid, .scoreboardSummaryGrid { grid-template-columns: 1fr; }
+  .scoreboardMetricGrid > div + div, .scoreboardSummaryGrid > div + div { border-left: 0; border-top: 1px solid rgba(255,204,51,.16); }
+  .scoreboardLeadersRail { grid-template-columns: 1fr; }
+  .scoreboardActions { flex-direction: column; }
+  .scoreboardActions button { width: 100%; }
+  .scoreboardOverviewTop { flex-direction: column; }
+  .scoreboardAsOf { text-align: left; }
+}
+
+/* =====================================================
+   ADMIN SCOREBOARD - SCREENSHOT VIEW
+   Mirrors the Regional Dashboard share/screenshot mode.
+   ===================================================== */
+.scoreboardScreenshotButton {
+  border: 1px solid #d8dee7;
+  border-radius: 10px;
+  background: #15191f;
+  color: #ffcc33;
+  padding: 9px 12px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .035em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.scoreboardScreenshotButton:hover {
+  border-color: #e5bd37;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .12);
+}
+
+.scoreboardScreenshotBackdrop {
+  place-items: start center;
+  overflow: auto;
+  padding: 18px;
+  background: #e9edf2;
+  backdrop-filter: none;
+}
+
+.scoreboardScreenshotMode {
+  width: min(1500px, 98vw);
+  max-height: none;
+  overflow: visible;
+  border-radius: 0;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, .18);
+}
+
+.scoreboardScreenshotMode .scoreboardModalHeader,
+.scoreboardScreenshotMode .scoreboardToolbar,
+.scoreboardScreenshotMode .scoreboardViewTabs {
+  display: none;
+}
+
+.scoreboardScreenshotControls {
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+  width: fit-content;
+  margin: 10px auto 12px;
+  display: inline-flex;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid #d8dee7;
+  border-radius: 12px;
+  background: rgba(255,255,255,.97);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .10);
+}
+
+.scoreboardScreenshotControls button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #667085;
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.scoreboardScreenshotControls button:last-child {
+  margin-left: 5px;
+  border-left: 1px solid #e4e7ec;
+  border-radius: 0 8px 8px 0;
+  color: #b42318;
+}
+
+.scoreboardScreenshotControlActive {
+  background: #15191f !important;
+  color: #ffcc33 !important;
+}
+
+.scoreboardScreenshotMode .scoreboardBoardHeader {
+  padding: 20px 26px 13px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.scoreboardScreenshotMode .scoreboardBoardHeader > div:first-child strong {
+  font-size: 20px;
+  letter-spacing: -.025em;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryGrid {
+  margin: 0 26px;
+}
+
+.scoreboardScreenshotMode .scoreboardModalBody {
+  padding: 18px 26px 26px;
+}
+
+.scoreboardScreenshotMode .scoreboardMainGrid {
+  grid-template-columns: 1fr;
+}
+
+.scoreboardScreenshotMode .scoreboardRegionStack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.scoreboardScreenshotMode .scoreboardRegionCard {
+  break-inside: avoid;
+  box-shadow: none;
+}
+
+.scoreboardScreenshotFooter {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.15fr) minmax(320px, .9fr) minmax(320px, .9fr);
+  gap: 14px;
+  margin-top: 16px;
+  align-items: stretch;
+}
+
+.scoreboardGrandTotal {
+  overflow: hidden;
+  border: 1px solid #20252c;
+  border-radius: 13px;
+  background: #15191f;
+}
+
+.scoreboardGrandTotalTitle {
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(255,204,51,.18);
+  color: #ffcc33;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.scoreboardGrandTotalMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+}
+
+.scoreboardGrandTotalMetrics > div {
+  padding: 18px 14px;
+}
+
+.scoreboardGrandTotalMetrics > div + div {
+  border-left: 1px solid rgba(255,204,51,.16);
+}
+
+.scoreboardGrandTotalMetrics span {
+  display: block;
+  color: #aeb7c3;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.scoreboardGrandTotalMetrics strong {
+  display: block;
+  margin-top: 4px;
+  color: #fff;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.scoreboardAgentScreenshotBoard {
+  border: 0;
+  background: transparent;
+}
+
+.scoreboardAgentScreenshotBoard .scoreboardAgentBoardHeader {
+  border: 1px solid #e0e5ec;
+  border-radius: 13px 13px 0 0;
+  background: #fff;
+}
+
+.scoreboardAgentScreenshotLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  align-items: start;
+}
+
+.scoreboardAgentScreenshotColumns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scoreboardAgentScreenshotColumn {
+  overflow: hidden;
+  border: 1px solid #e0e5ec;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.scoreboardAgentScreenshotHeader,
+.scoreboardAgentScreenshotRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.7fr) 42px 68px 60px;
+  gap: 6px;
+  align-items: center;
+}
+
+.scoreboardAgentScreenshotHeader {
+  padding: 7px 9px;
+  background: #15191f;
+  color: #ffcc33;
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.scoreboardAgentScreenshotRow {
+  padding: 7px 9px;
+  border-top: 1px solid #f0f2f5;
+  color: #667085;
+  font-size: 8.5px;
+}
+
+.scoreboardAgentScreenshotRow strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #344054;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreboardAgentScreenshotHeader span:not(:first-child),
+.scoreboardAgentScreenshotRow span {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1180px) {
+  .scoreboardScreenshotMode .scoreboardRegionStack { grid-template-columns: 1fr; }
+  .scoreboardScreenshotFooter { grid-template-columns: 1fr; }
+  .scoreboardAgentScreenshotLayout { grid-template-columns: 1fr; }
+  .scoreboardAgentScreenshotColumns { grid-template-columns: 1fr; }
+}
+
+/* ========================================================================== */
+/* ADMIN SCOREBOARD - EXACT REGIONAL SCREENSHOT VIEW                          */
+/* The rules below intentionally mirror RegionalDashboard.module.css.         */
+/* ========================================================================== */
+/* Daily G&P scoreboard */
+.scoreboardCard {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.scoreboardCardBody {
+  flex: 1;
+  padding: 18px;
+}
+
+.scoreboardAsOf span,
+.scoreboardAsOf strong,
+.scoreboardAsOf small {
+  display: block;
+}
+
+.scoreboardAsOf span {
+  color: #7c899e;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.scoreboardAsOf strong {
+  margin-top: 5px;
+  color: #152541;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.scoreboardAsOf small {
+  margin-top: 6px;
+  color: #7b879a;
+  font-size: 11px;
+}
+
+.scoreboardMiniMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.scoreboardMiniMetrics > div {
+  padding: 11px 10px;
+  border: 1px solid #e2e7ef;
+  border-radius: 10px;
+  background: #fafbfd;
+}
+
+.scoreboardMiniMetrics span,
+.scoreboardMiniMetrics strong {
+  display: block;
+}
+
+.scoreboardMiniMetrics span {
+  color: #8a96a8;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+}
+
+.scoreboardMiniMetrics strong {
+  margin-top: 4px;
+  color: #162641;
+  font-size: 16px;
+}
+
+.scoreboardUploader {
+  margin: 12px 0 0;
+  color: #77859a;
+  font-size: 10px;
+}
+
+.scoreboardCardEmpty {
+  display: grid;
+  min-height: 118px;
+  place-items: center;
+  color: #7b879b;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scoreboardInlineError {
+  margin-bottom: 12px;
+  padding: 10px 11px;
+  border: 1px solid #f1c2bd;
+  border-radius: 9px;
+  background: #fff5f4;
+  color: #a93226;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.scoreboardCardActions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 14px 16px;
+  border-top: 1px solid #e7ebf1;
+  background: #fbfcfe;
+}
+
+.hiddenFileInput { display: none; }
+
+.uploadButton,
+.viewScoreboardButton,
+.modalUploadButton,
+.modalCloseButton,
+.scoreboardScopeToggle button {
+  font: inherit;
+}
+
+.uploadButton,
+.modalUploadButton {
+  border: 0;
+  border-radius: 9px;
+  background: #14233b;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.uploadButton { padding: 10px 12px; }
+
+.viewScoreboardButton {
+  padding: 9px 11px;
+  border: 1px solid #d5dde8;
+  border-radius: 9px;
+  background: #fff;
+  color: #213653;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.uploadButton:disabled,
+.viewScoreboardButton:disabled,
+.modalUploadButton:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.modalBackdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 18, 31, .58);
+  backdrop-filter: blur(2px);
+}
+
+.scoreboardModal {
+  display: flex;
+  width: min(1220px, 96vw);
+  max-height: 92vh;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 18px;
+  background: #f3f5f8;
+  box-shadow: 0 28px 80px rgba(4, 12, 24, .35);
+}
+
+.scoreboardModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px 17px;
+  background: #151b24;
+  color: #fff;
+}
+
+.scoreboardModalEyebrow {
+  margin: 0 0 5px;
+  color: #ffc107;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: .12em;
+}
+
+.scoreboardModalHeader h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -.02em;
+}
+
+.scoreboardModalHeader p:not(.scoreboardModalEyebrow) {
+  margin: 7px 0 0;
+  color: #bfc8d4;
+  font-size: 11px;
+}
+
+.modalCloseButton {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .07);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scoreboardToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 18px;
+  border-bottom: 1px solid #d9e0e9;
+  background: #fff;
+}
+
+.scoreboardScopeToggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #d7dee8;
+  border-radius: 9px;
+  background: #f4f6f9;
+}
+
+.scoreboardScopeToggle button {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748c;
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.scoreboardScopeToggle .scopeActive {
+  background: #17253b;
+  color: #fff;
+  box-shadow: 0 2px 7px rgba(17, 31, 52, .15);
+}
+
+.modalUploadButton {
+  padding: 9px 13px;
+}
+
+.scoreboardModalBody {
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.scoreboardTitleBand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border: 1px solid #171d25;
+  border-radius: 8px 8px 0 0;
+  background: #1d222a;
+  color: #fff;
+}
+
+.scoreboardTitleBand strong {
+  color: #ffbf00;
+  font-size: 14px;
+  letter-spacing: .03em;
+}
+
+.scoreboardTitleBand span {
+  color: #c7d0dc;
+  font-size: 10px;
+}
+
+.scoreboardSummaryStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-right: 1px solid #d8dee7;
+  border-bottom: 1px solid #d8dee7;
+  border-left: 1px solid #d8dee7;
+  background: #fff;
+}
+
+.scoreboardSummaryStrip > div {
+  padding: 13px 15px;
+  border-left: 1px solid #e1e6ed;
+}
+.scoreboardSummaryStrip > div:first-child { border-left: 0; }
+.scoreboardSummaryStrip span,
+.scoreboardSummaryStrip strong { display: block; }
+.scoreboardSummaryStrip span {
+  color: #7a879a;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+}
+.scoreboardSummaryStrip strong {
+  margin-top: 4px;
+  color: #152541;
+  font-size: 19px;
+}
+
+.scoreboardSheetGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, .72fr);
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+
+.scoreboardRegionsColumn {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.regionScoreboardBlock,
+.scoreboardRanking,
+.agentScoreboardSection {
+  overflow: hidden;
+  border: 1px solid #d6dde7;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.regionScoreboardTitle,
+.scoreboardRankingTitle,
+.agentScoreboardHeader {
+  padding: 8px 10px;
+  background: #d6dbe2;
+  color: #222c3c;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .025em;
+  text-transform: uppercase;
+}
+
+.scoreboardTableHeader,
+.scoreboardTableRow,
+.scoreboardTotalRow {
+  display: grid;
+  grid-template-columns: minmax(95px, 1.25fr) 54px 90px 90px;
+  align-items: center;
+}
+
+.scoreboardTableHeader {
+  background: #eef1f4;
+  color: #4f5d71;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.scoreboardTableHeader span,
+.scoreboardTableRow > span,
+.scoreboardTableRow > strong,
+.scoreboardTotalRow > span,
+.scoreboardTotalRow > strong {
+  padding: 7px 8px;
+  border-left: 1px solid #e1e5eb;
+}
+
+.scoreboardTableHeader span:first-child,
+.scoreboardTableRow > *:first-child,
+.scoreboardTotalRow > *:first-child { border-left: 0; }
+
+.scoreboardTableRow {
+  min-height: 31px;
+  border-top: 1px solid #eceff3;
+  color: #25334a;
+  font-size: 10px;
+}
+
+.scoreboardTableRow > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoreboardTableRow > span:not(:nth-child(1)),
+.scoreboardTotalRow > span {
+  text-align: right;
+}
+
+.scoreboardTotalRow {
+  border-top: 1px solid #cfd6df;
+  background: #eceff2;
+  color: #1b2638;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.scoreboardLeadersColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scoreboardRankingTitle {
+  background: #e6b800;
+  color: #17202d;
+}
+
+.scoreboardRankingRow {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 7px 9px;
+  border-top: 1px solid #edf0f4;
+  font-size: 10px;
+}
+
+.scoreboardRankingRow:first-of-type { border-top: 0; }
+.scoreboardRankingRow > div { min-width: 0; }
+.scoreboardRankingRow strong,
+.scoreboardRankingRow small { display: block; }
+.scoreboardRankingRow strong {
+  overflow: hidden;
+  color: #213049;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scoreboardRankingRow small {
+  margin-top: 2px;
+  color: #8792a3;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.scoreboardRankingRow > span:not(.scoreboardRank) {
+  color: #4d5c72;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.scoreboardRank {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 6px;
+  background: #1d2633;
+  color: #ffca16;
+  font-size: 9px;
+  font-weight: 950;
+}
+.scoreboardRankingEmpty {
+  padding: 22px 12px;
+  color: #7e8999;
+  text-align: center;
+  font-size: 11px;
+}
+
+.agentScoreboardSection { margin-top: 16px; }
+.agentScoreboardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1e2530;
+  color: #ffc107;
+}
+.agentScoreboardHeader span {
+  color: #c2cad5;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.agentScoreboardTable .scoreboardTableHeader,
+.agentScoreboardTable .scoreboardTableRow {
+  grid-template-columns: minmax(180px, 1.7fr) 85px 60px 100px 100px;
+}
+
+@media (max-width: 980px) {
+  .scoreboardSheetGrid { grid-template-columns: 1fr; }
+  .scoreboardRegionsColumn { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .modalBackdrop { padding: 8px; }
+  .scoreboardModal { width: 100%; max-height: 96vh; border-radius: 12px; }
+  .scoreboardModalHeader { padding: 16px; }
+  .scoreboardModalHeader h2 { font-size: 20px; }
+  .scoreboardToolbar { align-items: stretch; flex-direction: column; }
+  .scoreboardScopeToggle { display: grid; grid-template-columns: 1fr 1fr; }
+  .scoreboardModalBody { padding: 10px; }
+  .scoreboardTitleBand { align-items: flex-start; flex-direction: column; }
+  .scoreboardCardActions { grid-template-columns: 1fr; }
+  .scoreboardTableHeader,
+  .scoreboardTableRow,
+  .scoreboardTotalRow { grid-template-columns: minmax(80px, 1.1fr) 42px 76px 76px; }
+  .agentScoreboardTable { overflow-x: auto; }
+  .agentScoreboardTable .scoreboardTableHeader,
+  .agentScoreboardTable .scoreboardTableRow { min-width: 560px; }
+}
+
+/* Screenshot/share mode */
+.scoreboardToolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.screenshotButton {
+  padding: 9px 13px;
+  border: 1px solid #cfd7e3;
+  border-radius: 9px;
+  background: #fff;
+  color: #223650;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.scoreboardShareHeader {
+  display: none;
+}
+
+.screenshotBackdrop {
+  padding: 10px;
+  background: #0b0d10;
+  backdrop-filter: none;
+}
+
+.screenshotControls {
+  position: fixed;
+  z-index: 1002;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 10px;
+  background: rgba(20, 25, 32, .92);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
+}
+
+.screenshotControls button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #d8dee8;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.screenshotControls .screenshotControlActive {
+  background: #f5c400;
+  color: #151a21;
+}
+
+.scoreboardScreenshotMode {
+  width: min(1540px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  border: 0;
+  border-radius: 0;
+  background: #08090b;
+  box-shadow: none;
+}
+
+.scoreboardScreenshotMode .scoreboardModalHeader,
+.scoreboardScreenshotMode .scoreboardToolbar {
+  display: none;
+}
+
+.scoreboardScreenshotMode .scoreboardModalBody {
+  overflow: auto;
+  padding: 10px;
+  background: #08090b;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 8px;
+  padding: 7px 10px 8px;
+  border-bottom: 1px solid #272c33;
+  color: #fff;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child {
+  text-align: right;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader strong,
+.scoreboardScreenshotMode .scoreboardShareHeader span {
+  display: block;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child strong {
+  color: #f4c400;
+  font-size: 17px;
+  letter-spacing: .035em;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child span,
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child span {
+  margin-top: 2px;
+  color: #aeb7c4;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child strong {
+  margin-top: 2px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.scoreboardScreenshotMode .scoreboardTitleBand {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 0;
+  border-color: #343b45;
+  background: #11151a;
+}
+
+.scoreboardScreenshotMode .scoreboardTitleBand strong {
+  font-size: 12px;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div {
+  padding: 6px 10px;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip span {
+  font-size: 7px;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip strong {
+  margin-top: 1px;
+  font-size: 14px;
+}
+
+.scoreboardScreenshotMode .scoreboardSheetGrid {
+  grid-template-columns: minmax(0, 1.9fr) minmax(250px, .55fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.scoreboardScreenshotMode .scoreboardRegionsColumn {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.scoreboardScreenshotMode .regionScoreboardBlock,
+.scoreboardScreenshotMode .scoreboardRanking,
+.scoreboardScreenshotMode .agentScoreboardSection {
+  border-radius: 0;
+  border-color: #343940;
+}
+
+.scoreboardScreenshotMode .regionScoreboardTitle {
+  display: grid;
+  min-height: 34px;
+  place-items: center;
+  padding: 3px 7px;
+  background: #11151a;
+  color: #f3f4f6;
+  font-size: 9px;
+}
+
+.regionScoreboardLogo {
+  display: block;
+  width: auto;
+  max-width: 118px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.scoreboardScreenshotMode .regionScoreboardLogo {
+  max-width: 104px;
+  height: 30px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader,
+.scoreboardScreenshotMode .scoreboardTableRow,
+.scoreboardScreenshotMode .scoreboardTotalRow {
+  grid-template-columns: minmax(88px, 1.2fr) 40px 74px 72px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader {
+  font-size: 7px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader span,
+.scoreboardScreenshotMode .scoreboardTableRow > span,
+.scoreboardScreenshotMode .scoreboardTableRow > strong,
+.scoreboardScreenshotMode .scoreboardTotalRow > span,
+.scoreboardScreenshotMode .scoreboardTotalRow > strong {
+  padding: 3px 5px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow {
+  min-height: 22px;
+  font-size: 8px;
+}
+
+.scoreboardScreenshotMode .scoreboardTotalRow {
+  min-height: 22px;
+  font-size: 8px;
+}
+
+.scoreboardScreenshotMode .scoreboardRankingTitle {
+  padding: 6px 8px;
+  font-size: 9px;
+}
+
+.scoreboardScreenshotMode .scoreboardRankingRow {
+  grid-template-columns: 19px minmax(0, 1fr) auto auto auto;
+  gap: 5px;
+  min-height: 29px;
+  padding: 4px 6px;
+  font-size: 8px;
+}
+
+.scoreboardScreenshotMode .scoreboardRankingRow small {
+  font-size: 7px;
+}
+
+.scoreboardScreenshotMode .scoreboardRank {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 7px;
+}
+
+.scoreboardScreenshotMode .agentScoreboardSection {
+  margin-top: 0;
+}
+
+.agentScreenshotBoard {
+  background: #08090b;
+}
+
+.scoreboardScreenshotMode .agentScoreboardHeader {
+  min-height: 34px;
+  padding: 6px 9px;
+  background: #11151a;
+  font-size: 10px;
+}
+
+.agentScreenshotLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 8px;
+  align-items: start;
+  background: #08090b;
+}
+
+.agentScreenshotColumns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.agentScreenshotColumn {
+  overflow: hidden;
+  border: 1px solid #343940;
+  background: #fff;
+}
+
+.agentScreenshotHeader,
+.agentScreenshotRow {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) 34px 65px 60px;
+  align-items: center;
+}
+
+.agentScreenshotHeader {
+  background: #e8ebef;
+  color: #202a39;
+  font-size: 7px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.agentScreenshotHeader > *,
+.agentScreenshotRow > * {
+  padding: 3px 4px;
+  border-left: 1px solid #d7dce3;
+}
+
+.agentScreenshotHeader > *:first-child,
+.agentScreenshotRow > *:first-child {
+  border-left: 0;
+}
+
+.agentScreenshotRow {
+  min-height: 21px;
+  border-top: 1px solid #e3e6ea;
+  color: #1d2633;
+  font-size: 7.5px;
+}
+
+.agentScreenshotRow strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentScreenshotRow span {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .scoreboardScreenshotMode .scoreboardSheetGrid,
+  .agentScreenshotLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .agentScreenshotColumns {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Compact one-shot screenshot layout */
+.scoreboardScreenshotMode {
+  width: min(1700px, calc(100vw - 12px));
+  max-height: calc(100vh - 12px);
+}
+
+.scoreboardScreenshotMode .scoreboardModalBody {
+  overflow: auto;
+  padding: 8px 10px 10px;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader {
+  align-items: center;
+  margin-bottom: 5px;
+  padding: 4px 8px 6px;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child strong {
+  font-size: 19px;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child span,
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child span {
+  font-size: 8px;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child strong {
+  font-size: 13px;
+}
+
+.scoreboardScreenshotMode .scoreboardTitleBand {
+  display: none;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip {
+  margin: 0 0 6px;
+  border: 1px solid #42474f;
+  border-radius: 0;
+  background: #fff;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div {
+  padding: 5px 8px;
+  background: #fff;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip span {
+  color: #44506a;
+  font-size: 7px;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip strong {
+  margin-top: 0;
+  color: #0f1e38;
+  font-size: 16px;
+}
+
+.scoreboardScreenshotMode .scoreboardSheetGrid {
+  display: block;
+  margin-top: 0;
+}
+
+.scoreboardScreenshotMode .scoreboardRegionsColumn {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 4px;
+  align-items: stretch;
+}
+
+.scoreboardScreenshotMode .regionScoreboardBlock {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid #3e444c;
+  background: #fff;
+}
+
+.scoreboardScreenshotMode .regionScoreboardTitle {
+  display: grid;
+  min-height: 104px;
+  place-items: center;
+  padding: 4px;
+  background: #0e1115;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.scoreboardScreenshotMode .regionScoreboardLogo {
+  width: 100%;
+  max-width: 170px;
+  height: 98px;
+  object-fit: contain;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader,
+.scoreboardScreenshotMode .scoreboardTableRow,
+.scoreboardScreenshotMode .scoreboardTotalRow {
+  grid-template-columns: minmax(76px, 1fr) 26px 48px 48px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader {
+  min-height: 18px;
+  background: #e6e8eb;
+  color: #111827;
+  font-size: 6.5px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader span,
+.scoreboardScreenshotMode .scoreboardTableRow > span,
+.scoreboardScreenshotMode .scoreboardTableRow > strong,
+.scoreboardScreenshotMode .scoreboardTotalRow > span,
+.scoreboardScreenshotMode .scoreboardTotalRow > strong {
+  padding: 2px 3px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow {
+  min-height: 17px;
+  font-size: 6.7px;
+  line-height: 1.05;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow > strong {
+  font-size: 6.8px;
+}
+
+.scoreboardScreenshotMode .scoreboardTotalRow {
+  margin-top: auto;
+  min-height: 20px;
+  background: #d6d8db;
+  color: #111827;
+  font-size: 7px;
+}
+
+.scoreboardScreenshotFooter {
+  display: grid;
+  grid-template-columns: minmax(260px, .8fr) minmax(330px, 1.15fr) minmax(330px, 1.15fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.scoreboardGrandTotal {
+  overflow: hidden;
+  border: 1px solid #3e444c;
+  background: #08090b;
+  color: #fff;
+}
+
+.scoreboardGrandTotalTitle {
+  display: grid;
+  min-height: 37px;
+  place-items: center;
+  color: #fff;
+  font-size: 21px;
+  font-weight: 950;
+  letter-spacing: .02em;
+}
+
+.scoreboardGrandTotalMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 12px 12px;
+  border: 1px solid #d4d7dc;
+  background: #fff;
+}
+
+.scoreboardGrandTotalMetrics > div {
+  padding: 5px 6px;
+  border-left: 1px solid #d4d7dc;
+  text-align: center;
+}
+
+.scoreboardGrandTotalMetrics > div:first-child {
+  border-left: 0;
+}
+
+.scoreboardGrandTotalMetrics span,
+.scoreboardGrandTotalMetrics strong {
+  display: block;
+}
+
+.scoreboardGrandTotalMetrics span {
+  color: #34435b;
+  font-size: 7px;
+  font-weight: 950;
+}
+
+.scoreboardGrandTotalMetrics strong {
+  margin-top: 2px;
+  color: #0f1e38;
+  font-size: 15px;
+}
+
+.scoreboardScreenshotFooter .scoreboardRanking {
+  border-radius: 0;
+  border-color: #3e444c;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingTitle {
+  padding: 5px 7px;
+  background: #08090b;
+  color: #f5c400;
+  text-align: center;
+  font-size: 11px;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingRow {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
+  min-height: 24px;
+  padding: 3px 5px;
+  font-size: 7.5px;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingRow small {
+  display: inline;
+  margin: 0 0 0 4px;
+  font-size: 6.5px;
+}
+
+.scoreboardScreenshotFooter .scoreboardRank {
+  width: 16px;
+  height: 16px;
+  font-size: 6.5px;
+}
+
+@media (max-width: 1300px) {
+  .scoreboardScreenshotMode .scoreboardRegionsColumn {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
+  .scoreboardScreenshotMode .regionScoreboardTitle {
+    min-height: 88px;
+  }
+
+  .scoreboardScreenshotMode .regionScoreboardLogo {
+    max-width: 145px;
+    height: 82px;
+  }
+}
+
+/* ========================================================================== */
+/* Screenshot scoreboard readability pass - additive overrides only.          */
+/* Keeps the complete existing dashboard CSS intact.                          */
+/* ========================================================================== */
+
+/* Hide only the large duplicate screenshot heading; keep date/as-of info. */
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child strong {
+  display: none;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader {
+  justify-content: center;
+  min-height: 28px;
+  margin-bottom: 6px;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid #2d333b;
+  text-align: center;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child,
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:first-child span,
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child span {
+  margin: 0;
+  color: #d1d5db;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+.scoreboardScreenshotMode .scoreboardShareHeader > div:last-child strong {
+  margin: 0;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+/* Modern, restrained company KPI colors: NB/AVG blue, BF black. */
+.scoreboardScreenshotMode .scoreboardSummaryStrip {
+  overflow: hidden;
+  border: 1px solid #bfc6d0;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div {
+  padding: 5px 8px 6px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip span {
+  color: #344054;
+  font-size: 7.5px;
+  font-weight: 950;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip strong {
+  margin-top: 1px;
+  color: #101828;
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: -.015em;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div:nth-child(1) strong,
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div:nth-child(3) strong {
+  color: #184a8b;
+}
+
+.scoreboardScreenshotMode .scoreboardSummaryStrip > div:nth-child(2) strong {
+  color: #111111;
+}
+
+/* Region tables: larger, darker text without making the board taller. */
+.scoreboardScreenshotMode .scoreboardTableHeader {
+  min-height: 19px;
+  background: #e9edf2;
+  color: #111827;
+  font-size: 7px;
+  font-weight: 950;
+}
+
+.scoreboardScreenshotMode .scoreboardTableHeader span,
+.scoreboardScreenshotMode .scoreboardTableRow > span,
+.scoreboardScreenshotMode .scoreboardTableRow > strong,
+.scoreboardScreenshotMode .scoreboardTotalRow > span,
+.scoreboardScreenshotMode .scoreboardTotalRow > strong {
+  padding: 2.5px 4px;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow {
+  min-height: 18px;
+  color: #111827;
+  font-size: 7.5px;
+  font-weight: 700;
+  line-height: 1.08;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow > strong {
+  color: #0f172a;
+  font-size: 7.6px;
+  font-weight: 900;
+}
+
+.scoreboardScreenshotMode .scoreboardTableRow > span {
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.scoreboardScreenshotMode .scoreboardTotalRow {
+  min-height: 21px;
+  color: #111827;
+  font-size: 7.7px;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keep logos prominent, centered, and readable. */
+.scoreboardScreenshotMode .regionScoreboardTitle {
+  min-height: 108px;
+  padding: 4px;
+  background: #0c1015;
+}
+
+.scoreboardScreenshotMode .regionScoreboardLogo {
+  width: 100%;
+  max-width: 176px;
+  height: 101px;
+  object-fit: contain;
+}
+
+/* Cleaner bottom summary: company values use only blue/black. */
+.scoreboardGrandTotalMetrics span {
+  color: #344054;
+  font-size: 7.5px;
+  font-weight: 950;
+}
+
+.scoreboardGrandTotalMetrics strong {
+  margin-top: 2px;
+  color: #101828;
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreboardGrandTotalMetrics > div:nth-child(1) strong,
+.scoreboardGrandTotalMetrics > div:nth-child(3) strong {
+  color: #184a8b;
+}
+
+.scoreboardGrandTotalMetrics > div:nth-child(2) strong {
+  color: #111111;
+}
+
+/* Top-five panels: clearer numbers with minimal color. */
+.scoreboardScreenshotFooter .scoreboardRankingTitle {
+  background: #0b0f14;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingRow {
+  min-height: 25px;
+  color: #111827;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingRow strong {
+  color: #111827;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingRow > span:not(.scoreboardRank) {
+  color: #111827;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreboardScreenshotFooter .scoreboardRank {
+  background: #16263f;
+  color: #ffffff;
+}
+
+/* Screenshot controls stay outside the content area and visually quiet. */
+.screenshotControls .screenshotControlActive {
+  background: #173f73;
+  color: #ffffff;
+}
+
+
+/* Top 5 column headers — match the regional office-table treatment. */
+.scoreboardRankingHeader {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-top: 1px solid #d9dee6;
+  border-bottom: 1px solid #d9dee6;
+  background: #eef1f4;
+  color: #26354b;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.scoreboardRankingHeader span:nth-child(n+3) {
+  text-align: right;
+}
+
+.scoreboardScreenshotMode .scoreboardRankingHeader {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
+  gap: 5px;
+  min-height: 18px;
+  padding: 3px 5px;
+  background: #e8ebef;
+  color: #111827;
+  font-size: 6.8px;
+}
+
+.scoreboardScreenshotFooter .scoreboardRankingHeader {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
+  gap: 5px;
+  padding: 3px 5px;
+  background: #e8ebef;
+  color: #111827;
+  font-size: 6.8px;
+  font-weight: 950;
+}
+
+/* Admin-only region selector inside the shared toolbar. */
+.scoreboardRegionSelectAdmin {
+  min-width: 180px;
+  padding: 7px 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 9px;
+  background: #fff;
+  color: #223650;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 850;
+  outline: none;
+}
+.scoreboardRegionSelectAdmin:focus {
+  border-color: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(23, 63, 115, .10);
+}
