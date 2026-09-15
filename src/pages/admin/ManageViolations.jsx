@@ -70,8 +70,17 @@ const recordKind = (row, table) => table === 'disqualified_policies' ? 'disquali
   : /SCANNING|^SV$/i.test(clean(row.violation_type)) ? 'scanning'
     : /^AR(?:\s|$)/i.test(clean(row.violation_type)) ? 'ar' : 'other';
 const isVoided = (row) => ['VOID', 'VOIDED'].includes(upper(row.status));
-// Match the existing commission status rule; do not infer approval from source exceptions.
-const isActivePolicy = (row) => !isVoided(row);
+const INACTIVE_POLICY_STATUSES = new Set([
+  'CLEARED',
+  'RESOLVED',
+  'REMOVED',
+  'REINSTATED',
+  'CLOSED',
+  'VOID',
+  'VOIDED',
+]);
+const isActivePolicy = (row) => !INACTIVE_POLICY_STATUSES.has(upper(row.status));
+const policyDisplayStatus = (row) => isActivePolicy(row) ? 'DISQUALIFIED' : (upper(row.status) || 'CLEARED');
 const sourceLabel = (row) => SOURCE_LABELS[upper(row.source_report_type)] || (row.import_batch_id ? 'Imported / type unavailable' : 'Manual / legacy');
 const noteText = (details) => clean(details).split('\n').filter((line) => !/^\[(?:POLICY_.*AUDIT|MANAGE_STATUS_AUDIT)_V\d+\]/.test(line.trim())).join('\n');
 const auditEntries = (details) => clean(details).split('\n').flatMap((line) => {
@@ -230,7 +239,278 @@ const exportRecords = (rows, directory, name) => {
   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${name}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-function RecordDetails({ record, ledger, ledgerError, directory, onEdit, onChangeStatus, onDelete, busy }) {
+
+function PolicyManagement({ record, onMutation }) {
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState('');
+  const [published, setPublished] = useState(false);
+  const [publicationKnown, setPublicationKnown] = useState(false);
+  const [publicationError, setPublicationError] = useState('');
+  const [note, setNote] = useState('');
+  const [action, setAction] = useState('NOTE');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const currentStatus = policyDisplayStatus(record);
+  const cleared = !isActivePolicy(record);
+
+  const loadPolicyManagement = useCallback(async () => {
+    setLoadingHistory(true);
+    setHistoryError('');
+    setPublicationError('');
+
+    const [{ data: updates, error: updatesError }, publicationResult] = await Promise.all([
+      supabase
+        .from('disqualified_policy_updates')
+        .select('id,disqualified_policy_id,action,note,created_by,created_at')
+        .eq('disqualified_policy_id', record.id)
+        .order('created_at', { ascending: true }),
+      record.email && record.week
+        ? supabase
+            .from('agent_commission_records')
+            .select('id')
+            .eq('agent_email', record.email)
+            .eq('week_start_date', record.week)
+            .limit(1)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (updatesError) {
+      setHistory([]);
+      setHistoryError(updatesError.message || 'Unable to load policy history.');
+    } else {
+      setHistory(updates || []);
+    }
+
+    if (publicationResult.error) {
+      setPublished(false);
+      setPublicationKnown(false);
+      setPublicationError(publicationResult.error.message || 'Unable to verify publication status.');
+    } else {
+      setPublished((publicationResult.data || []).length > 0);
+      setPublicationKnown(true);
+    }
+
+    setLoadingHistory(false);
+  }, [record.id, record.email, record.week]);
+
+  useEffect(() => {
+    loadPolicyManagement();
+  }, [loadPolicyManagement]);
+
+  const submitAction = async () => {
+    const trimmed = clean(note);
+    if (saving || trimmed.length < 3) return;
+
+    if (action === 'REOPENED' && (!publicationKnown || published)) return;
+
+    const actionLabel = action === 'NOTE' ? 'add this update'
+      : action === 'CLEARED' ? 'clear this disqualified policy'
+        : 'reopen this disqualified policy';
+
+    if (action !== 'NOTE' && !window.confirm(
+      `Are you sure you want to ${actionLabel}?\n\nReason: ${trimmed}`
+    )) return;
+
+    setSaving(true);
+    setMessage('');
+
+    try {
+      const rpcName = action === 'NOTE'
+        ? 'add_disqualified_policy_update'
+        : action === 'CLEARED'
+          ? 'clear_disqualified_policy'
+          : 'reopen_disqualified_policy';
+
+      const { error } = await supabase.rpc(rpcName, {
+        p_policy_id: record.id,
+        p_note: trimmed,
+      });
+
+      if (error) throw error;
+
+      setNote('');
+      setMessage(action === 'NOTE'
+        ? 'Update added.'
+        : action === 'CLEARED'
+          ? 'Policy cleared.'
+          : 'Policy reopened as disqualified.');
+
+      await loadPolicyManagement();
+      onMutation?.();
+    } catch (error) {
+      setMessage(error.message || 'Policy update failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <section className={styles.policyManagement}>
+    <div className={styles.policyManagementHeader}>
+      <div>
+        <span className={styles.eyebrow}>POLICY MANAGEMENT</span>
+        <h4>Underwriting follow-up</h4>
+        <p>Updates are visible to the agent in their commission details. Clearing removes the active disqualification.</p>
+      </div>
+      <Badge tone={cleared ? 'green' : 'purple'}>{currentStatus}</Badge>
+    </div>
+
+    <div className={styles.policyManagementMeta}>
+      <div>
+        <span>Commission week</span>
+        <strong>{weekLabel(record.week)}</strong>
+      </div>
+      <div>
+        <span>Publication status</span>
+        <strong>
+          {!publicationKnown
+            ? 'Checking...'
+            : published
+              ? 'PUBLISHED - financial status locked'
+              : 'UNPUBLISHED'}
+        </strong>
+      </div>
+    </div>
+
+    {publicationError && <Message danger>{publicationError} Reopening stays disabled until publication status can be verified.</Message>}
+
+    <div className={styles.policyActionChooser}>
+      <button
+        type="button"
+        className={action === 'NOTE' ? styles.policyActionActive : ''}
+        onClick={() => setAction('NOTE')}
+        disabled={saving}
+      >
+        Add Update
+      </button>
+
+      {!cleared ? (
+        <button
+          type="button"
+          className={action === 'CLEARED' ? styles.policyActionActive : ''}
+          onClick={() => setAction('CLEARED')}
+          disabled={saving}
+        >
+          Clear Policy
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={action === 'REOPENED' ? styles.policyActionActive : ''}
+          onClick={() => setAction('REOPENED')}
+          disabled={saving || !publicationKnown || published}
+          title={published ? 'Published commission weeks cannot be reopened.' : ''}
+        >
+          Reopen Disqualification
+        </button>
+      )}
+    </div>
+
+    {cleared && published && (
+      <div className={styles.policyLockedNotice}>
+        <strong>Reopening is locked.</strong>
+        <span>This commission week has already been published. You can still add UW notes, but the policy cannot be redisqualified for this week.</span>
+      </div>
+    )}
+
+    <div className={styles.policyActionForm}>
+      <label>
+        {action === 'NOTE'
+          ? 'UW update'
+          : action === 'CLEARED'
+            ? 'Reason for clearing'
+            : 'Reason for reopening'}
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          maxLength={1500}
+          rows={3}
+          placeholder={action === 'NOTE'
+            ? 'Example: Agent submitted the missing registration. Waiting for carrier verification.'
+            : action === 'CLEARED'
+              ? 'Example: Required documents received and verified.'
+              : 'Explain why the policy needs to be disqualified again.'}
+          disabled={saving}
+        />
+      </label>
+
+      <button
+        type="button"
+        className={action === 'CLEARED' ? styles.policyClearButton : styles.policySaveButton}
+        onClick={submitAction}
+        disabled={
+          saving ||
+          clean(note).length < 3 ||
+          (action === 'REOPENED' && (!publicationKnown || published))
+        }
+      >
+        {saving
+          ? 'Saving...'
+          : action === 'NOTE'
+            ? 'Add Update'
+            : action === 'CLEARED'
+              ? 'Clear Policy'
+              : 'Reopen Policy'}
+      </button>
+    </div>
+
+    {message && (
+      <div className={message.toLowerCase().includes('failed') || message.toLowerCase().includes('error')
+        ? styles.policyActionError
+        : styles.policyActionSuccess}>
+        {message}
+      </div>
+    )}
+
+    <div className={styles.policyHistory}>
+      <div className={styles.policyHistoryHeader}>
+        <div>
+          <strong>Update history</strong>
+          <span>{history.length} recorded update{history.length === 1 ? '' : 's'}</span>
+        </div>
+        <button type="button" onClick={loadPolicyManagement} disabled={loadingHistory || saving}>Refresh</button>
+      </div>
+
+      <div className={styles.policyHistoryOriginal}>
+        <div className={styles.policyHistoryMarker} />
+        <div>
+          <span>{displayTime(record.created_at || record.reported_date)}</span>
+          <strong>DISQUALIFIED</strong>
+          <p>{record.notes || 'No original reason stored.'}</p>
+          <small>Original imported disqualification</small>
+        </div>
+      </div>
+
+      {loadingHistory ? (
+        <div className={styles.policyHistoryEmpty}>Loading policy updates...</div>
+      ) : historyError ? (
+        <Message danger>{historyError}</Message>
+      ) : history.length ? (
+        <div className={styles.policyHistoryList}>
+          {history.map((entry) => (
+            <div className={styles.policyHistoryItem} key={entry.id}>
+              <div className={styles.policyHistoryMarker} />
+              <div className={styles.policyHistoryContent}>
+                <div className={styles.policyHistoryTop}>
+                  <Badge tone={entry.action === 'CLEARED' ? 'green' : entry.action === 'REOPENED' ? 'amber' : 'blue'}>
+                    {entry.action === 'NOTE' ? 'UPDATE' : entry.action}
+                  </Badge>
+                  <span>{displayTime(entry.created_at)}</span>
+                </div>
+                <p>{entry.note}</p>
+                <small>{entry.created_by || 'Manager'}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={styles.policyHistoryEmpty}>No UW follow-up updates have been recorded yet.</div>
+      )}
+    </div>
+  </section>;
+}
+
+function RecordDetails({ record, ledger, ledgerError, directory, onEdit, onChangeStatus, onDelete, onPolicyMutation, busy }) {
   const [nextStatus, setNextStatus] = useState(record.status || 'Pending');
   const [reason, setReason] = useState('');
   const issues = attentionReasons(record, directory);
@@ -238,43 +518,110 @@ function RecordDetails({ record, ledger, ledgerError, directory, onEdit, onChang
   const repayment = !dp && ledger ? makeLedgerSummary(ledger, record) : null;
   const canDelete = !record.import_batch_id && !record.source_fingerprint && !record.reconciled_at && !(finite(record.amount_paid) > 0)
     && (dp || (!!ledger && !ledgerError && !repayment?.entries.length));
+
   return <div className={styles.recordDetails}>
-    <div className={styles.detailTitle}><div><span className={styles.eyebrow}>RECORD DETAILS</span><h3>{record.client_name || 'Client not recorded'}</h3></div>
-      <button type="button" onClick={() => onEdit(record)} disabled={busy}>Edit / match receipt</button></div>
-    {!!issues.length && <Message danger>{issues.join(' \u00b7 ')}</Message>}
+    <div className={styles.detailTitle}>
+      <div>
+        <span className={styles.eyebrow}>RECORD DETAILS</span>
+        <h3>{record.client_name || 'Client not recorded'}</h3>
+      </div>
+      <button type="button" onClick={() => onEdit(record)} disabled={busy}>Edit / match receipt</button>
+    </div>
+
+    {!!issues.length && <Message danger>{issues.join(' · ')}</Message>}
+
     <dl className={styles.detailGrid}>{[
-      ['Agent email', record.agent_email], ['Source date', displayDate(record.sourceDate)], ['Commission week', weekLabel(record.week)],
-      ['Scheduled payday', displayDate(scheduledPayday(record.week))], ['Entered at (Pacific)', displayTime(record.created_at || record.reported_date)],
-      ['Entered by', record.manager_email], ['Policy', record.policy_number], ['Customer ID', record.customer_id], ['Reference', record.reference_id],
-      ['Linked receipt', record.linked_receipt_id], ['Transaction sync key', record.linked_sync_key], ['Import source', sourceLabel(record)],
-      ['Import batch', record.import_batch_id], ['Region recorded', record.region], ['Record ID', record.id],
-    ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{clean(value) || '\u2014'}</dd></div>)}</dl>
-    <div className={styles.notePanel}><strong>Reason / source notes</strong><p>{record.notes || 'No explanation stored.'}</p></div>
-    {record.audits.length > 0 && <details className={styles.auditPanel}><summary>View {record.audits.length} stored audit record(s)</summary>
-      {record.audits.map((audit, index) => <pre key={index}>{JSON.stringify(audit, null, 2)}</pre>)}</details>}
-    {!dp && <section className={styles.repaymentPanel}><h4>Repayment &amp; balance evidence</h4>
-      <p>Record status is not payment status. Credits may include prior-payment reconciliation, waivers, or adjustments.</p>
-      {ledgerError ? <Message>Ledger unavailable: {ledgerError}. No balance is assumed.</Message>
-        : !ledger ? <p>Loading linked ledger activity...</p>
-          : repayment.known ? <><div className={styles.repaymentValues}><span>Ledger charges <b>{money(repayment.charges)}</b></span>
-            <span>Payments / credits <b>{money(repayment.credited)}</b></span><span>Remaining <b>{money(repayment.balance)}</b></span><Badge tone={repayment.balance > 0 ? 'amber' : 'green'}>{repayment.state}</Badge></div>
-            <div className={styles.ledgerScroll}><table className={styles.miniTable}><thead><tr><th>Date</th><th>Activity</th><th>Amount</th><th>Why / reference</th></tr></thead>
-              <tbody>{repayment.entries.map((entry) => <tr key={entry.id}><td>{displayDate(entry.entry_date)}</td><td>{entry.entry_type}</td><td>{money(entry.amount)}</td>
-                <td>{entry.description || entry.reference || '\u2014'}</td></tr>)}</tbody></table></div></>
-            : <Message>{repayment.state}. {repayment.snapshot != null ? `Stored remaining-balance snapshot: ${money(repayment.snapshot)}${repayment.snapshotAt ? `, reconciled ${displayTime(repayment.snapshotAt)}` : ''}. It is not a verified live ledger balance.` : 'No linked ledger entries were found; the original fee is not assumed to be the current balance.'}</Message>}
-    </section>}
-    <details className={styles.management}><summary>Management actions</summary>
-      <p>Pending / Charged / Voided are record statuses, not proof of payment. This page does not apply commission repayments or finalize payroll.</p>
-      <div className={styles.actionForm}><label>Record status<select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)} disabled={busy}>
-        {!['Pending', 'Charged', 'Voided'].includes(record.status || 'Pending') && <option value={record.status}>{record.status}</option>}
-        <option>Pending</option><option>Charged</option><option>Voided</option></select></label>
-        <label>Reason for this change<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="Required for the audit trail" disabled={busy} /></label>
-        <button type="button" disabled={busy || nextStatus === (record.status || 'Pending') || reason.trim().length < 10}
-          onClick={() => onChangeStatus(record, nextStatus, reason)}>Save status</button></div>
-      <p>For ledger-backed AR/SV records, voiding or restoring is blocked here until a coordinated ledger adjustment is available.</p>
-      <button className={styles.dangerButton} type="button" disabled={busy || !canDelete} onClick={() => onDelete(record)}>Delete unlinked manual record</button>
-      {!canDelete && <small>Imported, reconciled, or ledger-linked records are protected from deletion so history and duplicate detection remain intact.</small>}
-    </details>
+      ['Agent email', record.agent_email],
+      ['Source date', displayDate(record.sourceDate)],
+      ['Commission week', weekLabel(record.week)],
+      ['Scheduled payday', displayDate(scheduledPayday(record.week))],
+      ['Entered at (Pacific)', displayTime(record.created_at || record.reported_date)],
+      ['Entered by', record.manager_email],
+      ['Policy', record.policy_number],
+      ['Customer ID', record.customer_id],
+      ['Reference', record.reference_id],
+      ['Linked receipt', record.linked_receipt_id],
+      ['Transaction sync key', record.linked_sync_key],
+      ['Import source', sourceLabel(record)],
+      ['Import batch', record.import_batch_id],
+      ['Region recorded', record.region],
+      ['Record ID', record.id],
+    ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{clean(value) || '—'}</dd></div>)}</dl>
+
+    <div className={styles.notePanel}>
+      <strong>{dp ? 'Original disqualification reason' : 'Reason / source notes'}</strong>
+      <p>{record.notes || 'No explanation stored.'}</p>
+    </div>
+
+    {record.audits.length > 0 && <details className={styles.auditPanel}>
+      <summary>View {record.audits.length} stored audit record(s)</summary>
+      {record.audits.map((audit, index) => <pre key={index}>{JSON.stringify(audit, null, 2)}</pre>)}
+    </details>}
+
+    {dp ? (
+      <PolicyManagement record={record} onMutation={onPolicyMutation} />
+    ) : (
+      <>
+        <section className={styles.repaymentPanel}>
+          <h4>Repayment &amp; balance evidence</h4>
+          <p>Record status is not payment status. Credits may include prior-payment reconciliation, waivers, or adjustments.</p>
+          {ledgerError ? <Message>Ledger unavailable: {ledgerError}. No balance is assumed.</Message>
+            : !ledger ? <p>Loading linked ledger activity...</p>
+              : repayment.known ? <>
+                <div className={styles.repaymentValues}>
+                  <span>Ledger charges <b>{money(repayment.charges)}</b></span>
+                  <span>Payments / credits <b>{money(repayment.credited)}</b></span>
+                  <span>Remaining <b>{money(repayment.balance)}</b></span>
+                  <Badge tone={repayment.balance > 0 ? 'amber' : 'green'}>{repayment.state}</Badge>
+                </div>
+                <div className={styles.ledgerScroll}>
+                  <table className={styles.miniTable}>
+                    <thead><tr><th>Date</th><th>Activity</th><th>Amount</th><th>Why / reference</th></tr></thead>
+                    <tbody>{repayment.entries.map((entry) => <tr key={entry.id}>
+                      <td>{displayDate(entry.entry_date)}</td>
+                      <td>{entry.entry_type}</td>
+                      <td>{money(entry.amount)}</td>
+                      <td>{entry.description || entry.reference || '—'}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </>
+                : <Message>{repayment.state}. {repayment.snapshot != null
+                  ? `Stored remaining-balance snapshot: ${money(repayment.snapshot)}${repayment.snapshotAt ? `, reconciled ${displayTime(repayment.snapshotAt)}` : ''}. It is not a verified live ledger balance.`
+                  : 'No linked ledger entries were found; the original fee is not assumed to be the current balance.'}</Message>}
+        </section>
+
+        <details className={styles.management}>
+          <summary>Management actions</summary>
+          <p>Pending / Charged / Voided are record statuses, not proof of payment. This page does not apply commission repayments or finalize payroll.</p>
+          <div className={styles.actionForm}>
+            <label>Record status
+              <select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)} disabled={busy}>
+                {!['Pending', 'Charged', 'Voided'].includes(record.status || 'Pending') && <option value={record.status}>{record.status}</option>}
+                <option>Pending</option>
+                <option>Charged</option>
+                <option>Voided</option>
+              </select>
+            </label>
+            <label>Reason for this change
+              <input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="Required for the audit trail" disabled={busy} />
+            </label>
+            <button
+              type="button"
+              disabled={busy || nextStatus === (record.status || 'Pending') || reason.trim().length < 10}
+              onClick={() => onChangeStatus(record, nextStatus, reason)}
+            >
+              Save status
+            </button>
+          </div>
+          <p>For ledger-backed AR/SV records, voiding or restoring is blocked here until a coordinated ledger adjustment is available.</p>
+          <button className={styles.dangerButton} type="button" disabled={busy || !canDelete} onClick={() => onDelete(record)}>
+            Delete unlinked manual record
+          </button>
+          {!canDelete && <small>Imported, reconciled, or ledger-linked records are protected from deletion so history and duplicate detection remain intact.</small>}
+        </details>
+      </>
+    )}
   </div>;
 }
 
@@ -313,6 +660,7 @@ function WeekReview({ week, refresh, directory, directoryError, directoryLoading
 
   const freshLedger = async (record) => fetchAll(() => supabase.from('agent_commission_balance_ledger').select('id', { count: 'exact' }).eq('linked_violation_id', String(record.id)));
   const changeStatus = async (record, next, reason) => {
+    if (record.table !== 'violations') return;
     if (mutationLock.current || clean(reason).length < 10 || !['Pending', 'Charged', 'Voided'].includes(next)) return;
     mutationLock.current = true; setBusy(true); setActionError('');
     try {
@@ -395,7 +743,10 @@ function WeekReview({ week, refresh, directory, directoryError, directoryLoading
             const payment = !dp && ledger.data ? makeLedgerSummary(ledger.data, row) : null;
             return <React.Fragment key={row.key}><tr className={issues.length ? styles.attentionRow : ''}>
               <td><Badge tone={dp ? 'purple' : row.kind === 'scanning' ? 'blue' : 'neutral'}>{dp ? 'Disqualified' : row.kind === 'scanning' ? 'Scanning' : row.kind === 'ar' ? 'AR' : 'Other'}</Badge>
-                <small>{row.violation_category || row.violation_type || '\u2014'}</small><Badge tone={isVoided(row) ? 'red' : 'neutral'}>{row.status || 'Pending'}</Badge>
+                <small>{row.violation_category || row.violation_type || '—'}</small>
+                <Badge tone={dp ? (isActivePolicy(row) ? 'purple' : 'green') : isVoided(row) ? 'red' : 'neutral'}>
+                  {dp ? policyDisplayStatus(row) : (row.status || 'Pending')}
+                </Badge>
                 {!!issues.length && <small className={styles.warningText}>{issues[0]}{issues.length > 1 ? ` +${issues.length - 1}` : ''}</small>}</td>
               <td><strong>{directory?.get(row.email)?.full_name || row.agent_email || 'Agent missing'}</strong><small>{row.agent_email}</small><b>{row.office || '\u2014'}</b></td>
               <td><strong>{row.client_name || 'Client not recorded'}</strong><small>Policy: {row.policy_number || '\u2014'}</small>{row.customer_id && <small>ID: {row.customer_id}</small>}
@@ -406,7 +757,17 @@ function WeekReview({ week, refresh, directory, directoryError, directoryLoading
               <td><p className={styles.clampedNote}>{row.notes || 'No explanation stored.'}</p><small>{sourceLabel(row)}{row.import_batch_id ? ` \u00b7 Batch #${row.import_batch_id}` : ''}</small></td>
               <td><button type="button" className={styles.linkButton} aria-expanded={expanded === row.key} onClick={() => setExpanded(expanded === row.key ? '' : row.key)}>{expanded === row.key ? 'Hide details' : 'View details'}</button></td>
             </tr>{expanded === row.key && <tr><td colSpan={7} className={styles.expandedCell}><RecordDetails record={row} ledger={ledger.loading ? null : ledger.data}
-              ledgerError={ledger.error} directory={directory} onEdit={onEdit} onChangeStatus={changeStatus} onDelete={deleteRecord} busy={busy} /></td></tr>}</React.Fragment>;
+              ledgerError={ledger.error} directory={directory} onEdit={onEdit} onChangeStatus={changeStatus} onDelete={deleteRecord}
+              onPolicyMutation={onMutation} busy={busy} />
+            <div className={styles.closeDetailsBar}>
+              <button
+                type="button"
+                className={styles.closeDetailsButton}
+                onClick={() => setExpanded('')}
+              >
+                ↑ Hide details &amp; return to records
+              </button>
+            </div></td></tr>}</React.Fragment>;
           })}
         </tbody></table>}
         {!info.total && <div className={styles.empty}><strong>{rows.length ? 'No records match these filters.' : 'No saved records returned for this commission week.'}</strong><p>{rows.length ? 'Clear a filter or search a different policy.' : 'This does not confirm that every report has been submitted.'}</p>
