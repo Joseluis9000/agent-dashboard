@@ -2276,3 +2276,327 @@
     border-top: 1px solid rgba(255, 255, 255, 0.18) !important;
   }
 }
+/* ============================================================
+   2026 DASHBOARD + HISTORY POLISH
+   ============================================================ */
+
+.dashboardIntro {
+  margin-top: 2px;
+  margin-bottom: 14px;
+}
+
+.dashboardIntro h2 {
+  margin: 3px 0 4px;
+  letter-spacing: -0.025em;
+}
+
+.dashboardKpis {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dashboardKpis .metricCard {
+  position: relative;
+  overflow: hidden;
+  min-height: 102px;
+  padding: 16px 17px;
+  border-color: #dfe5ec;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.025),
+    0 8px 24px rgba(15, 23, 42, 0.035);
+}
+
+.dashboardKpis .metricCard::after {
+  content: '';
+  position: absolute;
+  inset: auto -28px -34px auto;
+  width: 90px;
+  height: 90px;
+  border-radius: 999px;
+  background: rgba(23, 48, 79, 0.035);
+  pointer-events: none;
+}
+
+.yearHistoryCard {
+  overflow: hidden;
+  padding: 0;
+  border-color: #dde4ec;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.025),
+    0 8px 24px rgba(15, 23, 42, 0.035);
+}
+
+.yearHistoryCard > .sectionHeader {
+  margin: 0;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid #e8edf2;
+  background:
+    linear-gradient(90deg, rgba(23, 48, 79, 0.025), transparent 42%),
+    #ffffff;
+}
+
+.yearHistoryCard > .sectionHeader h2 {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.yearHistoryCard > .sectionHeader p {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.yearHistoryTableWrap {
+  margin: 0;
+  overflow-x: auto;
+  background: #ffffff;
+}
+
+.yearHistoryTable {
+  min-width: 980px;
+  table-layout: auto;
+}
+
+.yearHistoryTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 11px;
+  border-bottom: 1px solid #dfe5ec;
+  background: #f6f8fb;
+  color: #627086;
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.yearHistoryTable tbody tr {
+  transition: background 0.15s ease;
+}
+
+.yearHistoryTable tbody tr:nth-child(even) {
+  background: #fbfcfd;
+}
+
+.yearHistoryTable tbody tr:hover {
+  background: #f4f7fa;
+}
+
+.yearHistoryTable td {
+  padding: 10px 11px;
+  border-bottom: 1px solid #edf1f4;
+  vertical-align: middle;
+  color: #334155;
+  font-size: 10.5px;
+}
+
+.yearHistoryTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.historyIdentity {
+  min-width: 0;
+}
+
+.historyIdentity strong {
+  display: block;
+  overflow: hidden;
+  color: #1f2a3a;
+  font-size: 11.5px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyIdentity small {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #7a8698;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyTypeBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  border: 1px solid #d8e1ea;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #f7f9fb;
+  color: #46556a;
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: 0.025em;
+}
+
+.historyTypeAr {
+  border-color: #d6e0ea;
+  background: #f2f6fa;
+  color: #294968;
+}
+
+.historyTypeScanning {
+  border-color: #ded8ea;
+  background: #f7f4fb;
+  color: #5a4771;
+}
+
+.moneyCell {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.historyStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  border: 1px solid #dfe5eb;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: #f7f9fb;
+  color: #506077;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.035em;
+}
+
+.historyStatusPaid {
+  border-color: #cde8d8;
+  background: #f1fbf5;
+  color: #13734a;
+}
+
+.historyStatusPending {
+  border-color: #ead7b5;
+  background: #fff9ed;
+  color: #8a5600;
+}
+
+.policyCode {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  color: #31445a;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historyReason {
+  min-width: 220px;
+  max-width: 390px;
+  white-space: normal !important;
+  line-height: 1.45;
+}
+
+.historyLatest {
+  min-width: 220px;
+  max-width: 360px;
+  white-space: normal !important;
+  line-height: 1.4;
+}
+
+.historyLatest strong,
+.historyLatest span,
+.historyLatest small {
+  display: block;
+}
+
+.historyLatest strong {
+  margin-bottom: 2px;
+  color: #31445a;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.045em;
+}
+
+.historyLatest small {
+  margin-top: 3px;
+  color: #8a95a5;
+  font-size: 8.5px;
+}
+
+.mutedDash {
+  color: #a1aab7;
+}
+
+.yearHistoryTable .viewWeekButton {
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .yearHistoryTable {
+    min-width: 900px;
+  }
+}
+
+@media (max-width: 680px) {
+  .dashboardIntro {
+    margin-bottom: 10px;
+  }
+
+  .yearHistoryCard > .sectionHeader {
+    padding: 14px;
+  }
+
+  .yearHistoryTable {
+    min-width: 860px;
+  }
+}
+
+
+/* ============================================================
+   RECENT HISTORY DASHBOARD FOOTERS
+   ============================================================ */
+
+.historySectionFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-top: 1px solid #e8edf2;
+  background: #fbfcfd;
+}
+
+.historySectionFooter > span {
+  color: #7a8698;
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.viewAllHistoryButton {
+  border: 1px solid #cfd9e4;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17304f;
+  padding: 7px 10px;
+  font-size: 9.5px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+
+.viewAllHistoryButton:hover {
+  border-color: #aec3d7;
+  background: #f1f6fa;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 680px) {
+  .historySectionFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .viewAllHistoryButton {
+    width: 100%;
+  }
+}

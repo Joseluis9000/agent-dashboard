@@ -10,6 +10,7 @@ import {
 const TABLE_TRANSFERS = 'daily_transaction_detail_transfers';
 const TABLE_VIOLATIONS = 'violations';
 const TABLE_DISQUALIFIED = 'disqualified_policies';
+const TABLE_DISQUALIFIED_HISTORY = 'disqualified_policy_history';
 const TABLE_COMMISSION_RECORDS = 'agent_commission_records';
 const TABLE_BALANCE_LEDGER = 'agent_commission_balance_ledger';
 
@@ -135,6 +136,48 @@ const firstValue = (row, keys) => {
   return '—';
 };
 
+
+const getDisqualifiedReason = (row) => {
+  const details = clean(row?.details);
+
+  if (details) {
+    const labeledMatch = details.match(
+      /Disqualification reason:\s*(.*?)(?=\s+(?:Sheet email:|Source amount:|Policy link:|Exception by:|Exception Yes:|Exception No:|$))/i
+    );
+
+    if (labeledMatch?.[1]) {
+      return labeledMatch[1].trim().replace(/[.\s]+$/, '');
+    }
+
+    // If this is not importer audit text, show the details value itself.
+    if (!/^Imported from DISQUALIFIED report\./i.test(details)) {
+      return details;
+    }
+  }
+
+  return clean(
+    row?.disqualification_reason ||
+    row?.reason ||
+    row?.notes ||
+    row?.note ||
+    row?.description ||
+    row?.comment ||
+    row?.comments
+  ) || 'No disqualification details were recorded.';
+};
+
+
+const policyHistoryActionLabel = (actionType) => {
+  const action = clean(actionType).toUpperCase();
+  if (action === 'NOTE_ADDED') return 'UPDATE';
+  if (action === 'CLEARED') return 'CLEARED';
+  if (action === 'REOPENED') return 'REOPENED';
+  return action || 'UPDATE';
+};
+
+const policyHistorySortKey = (row) =>
+  clean(row?.created_at || row?.updated_at || row?.event_date);
+
 const localDateKey = (date = new Date()) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -201,6 +244,7 @@ export default function AgentCommission() {
   const [balanceLedger, setBalanceLedger] = useState([]);
   const [allViolations, setAllViolations] = useState([]);
   const [allDisqualified, setAllDisqualified] = useState([]);
+  const [disqualifiedHistory, setDisqualifiedHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const [productionPage, setProductionPage] = useState(1);
@@ -331,6 +375,36 @@ export default function AgentCommission() {
       setBalanceLedger(balanceLedgerResult || []);
       setAllViolations(allViolationsResult || []);
       setAllDisqualified(allDisqualifiedResult || []);
+
+
+      // History is optional during rollout so the commission page still loads
+      // before the new disqualified_policy_history table is deployed.
+      const policyIds = (allDisqualifiedResult || [])
+        .map((row) => row?.id)
+        .filter(Boolean);
+
+      if (policyIds.length > 0) {
+        try {
+          const historyRows = [];
+          for (let index = 0; index < policyIds.length; index += 100) {
+            const ids = policyIds.slice(index, index + 100);
+            const { data, error } = await supabase
+              .from(TABLE_DISQUALIFIED_HISTORY)
+              .select('*')
+              .in('disqualified_policy_id', ids)
+              .order('created_at', { ascending: true });
+
+            if (error) throw error;
+            historyRows.push(...(data || []));
+          }
+          setDisqualifiedHistory(historyRows);
+        } catch (historyError) {
+          console.warn('Disqualified policy history is not available yet:', historyError);
+          setDisqualifiedHistory([]);
+        }
+      } else {
+        setDisqualifiedHistory([]);
+      }
     } catch (error) {
       console.error('Unable to load agent commission:', error);
       setErrorMessage(error?.message || 'Unable to load commission data.');
@@ -342,6 +416,7 @@ export default function AgentCommission() {
       setBalanceLedger([]);
       setAllViolations([]);
       setAllDisqualified([]);
+      setDisqualifiedHistory([]);
     } finally {
       setLoading(false);
     }
@@ -893,6 +968,92 @@ export default function AgentCommission() {
     );
   }, [allDisqualified]);
 
+
+  const disqualifiedHistoryByPolicy = useMemo(() => {
+    const map = new Map();
+
+    disqualifiedHistory.forEach((event) => {
+      const policyId = clean(event?.disqualified_policy_id);
+      if (!policyId) return;
+      if (!map.has(policyId)) map.set(policyId, []);
+      map.get(policyId).push(event);
+    });
+
+    map.forEach((events) => {
+      events.sort((a, b) =>
+        policyHistorySortKey(a).localeCompare(policyHistorySortKey(b))
+      );
+    });
+
+    return map;
+  }, [disqualifiedHistory]);
+
+  const getPolicyHistory = (row) => {
+    const policyId = clean(row?.id);
+    return policyId ? (disqualifiedHistoryByPolicy.get(policyId) || []) : [];
+  };
+
+  const getLatestPolicyHistory = (row) => {
+    const events = getPolicyHistory(row);
+    return events.length ? events[events.length - 1] : null;
+  };
+
+
+  const yearViolationHistory = useMemo(() => {
+    return violationBalanceItems
+      .map((item) => {
+        const row = item.violation || {};
+        const originalDate = clean(
+          row.transaction_date ||
+          row.reported_date ||
+          row.created_at ||
+          item.entries.find((entry) => signedLedgerAmount(entry) > 0)?.entry_date ||
+          item.latestDate
+        ).slice(0, 10);
+
+        return { ...item, originalDate };
+      })
+      .filter((item) =>
+        item.originalDate >= selectedYearStart &&
+        item.originalDate <= selectedYearEnd
+      )
+      .sort((a, b) =>
+        clean(b.originalDate).localeCompare(clean(a.originalDate)) ||
+        clean(b.latestDate).localeCompare(clean(a.latestDate))
+      );
+  }, [violationBalanceItems, selectedYearStart, selectedYearEnd]);
+
+  const yearDisqualifiedHistory = useMemo(() => {
+    return allDisqualified
+      .map((row) => {
+        const activityDate = clean(
+          row.transaction_date ||
+          row.reported_date ||
+          row.created_at
+        ).slice(0, 10);
+
+        return { ...row, activityDate };
+      })
+      .filter((row) =>
+        row.activityDate >= selectedYearStart &&
+        row.activityDate <= selectedYearEnd
+      )
+      .sort((a, b) =>
+        clean(b.activityDate).localeCompare(clean(a.activityDate))
+      );
+  }, [allDisqualified, selectedYearStart, selectedYearEnd]);
+
+
+  const recentYearViolationHistory = useMemo(
+    () => yearViolationHistory.slice(0, 5),
+    [yearViolationHistory]
+  );
+
+  const recentYearDisqualifiedHistory = useMemo(
+    () => yearDisqualifiedHistory.slice(0, 5),
+    [yearDisqualifiedHistory]
+  );
+
   const getViolationClient = (item) => {
     const row = item.violation || {};
     const client = firstValue(row, [
@@ -1039,9 +1200,11 @@ export default function AgentCommission() {
         <div>
           <div className={styles.eyebrow}>MY COMMISSION</div>
           <h1>{agentName}</h1>
-          <div className={styles.subTitle}>
-            Production week {formatDate(weekStart)} – {formatDate(weekEnd)}
-          </div>
+          {activeView !== 'dashboard' && (
+            <div className={styles.subTitle}>
+              Production week {formatDate(weekStart)} – {formatDate(weekEnd)}
+            </div>
+          )}
         </div>
 
         <div className={styles.headerActions}>
@@ -1118,7 +1281,7 @@ export default function AgentCommission() {
             onClick={() => setActiveView('dashboard')}
           >
             <span className={styles.viewTabTitle}>Dashboard & History</span>
-            <span className={styles.viewTabSub}>YTD, balances & past weeks</span>
+            <span className={styles.viewTabSub}>Full year history, balances & past weeks</span>
           </button>
           </div>
         </div>
@@ -1480,24 +1643,8 @@ export default function AgentCommission() {
                             {clean(row.status).toUpperCase() || 'DISQUALIFIED'}
                           </span>
                           <div>
-                            <strong>
-                              {firstValue(row, [
-                                'customer',
-                                'customer_name',
-                                'named_insured',
-                                'client_name',
-                                'policy_number',
-                                'policy',
-                              ])}
-                            </strong>
-                            <small>
-                              {firstValue(row, [
-                                'policy_number',
-                                'policy',
-                                'receipt_id',
-                                'receipt',
-                              ])}
-                            </small>
+                            <strong>{row.client_name || row.customer_name || row.policy_number || '—'}</strong>
+                            <small>{row.policy_number || row.customer_id || '—'}</small>
                           </div>
                         </div>
 
@@ -1509,45 +1656,56 @@ export default function AgentCommission() {
                       <div className={styles.fullDetailInfoGrid}>
                         <div>
                           <span>Office</span>
-                          <strong>{firstValue(row, ['office', 'office_code'])}</strong>
+                          <strong>{row.office_code || '—'}</strong>
                         </div>
                         <div>
                           <span>Date</span>
                           <strong>
-                            {formatDate(
-                              firstValue(row, [
-                                'created_at',
-                                'date_time',
-                                'date',
-                                'week_start_date',
-                              ])
-                            )}
+                            {formatDate(row.transaction_date || row.reported_date || row.created_at)}
                           </strong>
                         </div>
                         <div>
                           <span>Receipt</span>
-                          <strong>{firstValue(row, ['receipt_id', 'receipt'])}</strong>
+                          <strong>{row.linked_receipt_id || row.reference_id || '—'}</strong>
                         </div>
                         <div>
                           <span>Linked Transaction</span>
-                          <strong>{firstValue(row, ['linked_sync_key', 'sync_key'])}</strong>
+                          <strong>{row.linked_sync_key || '—'}</strong>
                         </div>
                       </div>
 
                       <div className={styles.fullDetailReason}>
                         <span>Why this policy was disqualified</span>
                         <p>
-                          {firstValue(row, [
-                            'note',
-                            'notes',
-                            'reason',
-                            'disqualification_reason',
-                            'description',
-                            'comment',
-                            'comments',
-                          ])}
+                          {getDisqualifiedReason(row)}
                         </p>
                       </div>
+
+
+                      {getPolicyHistory(row).length > 0 && (
+                        <div className={styles.activityTimeline}>
+                          <span className={styles.activityTimelineTitle}>Policy Update History</span>
+
+                          <div className={styles.activityTimelineRow}>
+                            <span>{formatDate(row.created_at || row.transaction_date)}</span>
+                            <span>DISQUALIFIED</span>
+                            <span>{getDisqualifiedReason(row)}</span>
+                            <strong>Original</strong>
+                          </div>
+
+                          {getPolicyHistory(row).map((event) => (
+                            <div
+                              className={styles.activityTimelineRow}
+                              key={event.id || `${row.id}-${event.created_at}-${event.action_type}`}
+                            >
+                              <span>{formatDate(event.created_at)}</span>
+                              <span>{policyHistoryActionLabel(event.action_type)}</span>
+                              <span>{event.note || 'No update note was entered.'}</span>
+                              <strong>{event.changed_by_email || 'Management'}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1613,136 +1771,257 @@ export default function AgentCommission() {
         />
       </section>
 
-          <section className={styles.dashboardSplit}>
-        <div className={styles.card}>
-          <div className={styles.sectionHeader}>
-            <div>
-              <h2>Commission Trend</h2>
-              <p>Your last {commissionChartRecords.length} finalized commission weeks.</p>
+          <section className={styles.card}>
+            <div className={styles.sectionHeader}>
+              <div>
+                <h2>Commission Trend</h2>
+                <p>Your last {commissionChartRecords.length} finalized commission weeks.</p>
+              </div>
+              <div className={styles.countBadge}>{selectedYear}</div>
             </div>
-            <div className={styles.countBadge}>{selectedYear}</div>
-          </div>
 
-          {commissionChartRecords.length === 0 ? (
-            <EmptyState text="No finalized commission history yet." />
-          ) : (
-            <div className={styles.miniChart}>
-              {commissionChartRecords.map((record) => {
-                const amount = Number(record.final_payable_commission) || 0;
-                const height = Math.max(4, Math.round((amount / chartMax) * 100));
-                return (
-                  <button
-                    type="button"
-                    key={`${record.agent_email}-${record.week_start_date}`}
-                    className={styles.chartColumn}
-                    title={`${formatDate(record.week_start_date)}: ${money(amount)}`}
-                    onClick={() =>
-                      setAnchorDate(new Date(`${record.week_start_date}T12:00:00`))
-                    }
-                  >
-                    <span className={styles.chartAmount}>{money(amount)}</span>
-                    <span
-                      className={styles.chartBar}
-                      style={{ height: `${height}%` }}
-                    />
-                    <span className={styles.chartDate}>
-                      {new Date(`${record.week_start_date}T12:00:00`).toLocaleDateString(
-                        undefined,
-                        { month: 'short', day: 'numeric' }
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
+            {commissionChartRecords.length === 0 ? (
+              <EmptyState text="No finalized commission history yet." />
+            ) : (
+              <div className={styles.miniChart}>
+                {commissionChartRecords.map((record) => {
+                  const amount = Number(record.final_payable_commission) || 0;
+                  const height = Math.max(4, Math.round((amount / chartMax) * 100));
+                  return (
+                    <button
+                      type="button"
+                      key={`${record.agent_email}-${record.week_start_date}`}
+                      className={styles.chartColumn}
+                      title={`${formatDate(record.week_start_date)}: ${money(amount)}`}
+                      onClick={() =>
+                        setAnchorDate(new Date(`${record.week_start_date}T12:00:00`))
+                      }
+                    >
+                      <span className={styles.chartAmount}>{money(amount)}</span>
+                      <span
+                        className={styles.chartBar}
+                        style={{ height: `${height}%` }}
+                      />
+                      <span className={styles.chartDate}>
+                        {new Date(`${record.week_start_date}T12:00:00`).toLocaleDateString(
+                          undefined,
+                          { month: 'short', day: 'numeric' }
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className={`${styles.card} ${styles.yearHistoryCard}`}>
+            <div className={styles.sectionHeader}>
+              <div>
+                <h2>Recent AR / Scanning Activity</h2>
+                <p>Showing the most recent activity. Open AR / Scanning Details for the full history and payment breakdown.</p>
+              </div>
+              <div className={styles.countBadge}>{yearViolationHistory.length}</div>
             </div>
-          )}
-        </div>
 
-        <div className={styles.card}>
-          <div className={styles.sectionHeader}>
-            <div>
-              <h2>Balance & Repayment</h2>
-              <p>Outstanding AR and scanning violations with payment history.</p>
+            <div className={`${styles.tableWrap} ${styles.yearHistoryTableWrap}`}>
+              <table className={styles.yearHistoryTable}>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Customer / Policy</th>
+                    <th>Original Charge</th>
+                    <th>Paid / Applied</th>
+                    <th>Remaining</th>
+                    <th>Last Activity</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentYearViolationHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className={styles.emptyCell}>
+                        No AR or scanning activity for {selectedYear}.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentYearViolationHistory.map((item) => (
+                      <tr key={`dashboard-${item.key}`}>
+                        <td>{formatDate(item.originalDate)}</td>
+                        <td>
+                          <span className={`${styles.historyTypeBadge} ${
+                            item.category === 'SCANNING' ? styles.historyTypeScanning : styles.historyTypeAr
+                          }`}>
+                            {item.category}
+                          </span>
+                        </td>
+                        <td>
+                          <div className={styles.historyIdentity}>
+                            <strong>{getViolationClient(item)}</strong>
+                            <small>{getViolationPolicy(item)}</small>
+                          </div>
+                        </td>
+                        <td className={styles.moneyCell}>{money(item.charged)}</td>
+                        <td className={`${styles.moneyCell} ${styles.balanceCredit}`}>{money(item.paid)}</td>
+                        <td className={`${styles.moneyCell} ${item.balance > 0.009 ? styles.balanceCharge : ''}`}>
+                          {money(item.balance)}
+                        </td>
+                        <td>{formatDate(item.latestDate)}</td>
+                        <td>
+                          <span className={`${styles.historyStatus} ${
+                            item.balance > 0.009 ? styles.historyStatusPending : styles.historyStatusPaid
+                          }`}>
+                            {item.balance > 0.009 ? 'PENDING' : 'PAID'}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.viewWeekButton}
+                            onClick={() => {
+                              setBalanceModalTab(item.balance > 0.009 ? 'current' : 'history');
+                              setActiveView('balance');
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                          >
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-            <div
-              className={`${styles.balanceBadge} ${
-                balanceStats.outstandingBalance > 0
-                  ? styles.balanceOwed
-                  : styles.balanceClear
-              }`}
-            >
-              {money(balanceStats.outstandingBalance)}
+
+            <div className={styles.historySectionFooter}>
+              <span>
+                Showing {recentYearViolationHistory.length} of {yearViolationHistory.length} record{yearViolationHistory.length === 1 ? '' : 's'}.
+              </span>
+              <button
+                type="button"
+                className={styles.viewAllHistoryButton}
+                onClick={() => {
+                  setBalanceModalTab('current');
+                  setActiveView('balance');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              >
+                View Full AR / Scanning History →
+              </button>
             </div>
-          </div>
+          </section>
 
-          <div className={styles.summaryFeatureGrid}>
-            <div className={styles.summaryFeature}>
-              <span>Current AR Balance</span>
-              <strong>{money(balanceStats.arBalance)}</strong>
+          <section className={`${styles.card} ${styles.yearHistoryCard}`}>
+            <div className={styles.sectionHeader}>
+              <div>
+                <h2>Recent Disqualified Policies</h2>
+                <p>Showing the most recent policies. Open Disqualified Policies for the full record, UW follow-up notes, and status history.</p>
+              </div>
+              <div className={styles.countBadge}>{yearDisqualifiedHistory.length}</div>
             </div>
-            <div className={styles.summaryFeature}>
-              <span>Current Scanning Balance</span>
-              <strong>{money(balanceStats.scanningBalance)}</strong>
+
+            <div className={`${styles.tableWrap} ${styles.yearHistoryTableWrap}`}>
+              <table className={styles.yearHistoryTable}>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Customer</th>
+                    <th>Policy</th>
+                    <th>Office</th>
+                    <th>Original Reason</th>
+                    <th>Latest Update</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentYearDisqualifiedHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className={styles.emptyCell}>
+                        No disqualified policy activity for {selectedYear}.
+                      </td>
+                    </tr>
+                  ) : (
+                    recentYearDisqualifiedHistory.map((row, index) => {
+                      const latestUpdate = getLatestPolicyHistory(row);
+                      const status = clean(row.status).toUpperCase() || 'DISQUALIFIED';
+                      const isHistorical = [
+                        'VOIDED',
+                        'RESOLVED',
+                        'CLEARED',
+                        'REMOVED',
+                        'REINSTATED',
+                        'CLOSED',
+                      ].includes(status);
+
+                      return (
+                        <tr key={`dashboard-policy-${row.id || row.linked_sync_key || index}`}>
+                          <td>{formatDate(row.activityDate)}</td>
+                          <td>
+                            <div className={styles.historyIdentity}>
+                              <strong>{row.client_name || row.customer_name || '—'}</strong>
+                            </div>
+                          </td>
+                          <td><span className={styles.policyCode}>{row.policy_number || '—'}</span></td>
+                          <td>{row.office_code || '—'}</td>
+                          <td className={styles.historyReason}>{getDisqualifiedReason(row)}</td>
+                          <td className={styles.historyLatest}>
+                            {latestUpdate
+                              ? <>
+                                  <strong>{policyHistoryActionLabel(latestUpdate.action_type)}</strong>
+                                  <span>{latestUpdate.note || 'Status updated by management.'}</span>
+                                  {latestUpdate.created_at && <small>{formatDate(latestUpdate.created_at)}</small>}
+                                </>
+                              : <span className={styles.mutedDash}>—</span>}
+                          </td>
+                          <td>
+                            <span className={`${styles.historyStatus} ${
+                              isHistorical ? styles.historyStatusPaid : styles.historyStatusPending
+                            }`}>
+                              {status}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className={styles.viewWeekButton}
+                              onClick={() => {
+                                setDisqualifiedModalTab(isHistorical ? 'history' : 'current');
+                                setActiveView('disqualified');
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                            >
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
-            <div className={styles.summaryFeature}>
-              <span>Open Violations</span>
-              <strong>{currentViolationBalances.length}</strong>
+
+            <div className={styles.historySectionFooter}>
+              <span>
+                Showing {recentYearDisqualifiedHistory.length} of {yearDisqualifiedHistory.length} polic{yearDisqualifiedHistory.length === 1 ? 'y' : 'ies'}.
+              </span>
+              <button
+                type="button"
+                className={styles.viewAllHistoryButton}
+                onClick={() => {
+                  setDisqualifiedModalTab('current');
+                  setActiveView('disqualified');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              >
+                View All Disqualified Policies →
+              </button>
             </div>
-            <div className={styles.summaryFeature}>
-              <span>{selectedYear} Paid Toward Balance</span>
-              <strong>{money(balanceStats.ytdPaidTowardBalance)}</strong>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className={styles.summaryActionButton}
-            onClick={() => {
-              setBalanceModalTab('current');
-              setActiveView('balance');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          >
-            View AR / Scanning Details →
-          </button>
-        </div>
-      </section>
-
-      <section className={styles.card}>
-        <div className={styles.sectionHeader}>
-          <div>
-            <h2>Disqualified Policies</h2>
-            <p>Review policies currently affecting commission and previously resolved items.</p>
-          </div>
-          <div className={styles.countBadge}>{currentDisqualifiedPolicies.length}</div>
-        </div>
-
-        <div className={styles.disqualifiedDashboardRow}>
-          <div>
-            <span className={styles.summaryLabel}>Currently Disqualified</span>
-            <strong>{currentDisqualifiedPolicies.length}</strong>
-            <p>Policies that may still affect Net NB and commission tiers.</p>
-          </div>
-
-          <div>
-            <span className={styles.summaryLabel}>History</span>
-            <strong>{historicalDisqualifiedPolicies.length}</strong>
-            <p>Resolved, removed, reinstated, or voided disqualifications.</p>
-          </div>
-
-          <button
-            type="button"
-            className={styles.summaryActionButton}
-            onClick={() => {
-              setDisqualifiedModalTab('current');
-              setActiveView('disqualified');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          >
-            View Disqualified Policies →
-          </button>
-        </div>
-      </section>
+          </section>
 
       <section className={styles.card}>
         <div className={styles.sectionHeader}>
@@ -2022,9 +2301,33 @@ export default function AgentCommission() {
               {activeDisqualified.map((row, index) => (
                 <div className={styles.listItem} key={row.id || row.linked_sync_key || index}>
                   <div>
-                    <strong>{firstValue(row, ['policy_number', 'policy', 'receipt_id', 'customer_name', 'named_insured'])}</strong>
-                    <div className={styles.listMeta}>Linked transaction: {firstValue(row, ['linked_sync_key', 'sync_key'])}</div>
-                    <div className={styles.reason}>{firstValue(row, ['note', 'notes', 'reason', 'disqualification_reason', 'description', 'comment', 'comments'])}</div>
+                    <strong>{row.policy_number || row.client_name || '—'}</strong>
+                    <div className={styles.listMeta}>
+                      {row.client_name ? `${row.client_name} • ` : ''}
+                      {row.office_code || 'No office'}
+                      {row.transaction_date ? ` • ${formatDate(row.transaction_date)}` : ''}
+                    </div>
+                    <div className={styles.listMeta}>
+                      Linked receipt: {row.linked_receipt_id || '—'}
+                      {row.linked_sync_key ? ` • Transaction: ${row.linked_sync_key}` : ''}
+                    </div>
+                    <div className={styles.reason}>
+                      {getDisqualifiedReason(row)}
+                    </div>
+
+                    {getLatestPolicyHistory(row) && (
+                      <div className={styles.reason}>
+                        <strong>Latest update: </strong>
+                        {getLatestPolicyHistory(row).note || 'Status updated by management.'}
+                        {' '}
+                        <span>
+                          ({policyHistoryActionLabel(getLatestPolicyHistory(row).action_type)}
+                          {getLatestPolicyHistory(row).created_at
+                            ? ` • ${formatDate(getLatestPolicyHistory(row).created_at)}`
+                            : ''})
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className={styles.disqualifiedTag}>DISQUALIFIED</div>
                 </div>

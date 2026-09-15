@@ -274,3 +274,368 @@
 }
 
 .balanceItemFootnote { padding: 0 18px 10px; }
+
+
+/* ============================================================
+   DISQUALIFIED POLICY MANAGEMENT
+   ============================================================ */
+
+.policyManagement {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #dce4ee;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(24, 38, 56, 0.035);
+}
+
+.policyManagementHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 17px 14px;
+  border-bottom: 1px solid #e8edf3;
+  background: linear-gradient(100deg, #f7f9fc 0%, #ffffff 62%);
+}
+
+.policyManagementHeader h4 {
+  margin-top: 2px;
+  font-size: 16px;
+}
+
+.policyManagementHeader p {
+  max-width: 720px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.policyManagementMeta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  border-bottom: 1px solid #e7edf4;
+  background: #e7edf4;
+}
+
+.policyManagementMeta > div {
+  min-width: 0;
+  padding: 11px 15px;
+  background: #fff;
+}
+
+.policyManagementMeta span {
+  display: block;
+  color: #77869a;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.policyManagementMeta strong {
+  display: block;
+  margin-top: 3px;
+  color: #263b55;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.policyActionChooser {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 13px 15px 0;
+}
+
+.dashboard .policyActionChooser button {
+  min-height: 34px;
+  padding: 7px 11px;
+  font-size: 10px;
+}
+
+.dashboard .policyActionChooser .policyActionActive {
+  border-color: #7f9bb9;
+  background: #edf4fa;
+  color: #17304f;
+  box-shadow: inset 0 0 0 1px rgba(23, 48, 79, .04);
+}
+
+.policyLockedNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 12px 15px 0;
+  padding: 10px 12px;
+  border: 1px solid #ead59e;
+  border-left: 3px solid #d79a27;
+  border-radius: 7px;
+  background: #fff9e9;
+}
+
+.policyLockedNotice strong {
+  color: #7b560d;
+  font-size: 11px;
+}
+
+.policyLockedNotice span {
+  color: #816a3d;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.policyActionForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px 15px 15px;
+}
+
+.policyActionForm textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+  border: 1px solid #ced9e7;
+  border-radius: 7px;
+  padding: 9px 10px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.policyActionForm textarea:focus-visible {
+  outline: 3px solid #93b7ff;
+  outline-offset: 2px;
+}
+
+.dashboard .policySaveButton,
+.dashboard .policyClearButton {
+  min-width: 120px;
+  min-height: 38px;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.dashboard .policySaveButton {
+  border-color: #315e8c;
+  background: #1d466d;
+  color: #fff;
+}
+
+.dashboard .policySaveButton:hover:not(:disabled) {
+  border-color: #173a5b;
+  background: #173a5b;
+}
+
+.dashboard .policyClearButton {
+  border-color: #bddfc9;
+  background: #edf9f1;
+  color: #12643e;
+}
+
+.dashboard .policyClearButton:hover:not(:disabled) {
+  border-color: #83c59b;
+  background: #e3f5e9;
+}
+
+.policyActionSuccess,
+.policyActionError {
+  margin: 0 15px 13px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.policyActionSuccess {
+  border: 1px solid #c9e8d5;
+  background: #f0fbf4;
+  color: #176b43;
+}
+
+.policyActionError {
+  border: 1px solid #efbec6;
+  background: #fff0f3;
+  color: #a5263c;
+}
+
+.policyHistory {
+  border-top: 1px solid #e7edf4;
+  background: #fbfcfe;
+}
+
+.policyHistoryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 15px 10px;
+}
+
+.policyHistoryHeader > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.policyHistoryHeader strong {
+  color: #30465f;
+  font-size: 11px;
+}
+
+.policyHistoryHeader span {
+  color: #7b899b;
+  font-size: 9.5px;
+}
+
+.dashboard .policyHistoryHeader button {
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 9px;
+}
+
+.policyHistoryOriginal,
+.policyHistoryItem {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  margin: 0 15px;
+  padding: 10px 0;
+  border-top: 1px solid #edf1f5;
+}
+
+.policyHistoryOriginal::before,
+.policyHistoryItem::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: -1px;
+  left: 5px;
+  width: 1px;
+  background: #d8e1eb;
+}
+
+.policyHistoryMarker {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #6f89a6;
+  box-shadow: 0 0 0 1px #b9c7d6;
+}
+
+.policyHistoryOriginal > div:last-child,
+.policyHistoryContent {
+  min-width: 0;
+}
+
+.policyHistoryOriginal span,
+.policyHistoryTop > span {
+  color: #8693a4;
+  font-size: 9px;
+}
+
+.policyHistoryOriginal strong {
+  display: block;
+  margin-top: 2px;
+  color: #6f51aa;
+  font-size: 9px;
+  letter-spacing: .04em;
+}
+
+.policyHistoryOriginal p,
+.policyHistoryContent p {
+  margin: 4px 0 !important;
+  color: #42546a;
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.policyHistoryOriginal small,
+.policyHistoryContent small {
+  color: #8793a4;
+  font-size: 9px;
+}
+
+.policyHistoryTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.policyHistoryEmpty {
+  padding: 11px 15px 15px 37px;
+  color: #7d8999;
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .policyManagementHeader {
+    flex-direction: column;
+  }
+
+  .policyManagementMeta {
+    grid-template-columns: 1fr;
+  }
+
+  .policyActionForm {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard .policySaveButton,
+  .dashboard .policyClearButton {
+    width: 100%;
+  }
+}
+
+
+/* Prominent close control at the bottom of an expanded record. */
+.closeDetailsBar {
+  position: sticky;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding: 12px 14px 4px;
+  pointer-events: none;
+}
+
+.dashboard .closeDetailsButton {
+  pointer-events: auto;
+  min-width: 260px;
+  padding: 10px 18px;
+  border: 1px solid #173a5b;
+  border-radius: 9px;
+  background: #17304f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 5px 16px rgba(18, 42, 70, .22);
+}
+
+.dashboard .closeDetailsButton:hover:not(:disabled) {
+  border-color: #0f2943;
+  background: #0f2943;
+}
+
+@media (max-width: 600px) {
+  .closeDetailsBar {
+    bottom: 6px;
+    padding-inline: 8px;
+  }
+
+  .dashboard .closeDetailsButton {
+    width: 100%;
+    min-width: 0;
+  }
+}
