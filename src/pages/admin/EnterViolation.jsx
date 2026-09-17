@@ -764,7 +764,7 @@ const IMPORT_CONFIG = {
     parser: parseArReportPaste,
     targetTable: 'violations',
     usesTransactionWeek: false,
-    description: 'Manager-cleaned AR report. All source statuses are imported.',
+    description: 'Manager-cleaned AR report. Financial deductions are assigned to the latest unpublished commission week.',
   },
   eft: {
     label: 'EFT Reports',
@@ -772,7 +772,7 @@ const IMPORT_CONFIG = {
     parser: parseEftPaste,
     targetTable: 'violations',
     usesTransactionWeek: false,
-    description: 'EFT ARs are charged to the deduction week selected on this page.',
+    description: 'EFT ARs are assigned to the latest unpublished commission week.',
   },
   rp: {
     label: 'RP Reports',
@@ -780,7 +780,7 @@ const IMPORT_CONFIG = {
     parser: parseRpPaste,
     targetTable: 'violations',
     usesTransactionWeek: false,
-    description: 'RP ARs are charged to the deduction week selected on this page.',
+    description: 'RP ARs are assigned to the latest unpublished commission week.',
   },
   chargeback: {
     label: 'Chargebacks',
@@ -788,15 +788,15 @@ const IMPORT_CONFIG = {
     parser: parseChargebackPaste,
     targetTable: 'violations',
     usesTransactionWeek: false,
-    description: 'Chargebacks are charged to the deduction week selected on this page.',
+    description: 'Chargebacks are assigned to the latest unpublished commission week.',
   },
   scanning: {
     label: 'Scanning Violations',
     reportType: 'SCANNING',
     parser: parseScanningPaste,
     targetTable: 'violations',
-    usesTransactionWeek: true,
-    description: 'Scanning deductions are assigned to the week of each transaction date.',
+    usesTransactionWeek: false,
+    description: 'Charged scanning deductions are assigned to the latest unpublished commission week. The source transaction date is preserved for audit history.',
   },
   disqualified: {
     label: 'Disqualified Policies',
@@ -1343,6 +1343,25 @@ const appendPolicyLinkAudit = (details, row, savedBy = '') => {
   return `${details || ''}\n${readable}\n[POLICY_LINK_AUDIT_V1] ${JSON.stringify(audit)}`.trim();
 };
 
+
+const getLatestUnpublishedCommissionWeek = async () => {
+  const { data, error } = await supabase.rpc('get_latest_unpublished_commission_week');
+  if (error) throw error;
+  if (!data?.week_start || !data?.week_end) {
+    throw new Error('Supabase did not return an open commission week.');
+  }
+  return data;
+};
+
+const saveViolationRecordsWithLedger = async (records = []) => {
+  if (!records.length) return { saved: [], duplicate_count: 0, week_start: '', week_end: '' };
+  const { data, error } = await supabase.rpc('save_violation_batch_with_ledger', {
+    p_records: records,
+  });
+  if (error) throw error;
+  return data || { saved: [], duplicate_count: 0 };
+};
+
 const getImportReadiness = (row, canonicalEmail) => {
   const errors = getImportParseErrors(row);
   const exception = getDisqualificationExceptionState(row);
@@ -1493,8 +1512,9 @@ const buildImportReviewEntries = (rows, agents, config, selectedWeekStart) => {
     const { errors, ready, statusLabel, issue, transactionRequired, linkVerified, requiresTransaction, skipped, exception } = readiness;
     const isManual = !!row.manually_assigned || row.match_status === 'agent_assigned';
     const sourceDate = row.report_date || row.transaction_date || row.source_date_raw || '';
-    const deductionWeek = config.usesTransactionWeek
-      ? row.deduction_week_start || '' : selectedWeekStart;
+    const deductionWeek = config.targetTable === 'violations'
+      ? 'Latest unpublished on save'
+      : (config.usesTransactionWeek ? row.deduction_week_start || '' : selectedWeekStart);
     const notes = reviewNotes(row);
     const fields = [
       originalIndex + 1, row.source_row_number, row.office_code, row.source_office_raw,
@@ -3063,6 +3083,11 @@ const EnterViolation = () => {
       } = await supabase.auth.getUser();
 
       if (!user?.email) throw new Error('Your session expired. Sign in before importing.');
+
+      const openCommissionWeek = config.targetTable === 'violations'
+        ? await getLatestUnpublishedCommissionWeek()
+        : null;
+
       if (config.reportType === 'DISQUALIFIED') {
         setImportActivity({ startedAt, phase: 'validating', title: 'Rechecking policy receipt links',
           detail: `Verifying ${importable.length} ready policy records before saving...` });
@@ -3082,8 +3107,12 @@ const EnterViolation = () => {
         .from('violation_import_batches')
         .insert({
           report_type: config.reportType,
-          deduction_week_start: config.usesTransactionWeek ? null : week.start,
-          deduction_week_end: config.usesTransactionWeek ? null : week.end,
+          deduction_week_start: config.targetTable === 'violations'
+            ? openCommissionWeek.week_start
+            : (config.usesTransactionWeek ? null : week.start),
+          deduction_week_end: config.targetTable === 'violations'
+            ? openCommissionWeek.week_end
+            : (config.usesTransactionWeek ? null : week.end),
           rows_pasted: counts.total,
           matched_rows: counts.matched,
           duplicate_rows: counts.duplicates,
@@ -3097,13 +3126,13 @@ const EnterViolation = () => {
       if (batchError) throw batchError;
 
       const payload = importable.map((row) => {
-        const deductionWeekStart = config.usesTransactionWeek
-          ? row.deduction_week_start
-          : week.start;
+        const deductionWeekStart = config.targetTable === 'violations'
+          ? openCommissionWeek.week_start
+          : (config.usesTransactionWeek ? row.deduction_week_start : week.start);
 
-        const deductionWeekEnd = config.usesTransactionWeek
-          ? row.deduction_week_end
-          : week.end;
+        const deductionWeekEnd = config.targetTable === 'violations'
+          ? openCommissionWeek.week_end
+          : (config.usesTransactionWeek ? row.deduction_week_end : week.end);
 
         return {
           agent_email: row.agent_email,
@@ -3145,25 +3174,34 @@ const EnterViolation = () => {
 
       setImportActivity({ startedAt, phase: 'saving', title: `Saving ${payload.length} ready records`,
         detail: 'Waiting for Supabase to confirm the save. Please do not refresh or resubmit.' });
-      const { data: savedRows, error: insertError } = await supabase
-        .from(config.targetTable)
-        .upsert(payload, {
-          onConflict: 'source_fingerprint',
-          ignoreDuplicates: true,
-        })
-        .select('id, violation_type, deduction_week_start');
+      let savedRows = [];
+      let rpcDuplicateCount = 0;
 
-      if (insertError) throw insertError;
+      if (config.targetTable === 'violations') {
+        const result = await saveViolationRecordsWithLedger(payload);
+        savedRows = result.saved || [];
+        rpcDuplicateCount = Number(result.duplicate_count || 0);
+      } else {
+        const { data, error: insertError } = await supabase
+          .from(config.targetTable)
+          .upsert(payload, {
+            onConflict: 'source_fingerprint',
+            ignoreDuplicates: true,
+          })
+          .select('id, violation_type, deduction_week_start');
+        if (insertError) throw insertError;
+        savedRows = data || [];
+      }
 
       const weekCounts = {};
-      (savedRows || []).forEach((row) => {
+      savedRows.forEach((row) => {
         const key = row.deduction_week_start || 'Unknown';
         weekCounts[key] = (weekCounts[key] || 0) + 1;
       });
 
       setImportReceipt({
-        saved: savedRows?.length || 0,
-        duplicates: counts.duplicates + Math.max(0, payload.length - (savedRows?.length || 0)),
+        saved: savedRows.length,
+        duplicates: counts.duplicates + rpcDuplicateCount + Math.max(0, payload.length - savedRows.length - rpcDuplicateCount),
         review: counts.review,
         unmatched: counts.unmatched,
         weekCounts,
@@ -3316,9 +3354,10 @@ const EnterViolation = () => {
 
     // Fire insertions out contextually based on where they belong
     try {
+      let assignedWeek = null;
       if (violationsToInsert.length > 0) {
-        const { error: insertErr } = await supabase.from('violations').insert(violationsToInsert);
-        if (insertErr) throw insertErr;
+        const result = await saveViolationRecordsWithLedger(violationsToInsert);
+        assignedWeek = result?.week_start || null;
       }
 
       if (disqualifiedToInsert.length > 0) {
@@ -3326,7 +3365,9 @@ const EnterViolation = () => {
         if (disqErr) throw disqErr;
       }
 
-      setMessage('All records successfully saved!');
+      setMessage(assignedWeek
+        ? `All records successfully saved. AR / SV deductions were assigned to the latest unpublished commission week starting ${assignedWeek}.`
+        : 'All records successfully saved!');
       setRows([createInitialRow(agentList.length > 0 ? agentList[0].email : '')]);
     } catch (err) {
       setError(`Failed to save entries: ${err.message}`);
@@ -3404,9 +3445,11 @@ const EnterViolation = () => {
 {`Paste ${IMPORT_CONFIG[importModal]?.label || 'Report'}`}
               </h3>
               <p>
-{IMPORT_CONFIG[importModal]?.usesTransactionWeek
-                  ? `${IMPORT_CONFIG[importModal]?.description} Previously imported rows will be skipped.`
-                  : `${IMPORT_CONFIG[importModal]?.description} Selected deduction week: ${week.start} – ${week.end}. Previously imported rows will be skipped.`}
+{IMPORT_CONFIG[importModal]?.targetTable === 'violations'
+                  ? `${IMPORT_CONFIG[importModal]?.description} The final open week is resolved again at save time. Previously imported rows will be skipped.`
+                  : IMPORT_CONFIG[importModal]?.usesTransactionWeek
+                    ? `${IMPORT_CONFIG[importModal]?.description} Previously imported rows will be skipped.`
+                    : `${IMPORT_CONFIG[importModal]?.description} Selected deduction week: ${week.start} – ${week.end}. Previously imported rows will be skipped.`}
               </p>
             </div>
 
