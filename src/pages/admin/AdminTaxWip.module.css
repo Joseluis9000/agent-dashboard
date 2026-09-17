@@ -210,7 +210,7 @@
 .tableViewport { overflow: auto; max-height: 72vh; }
 .dataTable {
   width: 100%;
-  min-width: 1420px;
+  min-width: 1260px;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 10px;
@@ -425,4 +425,322 @@
 
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; }
+}
+
+
+/* Commission Manager tabs */
+.commissionTabs {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 14px;
+  padding: 5px;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #eaf0f6;
+}
+.dashboard .commissionTabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 9px 14px;
+  color: #58708c;
+  font-size: 10px;
+}
+.dashboard .commissionTabs .activeTab {
+  background: #fff;
+  color: #17304f;
+  box-shadow: 0 1px 5px #18324c16;
+}
+.tabCount {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0ce;
+  color: #925e09;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+/* Gross Pay Entry tab */
+.grossPayWorkspace {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 2px 10px #26374b08;
+}
+.grossPayWorkspaceHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 20px;
+}
+.grossPayWorkspaceHeader p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.grossPaySaveArea {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.grossPaySaveArea > div {
+  text-align: right;
+}
+.grossPaySaveArea strong {
+  display: block;
+  font-size: 11px;
+}
+.grossPaySaveArea small {
+  display: block;
+  margin-top: 2px;
+}
+.dashboard .saveProgressButton {
+  background: #16835a;
+  border-color: #16835a;
+  color: #fff;
+  min-width: 150px;
+}
+.dashboard .saveProgressButton:hover:not(:disabled) {
+  background: #116c49;
+  border-color: #116c49;
+}
+.grossPayProgressTrack {
+  height: 5px;
+  margin: 0 20px 15px;
+  border-radius: 999px;
+  background: #e8eef5;
+  overflow: hidden;
+}
+.grossPayProgressBar {
+  height: 100%;
+  border-radius: inherit;
+  background: #1f9c6a;
+  transition: width .2s ease;
+}
+.grossPayFilters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 10px;
+  padding: 13px 18px;
+  border-top: 1px solid #e6ecf4;
+  border-bottom: 1px solid #e6ecf4;
+  background: #f7f9fc;
+}
+.grossPayTableViewport {
+  max-height: 68vh;
+  overflow: auto;
+}
+.grossPayTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 10px;
+}
+.grossPayTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 12px;
+  background: #edf2f8;
+  color: #50657f;
+  border-bottom: 1px solid #d5dfeb;
+  text-align: left;
+  font-size: 9px;
+}
+.grossPayTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf4;
+  vertical-align: middle;
+}
+.grossPayTable td strong {
+  display: block;
+  font-size: 10px;
+}
+.grossPayTable td small {
+  display: block;
+  margin-top: 2px;
+  color: #74849a;
+  font-size: 9px;
+}
+.grossPayTable td:nth-child(2) {
+  width: 170px;
+}
+.grossPayTable td:nth-child(3) {
+  width: 150px;
+}
+.grossPayTable td:nth-child(4) {
+  width: 120px;
+}
+.grossPayTable input[type="number"] {
+  min-width: 125px;
+}
+.grossPayMissingRow {
+  background: #fffcf5;
+}
+.grossPayMissingRow td:first-child {
+  box-shadow: inset 3px 0 #eca42b;
+}
+
+@media (max-width: 900px) {
+  .grossPayWorkspaceHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .grossPaySaveArea {
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 600px) {
+  .commissionTabs {
+    width: 100%;
+  }
+  .commissionTabs button {
+    flex: 1;
+    justify-content: center;
+  }
+  .grossPayFilters {
+    grid-template-columns: 1fr;
+  }
+  .grossPaySaveArea {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .grossPaySaveArea > div {
+    text-align: left;
+  }
+}
+
+
+/* Ergonomic Gross Pay Entry improvements */
+.grossPayWorkspaceHeader {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: #fff;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.grossPayProgressSummary {
+  min-width: 190px;
+}
+
+.grossPayKeyboardHint {
+  margin: -4px 20px 10px;
+  color: #66788f;
+  font-size: 9px;
+}
+
+.grossPayKeyboardHint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border: 1px solid #cbd6e3;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f7f9fc;
+  color: #314760;
+  font: inherit;
+  font-weight: 800;
+}
+
+.grossPayTable th:nth-child(1),
+.grossPayTable td:nth-child(1) {
+  width: 16%;
+}
+
+.grossPayTable th:nth-child(2),
+.grossPayTable td:nth-child(2) {
+  width: 31%;
+}
+
+.grossPayTable th:nth-child(3),
+.grossPayTable td:nth-child(3) {
+  width: 20%;
+}
+
+.grossPayTable th:nth-child(4),
+.grossPayTable td:nth-child(4) {
+  width: 17%;
+}
+
+.grossPayTable th:nth-child(5),
+.grossPayTable td:nth-child(5) {
+  width: 16%;
+}
+
+.grossPayTable input[type="number"] {
+  min-width: 145px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.grossPayTable input[type="number"]:focus {
+  border-color: #3977cc;
+  box-shadow: 0 0 0 3px #3977cc20;
+  outline: 0;
+}
+
+.grossPayTable tr:not(.grossPayMissingRow) {
+  background: #fff;
+}
+
+.grossPayTable tr:not(.grossPayMissingRow) td {
+  color: #41536a;
+}
+
+@media (max-width: 900px) {
+  .grossPayFilters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .grossPayFilters {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Gross Pay Entry final column layout */
+.grossPayAgentHeader {
+  text-align: right !important;
+}
+
+.grossPayAgentCell {
+  text-align: right;
+  padding-right: 18px !important;
+}
+
+.grossPayAgentCell strong,
+.grossPayAgentCell small {
+  text-align: right;
+}
+
+.grossPayOfficeCell {
+  white-space: nowrap;
+  color: #40566f;
+}
+
+.grossPayOfficeCell strong {
+  font-size: 11px !important;
+  font-weight: 700;
+}
+
+.grossPayTable th:nth-child(3),
+.grossPayTable td:nth-child(3) {
+  padding-left: 18px;
+}
+
+.grossPayTable td:nth-child(3) input[type="number"] {
+  width: 100%;
+  max-width: 190px;
 }
