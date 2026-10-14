@@ -54,6 +54,7 @@ import AdminTaxWip from './pages/admin/AdminTaxWip';
 // ✅ ADDED: Admin Quote Log
 import AdminQuoteLog from './pages/admin/AdminQuoteLog';
 
+
 // ✅ ADDED: Supervisor Tax WIP page import
 import SupervisorTaxWip from './pages/supervisor/SupervisorTaxWip';
 
@@ -70,9 +71,13 @@ import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
 import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
 import UnderwritingLog from './pages/uw/UnderwritingLog';
 import PendingUnderwriting from './pages/uw/PendingUnderwriting';
+import UnderwritingScoreboard from './pages/uw/UnderwritingScoreboard';
+import UnderwritingOfficePacing from './pages/uw/UnderwritingOfficePacing';
+import RetentionQueue from './pages/uw/RetentionQueue';
 
 // ✅ ADDED: Tax Reconciliation page import
 import TaxReconciliation from './pages/uw/TaxReconciliation';
+
 
 // Admin EODs
 import OfficeEODs from './components/OfficeEODs';
@@ -407,17 +412,17 @@ function AppRoutes() {
 
       {/* PROTECTED: Agent area */}
       <Route
-    element={
-        <ProtectedRoute
+        element={
+          <ProtectedRoute
             allowedRoles={[
               'agent',
               'regional',
               'supervisor',
               'admin',
             ]}
-        />
-    }
->
+          />
+        }
+      >
         <Route element={<AuthLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/sv-ar" element={<SVARPage />} />
@@ -452,6 +457,9 @@ function AppRoutes() {
           <Route path="dashboard" element={<UnderwritingDashboard />} />
           <Route path="pending" element={<PendingUnderwriting />} />
           <Route path="log" element={<UnderwritingLog />} />
+          <Route path="scoreboard" element={<UnderwritingScoreboard />} />
+          <Route path="office-pacing" element={<UnderwritingOfficePacing />} />
+          <Route path="retention" element={<RetentionQueue />} />
 
           {/* ✅ ADDED: relative child route under /uw */}
           <Route path="tax-reconciliation" element={<TaxReconciliation />} />
@@ -477,14 +485,14 @@ function AppRoutes() {
 
       {/* PROTECTED: Supervisor area */}
       <Route element={<ProtectedRoute allowedRoles={['supervisor', 'admin']} />}>
-  <Route path="/supervisor" element={<AuthLayout />}>
-    <Route index element={<SupervisorDashboard />} />
-    <Route path="office-numbers" element={<OfficeNumbers />} />
-    <Route path="tickets" element={<SupervisorTickets />} />
-    <Route path="tax-wip" element={<SupervisorTaxWip />} />
-    <Route path="quote-operations" element={<SupervisorQuoteOperations />} />
-  </Route>
-</Route>
+        <Route path="/supervisor" element={<AuthLayout />}>
+          <Route index element={<SupervisorDashboard />} />
+          <Route path="office-numbers" element={<OfficeNumbers />} />
+          <Route path="tickets" element={<SupervisorTickets />} />
+          <Route path="tax-wip" element={<SupervisorTaxWip />} />
+          <Route path="quote-operations" element={<SupervisorQuoteOperations />} />
+        </Route>
+      </Route>
 
       {/* PROTECTED: Admin area */}
       <Route element={<ProtectedRoute allowedRoles={['admin']} />}>

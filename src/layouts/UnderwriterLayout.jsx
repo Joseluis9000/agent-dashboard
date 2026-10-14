@@ -1,89 +1,98 @@
-// src/layouts/UnderwriterLayout.jsx
-import React from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  ChartNoAxesCombined,
+  Gauge,
+  HeartHandshake,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../AuthContext';
 import styles from './UnderwriterLayout.module.css';
+
+const navigation = [
+  { to: '/uw', label: 'Underwriting Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/uw/scoreboard', label: 'Scoreboard', icon: ChartNoAxesCombined },
+  { to: '/uw/office-pacing', label: 'Office Pacing', icon: Gauge },
+  { to: '/uw/retention', label: 'Retention', icon: HeartHandshake },
+];
 
 const UnderwriterLayout = () => {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { user, profile, signOut } = useAuth();
+  const [collapsed, setCollapsed] = useState(false);
 
-  const isActive = (path) =>
-    location.pathname === path || location.pathname.startsWith(path + '/');
+  const displayName =
+    profile?.full_name || user?.user_metadata?.full_name || user?.email || 'Underwriter';
+  const roleLabel = String(
+    profile?.role || profile?.user_role || user?.user_metadata?.role || 'Underwriting'
+  )
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    if (typeof signOut === 'function') {
+      await signOut();
+    } else {
+      await supabase.auth.signOut();
+    }
     navigate('/login', { replace: true });
   };
 
   return (
-    <div className={styles.layout}>
-      {/* Sidebar */}
-      <aside className={styles.sidebar}>
-        {/* Brand */}
-        <div
-          className={styles.brand}
-          role="button"
-          tabIndex={0}
-          onClick={() => navigate('/uw')}
-          onKeyDown={(e) => e.key === 'Enter' && navigate('/uw')}
-          aria-label="Underwriting home"
-        >
-          <img src="/fiesta-logo.png" alt="Fiesta Insurance" className={styles.logo} />
-          <span className={styles.brandText}>Underwriting</span>
+    <div className={`${styles.layout} ${collapsed ? styles.layoutCollapsed : ''}`}>
+      <aside className={`${styles.sidebar} ${collapsed ? styles.sidebarCollapsed : ''}`} aria-label="Underwriting navigation">
+        <div className={styles.sidebarTop}>
+          <NavLink to="/uw" className={styles.logoLink} aria-label="Underwriting home" title="Underwriting Dashboard">
+            <img src="/fiesta-logo.png" alt="Fiesta Insurance" className={styles.logo} />
+          </NavLink>
+          <button
+            type="button"
+            className={styles.collapseBtn}
+            onClick={() => setCollapsed((current) => !current)}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
         </div>
 
-        {/* Nav */}
+        {!collapsed && (
+          <div className={styles.sidebarHeader}>
+            <div className={styles.dashboardTitle}>Underwriting Dashboard</div>
+            <div className={styles.userName}>{displayName}</div>
+            <div className={styles.roleLabel}>{roleLabel}</div>
+          </div>
+        )}
+
         <nav className={styles.nav}>
-          <button
-            type="button"
-            onClick={() => navigate('/uw')}
-            className={`${styles.navItem} ${isActive('/uw') ? styles.active : ''}`}
-            aria-current={isActive('/uw') ? 'page' : undefined}
-          >
-            Underwriting Queue
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate('/uw/pending')}
-            className={`${styles.navItem} ${isActive('/uw/pending') ? styles.active : ''}`}
-            aria-current={isActive('/uw/pending') ? 'page' : undefined}
-          >
-            Pending Underwriting Log
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate('/uw/log')}
-            className={`${styles.navItem} ${isActive('/uw/log') ? styles.active : ''}`}
-            aria-current={isActive('/uw/log') ? 'page' : undefined}
-          >
-            Underwriting Log
-          </button>
-
-          {/* ✅ NEW: Tax Reconciliation */}
-          <button
-            type="button"
-            onClick={() => navigate('/uw/tax-reconciliation')}
-            className={`${styles.navItem} ${
-              isActive('/uw/tax-reconciliation') ? styles.active : ''
-            }`}
-            aria-current={isActive('/uw/tax-reconciliation') ? 'page' : undefined}
-          >
-            Tax Reconciliation
-          </button>
+          {navigation.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}
+              title={collapsed ? label : undefined}
+              aria-label={collapsed ? label : undefined}
+            >
+              <Icon size={18} strokeWidth={2.15} className={styles.navIcon} />
+              {!collapsed && <span className={styles.navLabel}>{label}</span>}
+            </NavLink>
+          ))}
         </nav>
 
-        {/* Footer */}
         <div className={styles.footer}>
-          <button type="button" className={styles.logout} onClick={handleLogout}>
-            Logout
+          <button type="button" className={styles.logout} onClick={handleLogout} title={collapsed ? 'Logout' : undefined} aria-label="Logout">
+            <LogOut size={18} strokeWidth={2.2} className={styles.navIcon} />
+            {!collapsed && <span>Logout</span>}
           </button>
         </div>
       </aside>
 
-      {/* Main content */}
       <main className={styles.main}>
         <Outlet />
       </main>
