@@ -336,6 +336,24 @@ const getValidTransactionRows = (rows = []) => {
   });
 };
 
+// Approved premium transaction types only. Unknown codes are intentionally excluded.
+const PREMIUM_TRANSACTION_TYPES = {
+  NEW: 'nb', NB: 'nb', RWR: 'rw', RW: 'rw',
+  PY: 'py', PAYMENT: 'py', INS: 'py',
+  REN: 'renewal', RENEWAL: 'renewal',
+  REI: 'reinstatement', REIN: 'reinstatement', REINSTATEMENT: 'reinstatement',
+  END: 'endorsement', ENDORSEMENT: 'endorsement',
+};
+const REPORT_CATEGORIES = ['nb', 'rw', 'py', 'renewal', 'reinstatement', 'endorsement'];
+const REPORT_CATEGORY_LABELS = { nb: 'NB', rw: 'RW', py: 'PY', renewal: 'Renewal', reinstatement: 'Reinstate', endorsement: 'Endorsement' };
+const getReportCategory = (row) => PREMIUM_TRANSACTION_TYPES[cleanStr(row?.type).toUpperCase()] || null;
+const monthOffset = (month, offset) => {
+  const [year, index] = month.split('-').map(Number);
+  const d = new Date(year, index - 1 + offset, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+const newReportBucket = (month) => ({ month, nb: 0, rw: 0, py: 0, renewal: 0, reinstatement: 0, endorsement: 0, brokerFees: 0, premium: 0, legacyNbRw: 0, premiumCounts: { nb: 0, rw: 0, py: 0, renewal: 0, reinstatement: 0, endorsement: 0 }, legacySplitMissing: false, premiumUnavailable: false, brokerFeesUnavailable: false, source: 'detailed' });
+
 const calculateTransactionSummary = (rows = []) => {
   const seenTxn = new Set();
   let excludedRowsCount = 0;
@@ -567,6 +585,435 @@ const loadSavedSettings = () => {
   }
 };
 
+// Loaded only when a user opens a report; the existing monthly dashboard stays fast.
+const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClose, embedded = false, scopeType = "office", scopeOffices = [] }) => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const months = useMemo(() => Array.from({ length: 13 }, (_, i) => monthOffset(month, i - 12)), [month]);
+  const allowedOffices = useMemo(() => new Set(officeCodes.map(normalizeOffice)), [officeCodes]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    setRows([]);
+    (async () => {
+      const buckets = [];
+      // Limit concurrency to avoid 13 simultaneous full-table requests.
+      for (let start = 0; start < months.length; start += 3) {
+        const batch = await Promise.all(months.slice(start, start + 3).map(async (value) => {
+          const dates = getMonthDetails(value);
+          const [raw, legacyResult] = await Promise.all([
+            getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay),
+            // The historical table stores a combined NB/RW count (despite its name).
+            supabase.from('monthly_sales')
+              .select('month_start_date,office,new_business_count,new_business_fees')
+              .eq('month_start_date', dates.firstDay),
+          ]);
+          if (legacyResult.error) throw legacyResult.error;
+          const bucket = newReportBucket(value);
+          const scopedRows = getValidTransactionRows(raw).filter((row) =>
+            allowedOffices.has(normalizeOffice(row.office))
+          );
+          const legacyByOffice = new Map();
+          (legacyResult.data || []).forEach((item) => {
+            const office = normalizeOffice(item.office);
+            if (!allowedOffices.has(office)) return;
+            const existing = legacyByOffice.get(office) || { count: 0, fees: 0 };
+            existing.count += Number(item.new_business_count) || 0;
+            existing.fees += Number(item.new_business_fees) || 0;
+            legacyByOffice.set(office, existing);
+          });
+          // Keep premiumCounts independent of production nb/rw: a detailed upload
+          // can coexist with legacy production without doubling counts.
+          // A legacy office/month owns its production figures. Detailed rows for
+          // that office/month can still supply premium, but cannot double-count NB/RW.
+          const nbRwReceipts = new Map();
+          const detailedProduction = new Map();
+          const detailedFees = new Map();
+          let qualifyingRows = 0;
+          scopedRows.forEach((row) => {
+            const category = getReportCategory(row);
+            const office = normalizeOffice(row.office);
+            const rowAgent = cleanStr(row.agent_email).toLowerCase();
+            const matchesAgent = !agentEmail || rowAgent === cleanStr(agentEmail).toLowerCase();
+            if (category && matchesAgent) {
+              qualifyingRows += 1;
+              const premium = parseMoney(row.premium);
+              bucket.premiumCounts[category] += premium < 0 ? -1 : 1;
+              bucket.premium += premium;
+            }
+            if (category !== 'nb' && category !== 'rw') return;
+            const receipt = cleanStr(row.receipt_id);
+            if (receipt) {
+              const key = `${office}|${receipt}`;
+              if (!nbRwReceipts.has(key)) nbRwReceipts.set(key, new Set());
+              nbRwReceipts.get(key).add(rowAgent);
+            }
+            if (!matchesAgent) return;
+            const current = detailedProduction.get(office) || { nb: 0, rw: 0 };
+            current[category] += parseMoney(row.premium) < 0 ? -1 : 1;
+            detailedProduction.set(office, current);
+          });
+          scopedRows.forEach((row) => {
+            if (!/-brokerfee-/i.test(cleanStr(row.sync_key))) return;
+            const office = normalizeOffice(row.office);
+            const receipt = cleanStr(row.receipt_id);
+            if (!receipt) return;
+            const agents = nbRwReceipts.get(`${office}|${receipt}`);
+            if (!agents) return;
+            if (agentEmail && !(agents.size === 1 && agents.has(cleanStr(agentEmail).toLowerCase()))) return;
+            detailedFees.set(office, (detailedFees.get(office) || 0) + parseMoney(row.fee));
+          });
+          if (!agentEmail) {
+            // Legacy data is the authority for any office/month that exists there.
+            // Other offices in the same month can use the detailed upload.
+            legacyByOffice.forEach((legacy) => {
+              bucket.legacyNbRw += legacy.count;
+              bucket.brokerFees += legacy.fees;
+              bucket.legacySplitMissing = true;
+            });
+          }
+          detailedProduction.forEach((production, office) => {
+            if (!agentEmail && legacyByOffice.has(office)) return;
+            bucket.nb += production.nb;
+            bucket.rw += production.rw;
+            bucket.brokerFees += detailedFees.get(office) || 0;
+          });
+          if (agentEmail) {
+            // Legacy records have no agent identity; never assign office-wide
+            // historical production or fees to an individual agent.
+            bucket.brokerFeesUnavailable = detailedProduction.size === 0;
+          }
+          bucket.source = bucket.legacySplitMissing ? 'legacy' : 'detailed';
+          // monthly_sales contains no premium. No qualifying uploaded detail
+          // means unavailable, NOT a zero-dollar month.
+          bucket.premiumUnavailable = qualifyingRows === 0;
+          if (!agentEmail && !legacyByOffice.size && !detailedProduction.size) {
+            bucket.brokerFeesUnavailable = true;
+          }
+          return bucket;
+        }));
+        buckets.push(...batch);
+        if (cancelled) return;
+      }
+      if (!cancelled) setRows(buckets);
+    })().catch((err) => { if (!cancelled) setError(err.message || 'Unable to load report.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [months, allowedOffices, agentEmail]);
+
+  const total = rows.reduce((acc, row) => {
+    REPORT_CATEGORIES.forEach((key) => { acc[key] += row[key]; acc.premiumCounts[key] += (row.premiumCounts?.[key] ?? 0); });
+    acc.brokerFees += row.brokerFees;
+    acc.premium += row.premium;
+    acc.legacyNbRw += row.legacyNbRw;
+    acc.legacySplitMissing = acc.legacySplitMissing || row.legacySplitMissing;
+    acc.premiumUnavailable = acc.premiumUnavailable || row.premiumUnavailable;
+    acc.brokerFeesUnavailable = acc.brokerFeesUnavailable || row.brokerFeesUnavailable;
+    return acc;
+  }, newReportBucket('13-month total'));
+  const productionColumns = [
+    ['nb', 'NB'], ['rw', 'RW'], ['combined', 'Total NB/RW'],
+    ['brokerFees', 'NB/RW Fees'], ['avg', 'Avg Fee'],
+  ];
+  const premiumColumns = [
+    ...REPORT_CATEGORIES.map((key) => [key, REPORT_CATEGORY_LABELS[key]]),
+    ['transactions', 'Total Transactions'], ['premium', 'Total Premium'],
+  ];
+  const current = rows[rows.length - 1] || newReportBucket(month);
+  const previous = rows[rows.length - 2] || newReportBucket(month);
+  const lastYear = rows[0] || newReportBucket(month);
+  const currentCount = current.nb + current.rw + current.legacyNbRw;
+  const previousCount = previous.nb + previous.rw + previous.legacyNbRw;
+  const lastYearCount = lastYear.nb + lastYear.rw + lastYear.legacyNbRw;
+  const scopedSummary = scopeType === 'company' || scopeType === 'region';
+  const cardStyle = { background: '#fff', border: '1px solid #dce4ef', borderRadius: 12, padding: '17px 15px', boxShadow: '0 3px 12px rgba(16,24,40,.04)' };
+  const smallLabel = { fontSize: 12, color: '#64748b', fontWeight: 800, marginBottom: 8 };
+  const detailCard = (label, value, note = '') => <div style={cardStyle}><div style={smallLabel}>{label}</div><div style={{ fontSize: 23, fontWeight: 850 }}>{value}</div>{note && <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>{note}</div>}</div>;
+  const scopeStatBar = (label, value, max) => <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr 65px', alignItems: 'center', gap: 12, margin: '14px 0', fontSize: 12, fontWeight: 700 }}><span>{label}</span><div style={{ height: 13, background: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}><div style={{ height: '100%', width: `${max > 0 ? Math.max(0, Math.min(100, value / max * 100)) : 0}%`, background: '#0f9f90', borderRadius: 8 }} /></div><span style={{ textAlign: 'right' }}>{formatNumber(value)}</span></div>;
+  const cellValue = (row, key, kind = 'production') => {
+    if (kind === 'premium' && REPORT_CATEGORIES.includes(key)) return row.premiumCounts?.[key] ?? 0;
+    if (key === 'combined') return row.nb + row.rw + row.legacyNbRw;
+    if (key === 'transactions') return REPORT_CATEGORIES.reduce((sum, category) => sum + (row.premiumCounts?.[category] ?? 0), 0);
+    if (key === 'avg') return (row.nb + row.rw + row.legacyNbRw) ? row.brokerFees / (row.nb + row.rw + row.legacyNbRw) : 0;
+    return row[key];
+  };
+  const exportCsv = (kind) => {
+    const columns = kind === 'production' ? productionColumns : premiumColumns;
+    const lines = [['Month', ...columns.map(([, label]) => label)],
+      ...[...rows, total].map((row) => [row.month, ...columns.map(([key]) => ((kind === 'premium' && row.premiumUnavailable && row.month !== '13-month total') || (kind === 'production' && ((row.legacySplitMissing && ['nb', 'rw'].includes(key)) || (row.brokerFeesUnavailable && ['brokerFees', 'avg'].includes(key))))) ? '' : cellValue(row, key, kind))])];
+    const csv = lines.map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `office-numbers-${kind}-${month}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const renderTable = (kind, title, columns) => (
+    <div style={{ ...styles.tableCard, marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 18px', flexWrap: 'wrap', borderBottom: '1px solid #e2e8f0' }}>
+        <div style={styles.chartTitle}>{title}</div>
+        <button type="button" disabled={loading || !!error} onClick={() => exportCsv(kind)} style={{ ...styles.retryButton, padding: '7px 11px', fontSize: 12 }}>Export CSV</button>
+      </div>
+      {loading ? <div style={styles.loading}>Loading 13 months of transactions...</div> : error ? <div style={styles.errorBox}>{error}</div> : (
+        <div style={{ overflowX: 'auto' }}><table className="office-numbers-table" style={{ ...styles.table, width: '100%', minWidth: kind === 'premium' ? 1100 : 780, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <colgroup><col style={{ width: kind === 'production' ? '24%' : '20%' }} />{columns.map(([key]) => <col key={key} style={{ width: kind === 'production' ? (key === 'brokerFees' ? '20%' : key === 'avg' ? '16%' : '13.333%') : `${80 / columns.length}%` }} />)}</colgroup>
+          <thead><tr><th style={{ ...styles.overviewHeaderCell, textAlign: 'left' }}>Month</th>{columns.map(([key, label]) => <th key={key} style={{ ...styles.overviewHeaderCell, background: '#f1f5f9', color: '#334155', textAlign: 'right' }}>{label}</th>)}</tr></thead>
+          <tbody>{[...rows, total].map((row, index) => (
+            <tr key={row.month} style={index === rows.length ? { fontWeight: 700, background: 'rgba(127,127,127,.1)' } : {}}>
+              <td style={{ padding: '12px 14px', borderBottom: '1px solid #e2e8f0', background: index % 2 ? '#f8fafc' : '#fff', fontWeight: index === rows.length ? 850 : 600, whiteSpace: 'nowrap' }}>{row.month === '13-month total' ? (kind === 'premium' && row.premiumUnavailable ? '13-month total (partial)' : row.month) : getMonthLabel(row.month)}</td>
+              {columns.map(([key]) => <td key={key} style={{ padding: '12px 14px', borderBottom: '1px solid #e2e8f0', background: index % 2 ? '#f8fafc' : '#fff', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: index === rows.length ? 850 : 500 }}>
+                {(kind === 'premium' && row.premiumUnavailable && row.month !== '13-month total') || (kind === 'production' && ((row.legacySplitMissing && ['nb', 'rw'].includes(key)) || (row.brokerFeesUnavailable && ['brokerFees', 'avg'].includes(key)))) ? '—' : ['brokerFees', 'avg', 'premium'].includes(key) ? formatCurrency(cellValue(row, key, kind), 2) : formatNumber(cellValue(row, key, kind))}
+              </td>)}
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
+        <div><h2 style={{ margin: 0, fontSize: 22 }}>{scope} — 13-Month Performance</h2>
+          <div style={{ fontSize: 12, opacity: .7 }}>{getMonthLabel(months[0])} – {getMonthLabel(months[12])} · Current month may be partial</div></div>
+        {!embedded && <button type="button" onClick={onClose} style={styles.retryButton}>← Back to Office Summary</button>}
+      </div>
+      {scopedSummary && <>
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ ...styles.monthTitle, marginBottom: 4 }}>{getMonthLabel(month)}</h2>
+          <p style={styles.monthDescription}>{scopeType === 'company' ? 'All G&P offices' : `${scope} region`} · {scopeOffices.length || officeCodes.length} assigned office(s) · Current month may be partial</p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 16 }}>
+          {detailCard('NB/RW Count', formatNumber(currentCount), current.legacySplitMissing ? 'Includes combined legacy NB/RW (split unavailable)' : `${formatNumber(current.nb)} NEW · ${formatNumber(current.rw)} RWR`)}
+          {detailCard('Broker Fee', current.brokerFeesUnavailable ? '—' : formatCurrency(current.brokerFees), current.source === 'legacy' ? 'Legacy monthly_sales fees (plus detailed-only offices, if any)' : 'Receipt-linked NB/RW broker fees')}
+          {detailCard('Average Broker Fee', current.brokerFeesUnavailable ? '—' : formatCurrency(currentCount ? current.brokerFees / currentCount : 0, 2))}
+          {detailCard('Collected Premium', current.premiumUnavailable ? '—' : formatCurrency(current.premium, 2), 'Approved transaction types only')}
+          {detailCard('Premium Transactions', formatNumber(REPORT_CATEGORIES.reduce((n, k) => n + (current.premiumCounts?.[k] ?? 0), 0)))}
+          {detailCard('Offices', formatNumber(scopeOffices.length || officeCodes.length))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14, marginBottom: 20 }}>
+          <div style={cardStyle}><div style={styles.chartTitle}>Performance Comparison</div><p style={{ fontSize: 11, color: '#64748b' }}>NB/RW · Current vs. last month vs. last year</p>{scopeStatBar('Current', currentCount, Math.max(currentCount, previousCount, lastYearCount))}{scopeStatBar('Last Month', previousCount, Math.max(currentCount, previousCount, lastYearCount))}{scopeStatBar('Last Year', lastYearCount, Math.max(currentCount, previousCount, lastYearCount))}</div>
+          <div style={cardStyle}><div style={styles.chartTitle}>NEW vs RWR</div><p style={{ fontSize: 11, color: '#64748b' }}>Policy production mix for selected month</p><div style={{ display: 'flex', height: 20, borderRadius: 10, overflow: 'hidden', margin: '24px 0 12px', background: '#e2e8f0' }}><div style={{ width: `${currentCount ? current.nb / currentCount * 100 : 0}%`, background: '#0f9f90' }} /><div style={{ width: `${currentCount ? current.rw / currentCount * 100 : 0}%`, background: '#94a3b8' }} /></div><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700 }}><span>{formatNumber(current.nb)} NEW</span><span>{formatNumber(current.rw)} RWR</span></div></div>
+          <div style={cardStyle}><div style={styles.chartTitle}>Premium Transaction Mix</div><p style={{ fontSize: 11, color: '#64748b' }}>Counts by approved transaction type</p>{REPORT_CATEGORIES.map((k) => <div key={k}>{scopeStatBar(REPORT_CATEGORY_LABELS[k], (current.premiumCounts?.[k] ?? 0), Math.max(...REPORT_CATEGORIES.map((c) => (current.premiumCounts?.[c] ?? 0)), 1))}</div>)}</div>
+        </div>
+      </>}
+      {renderTable('production', 'NB/RW Production', productionColumns)}
+      {renderTable('premium', 'Collected Premium — Approved Transaction Types Only', premiumColumns)}
+      <p style={{ fontSize: 12, opacity: .75 }}>
+        Legacy NB/RW counts and broker fees come directly from monthly_sales; detailed-only office/months use receipt-linked production and broker fees. A dash means a historical breakdown or premium value is unavailable, not zero. Premium includes only NB, RW, INS/PY, renewal, reinstatement and endorsement transaction codes. Voids and duplicates are excluded; negative premium adjustments reduce totals. Verify transaction code aliases and fee mapping against your database before production deployment.
+      </p>
+    </div>
+  );
+};
+
+
+// Custom Reports use detailed transaction uploads only. Historical monthly_sales
+// cannot support arbitrary dates, agent attribution, or collected premium.
+const CustomReportsPanel = ({ officeRegions, allowedOfficeCodes, agentOptions, isAdmin, assignedRegion }) => {
+  const today = new Date();
+  const isoToday = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const [startDate, setStartDate] = useState(`${isoToday.slice(0,7)}-01`);
+  const [endDate, setEndDate] = useState(isoToday);
+  const [reportType, setReportType] = useState('fees');
+  const [feeType, setFeeType] = useState('broker');
+  const [scopeType, setScopeType] = useState('region');
+  const [scopeValue, setScopeValue] = useState('');
+  const [rows, setRows] = useState(null);
+  const [detailRows, setDetailRows] = useState([]);
+  const [officeTotals, setOfficeTotals] = useState([]);
+  const [detailOffice, setDetailOffice] = useState('all');
+  const [detailDate, setDetailDate] = useState('all');
+  const [detailSearch, setDetailSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const regions = [...new Set(allowedOfficeCodes.map(code => cleanStr(officeRegions[code]).toUpperCase()).filter(Boolean))].sort();
+  const choices = scopeType === 'region' ? regions : scopeType === 'office' ? allowedOfficeCodes : agentOptions;
+  const selected = choices.includes(scopeValue) ? scopeValue : (choices[0] || '');
+  const inputStyle = { padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 7, background: '#fff', width: '100%', minWidth: 0 };
+  const money = value => formatCurrency(value, 2);
+  const run = async () => {
+    if (!startDate || !endDate || startDate > endDate) { setError('Select a valid start and end date.'); return; }
+    if (!selected) { setError('Select a region, office, or agent.'); return; }
+    setBusy(true); setError(''); setRows(null); setDetailRows([]); setOfficeTotals([]); setDetailOffice('all'); setDetailDate('all'); setDetailSearch('');
+    try {
+      // Reuse the same paginated, cached transaction loader as the detail reports.
+      // Query full months then apply exact inclusive date boundaries locally.
+      const months = [];
+      for (let m = startDate.slice(0,7); m <= endDate.slice(0,7); m = monthOffset(m, 1)) {
+        months.push(m);
+        if (months.length > 24) throw new Error('Please select a range of 24 months or less.');
+      }
+      const fetched = [];
+      for (let i = 0; i < months.length; i += 3) {
+        const chunk = await Promise.all(months.slice(i,i+3).map(async m => {
+          const dates = getMonthDetails(m);
+          return getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay);
+        }));
+        chunk.forEach(part => fetched.push(...part));
+      }
+      const permitted = new Set(allowedOfficeCodes);
+      const scoped = getValidTransactionRows(fetched).filter(row => {
+        const office = normalizeOffice(row.office);
+        const date = cleanStr(row.date_time).slice(0,10);
+        if (!permitted.has(office) || date < startDate || date > endDate) return false;
+        if (!isAdmin && assignedRegion && cleanStr(officeRegions[office]).toUpperCase() !== cleanStr(assignedRegion).toUpperCase()) return false;
+        if (scopeType === 'region') return cleanStr(officeRegions[office]).toUpperCase() === selected;
+        if (scopeType === 'office') return office === selected;
+        return cleanStr(row.agent_email).toLowerCase() === selected.toLowerCase();
+      });
+      const groups = new Map();
+      scoped.forEach(row => {
+        const date = cleanStr(row.date_time).slice(0,10);
+        if (!groups.has(date)) groups.set(date, []);
+        groups.get(date).push(row);
+      });
+      const output = [...groups.entries()].sort(([a],[b]) => a.localeCompare(b)).map(([date, group]) => {
+        const summary = calculateTransactionSummary(group);
+        const premiumRows = group.filter(row => !!getReportCategory(row));
+        const premiumCounts = Object.fromEntries(REPORT_CATEGORIES.map(key => [key,0]));
+        premiumRows.forEach(row => { premiumCounts[getReportCategory(row)] += parseMoney(row.premium) < 0 ? -1 : 1; });
+        const feeTotal = summary.fee_totals[feeType] || 0;
+        const feeCount = feeType === 'broker' ? summary.nb_rw_count : (summary.fee_counts[feeType] || 0);
+        return { date, nb: summary.new_business_count, rw: summary.rewrite_count, count: feeCount, feeTotal, average: feeCount ? feeTotal / feeCount : 0,
+          premiumCounts, transactions: REPORT_CATEGORIES.reduce((n,key)=>n+premiumCounts[key],0), premium: premiumRows.reduce((n,row)=>n+parseMoney(row.premium),0) };
+      });
+      // Region reports also provide one consolidated row per office across the full selected range.
+      const byOffice = new Map();
+      if (scopeType === 'region') {
+        scoped.forEach(row => {
+          const code = normalizeOffice(row.office);
+          if (!byOffice.has(code)) byOffice.set(code, []);
+          byOffice.get(code).push(row);
+        });
+      }
+      setOfficeTotals([...byOffice.entries()].sort(([a],[b]) => a.localeCompare(b)).map(([office, group]) => {
+        const summary = calculateTransactionSummary(group);
+        const premiumRows = group.filter(row => !!getReportCategory(row));
+        const premiumCounts = Object.fromEntries(REPORT_CATEGORIES.map(key => [key,0]));
+        premiumRows.forEach(row => { premiumCounts[getReportCategory(row)] += parseMoney(row.premium) < 0 ? -1 : 1; });
+        const feeTotal = summary.fee_totals[feeType] || 0;
+        const count = feeType === 'broker' ? summary.nb_rw_count : (summary.fee_counts[feeType] || 0);
+        return { office, nb:summary.new_business_count, rw:summary.rewrite_count, count, feeTotal,
+          average:count ? feeTotal/count : 0, premiumCounts,
+          transactions:REPORT_CATEGORIES.reduce((n,key)=>n+premiumCounts[key],0),
+          premium:premiumRows.reduce((n,row)=>n+parseMoney(row.premium),0) };
+      }));
+      // Preserve the exact scoped, deduplicated source transactions for the drill-down.
+      // Fee detail shows fee-bearing rows for the chosen category; premium detail
+      // shows only approved premium transaction types.
+      // Recover policy numbers from other rows sharing the same office and receipt.
+      const policyByReceipt = new Map();
+      const typeByReceipt = new Map();
+      scoped.forEach(row => {
+        const receipt = cleanStr(row.receipt_id);
+        const office = normalizeOffice(row.office);
+        const policy = cleanStr(row.policy);
+        if (!receipt || !office) return;
+        const key = `${office}::${receipt}`;
+        if (policy && !policyByReceipt.has(key)) policyByReceipt.set(key, policy);
+        const transactionType = cleanStr(row.type);
+        if (transactionType) {
+          // Prefer the policy-bearing transaction when multiple receipt rows have types.
+          const previous = typeByReceipt.get(key);
+          if (!previous || (policy && !previous.hasPolicy)) {
+            typeByReceipt.set(key, { value: transactionType, hasPolicy: !!policy });
+          }
+        }
+      });
+      const details = scoped.filter(row => reportType === 'premium'
+        ? !!getReportCategory(row)
+        : (feeType === 'all' ? Math.abs(parseMoney(row.fee)) > 0.0001
+          : feeType === 'insurance' ? INSURANCE_FEE_TYPES.includes(getFeeCategory(row))
+          : getFeeCategory(row) === feeType));
+      const enrichedDetails = details.map(row => ({
+        ...row,
+        policy: cleanStr(row.policy) || policyByReceipt.get(`${normalizeOffice(row.office)}::${cleanStr(row.receipt_id)}`) || '',
+        type: cleanStr(row.type) || typeByReceipt.get(`${normalizeOffice(row.office)}::${cleanStr(row.receipt_id)}`)?.value || ''
+      }));
+      setDetailRows(enrichedDetails.sort((a,b) => cleanStr(a.date_time).localeCompare(cleanStr(b.date_time))));
+      setRows(output);
+    } catch (err) { setError(err.message || 'Unable to generate report.'); }
+    finally { setBusy(false); }
+  };
+  const total = (rows || []).reduce((acc,row) => {
+    ['nb','rw','count','feeTotal','premium','transactions'].forEach(key => { acc[key] += row[key]; });
+    REPORT_CATEGORIES.forEach(key => { acc.premiumCounts[key] += row.premiumCounts[key]; });
+    return acc;
+  }, { date:'TOTAL', nb:0, rw:0, count:0, feeTotal:0, premium:0, transactions:0, premiumCounts:Object.fromEntries(REPORT_CATEGORIES.map(key=>[key,0])) });
+  total.average = total.count ? total.feeTotal / total.count : 0;
+  const visibleDetails = detailRows.filter(row => {
+    if (detailOffice !== 'all' && normalizeOffice(row.office) !== detailOffice) return false;
+    if (detailDate !== 'all' && cleanStr(row.date_time).slice(0,10) !== detailDate) return false;
+    if (!detailSearch.trim()) return true;
+    const needle = detailSearch.trim().toLowerCase();
+    return [row.customer,row.customer_id,row.policy,row.receipt_id,row.reference,row.csr,row.agent_email,row.office,row.company,row.type]
+      .some(value => cleanStr(value).toLowerCase().includes(needle));
+  });
+  const feeLabel = FEE_TYPE_OPTIONS.find(option => option.value === feeType)?.label || 'Fees';
+  const columns = reportType === 'fees'
+    ? [['date','Date'], ...(feeType === 'broker' ? [['nb','NB'],['rw','RW']] : []), ['count',feeType === 'broker' ? 'NB/RW Count' : 'Fee Count'], ['feeTotal',feeLabel], ['average','Average Fee']]
+    : [['date','Date'], ...REPORT_CATEGORIES.map(key => [`premiumCounts.${key}`, REPORT_CATEGORY_LABELS[key]]), ['transactions','Total Transactions'], ['premium','Collected Premium']];
+  const getValue = (row,key) => key.startsWith('premiumCounts.') ? row.premiumCounts[key.split('.')[1]] : row[key];
+  const exportCsv = () => {
+    const values = [columns.map(([,label])=>label), ...[...rows,total].map(row => columns.map(([key])=>getValue(row,key)))];
+    const csv = values.map(line=>line.map(value=>`"${String(value ?? '').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+    const a = document.createElement('a'); a.href=url; a.download=`custom-${reportType}-${startDate}-${endDate}.csv`; a.click(); URL.revokeObjectURL(url);
+  };
+  return <div style={{ marginTop: 18 }}>
+    <div style={{ background:'#fff', border:'1px solid #dbe3ef', borderRadius:12, padding:20, marginBottom:18 }}>
+      <h2 style={{ margin:'0 0 6px', fontSize:21 }}>Custom Reports</h2>
+      <p style={{ fontSize:12, color:'#64748b', margin:'0 0 18px' }}>Choose a report, exact date range, and reporting level. Uses available detailed transaction uploads only; months without uploads are not treated as zero.</p>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:14, alignItems:'end' }}>
+        <label style={{fontSize:12,fontWeight:700}}>Report Type<select style={inputStyle} value={reportType} onChange={e=>{setReportType(e.target.value);setRows(null);}}><option value="fees">Production &amp; Fees</option><option value="premium">Collected Premium</option></select></label>
+        <label style={{fontSize:12,fontWeight:700}}>Start Date<input type="date" style={inputStyle} value={startDate} onChange={e=>{setStartDate(e.target.value);setRows(null);}} /></label>
+        <label style={{fontSize:12,fontWeight:700}}>End Date<input type="date" style={inputStyle} value={endDate} onChange={e=>{setEndDate(e.target.value);setRows(null);}} /></label>
+        <label style={{fontSize:12,fontWeight:700}}>Report By<select style={inputStyle} value={scopeType} onChange={e=>{setScopeType(e.target.value);setScopeValue('');setRows(null);}}><option value="region">Region</option><option value="office">Office</option><option value="agent">Agent</option></select></label>
+        <label style={{fontSize:12,fontWeight:700}}>{scopeType === 'region' ? 'Region' : scopeType === 'office' ? 'Office' : 'Agent'}<select style={inputStyle} value={selected} onChange={e=>{setScopeValue(e.target.value);setRows(null);}}>{choices.map(item=><option key={item} value={item}>{item}</option>)}</select></label>
+        {reportType === 'fees' && <label style={{fontSize:12,fontWeight:700}}>Fee Type<select style={inputStyle} value={feeType} onChange={e=>{setFeeType(e.target.value);setRows(null);}}>{FEE_TYPE_OPTIONS.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>}
+        <button type="button" disabled={busy} onClick={run} style={{ ...styles.primaryButton, minHeight:40 }}>{busy ? 'Generating...' : 'Generate Report'}</button>
+      </div>
+      {error && <div style={{color:'#b91c1c',marginTop:12}}>{error}</div>}
+    </div>
+    {rows && <div style={{...styles.tableCard, padding:0, overflow:'hidden'}}>
+      <div style={{padding:16,display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}><div><strong>{reportType === 'fees' ? feeLabel : 'Collected Premium'} — {selected}</strong><div style={{fontSize:12,color:'#64748b'}}>{startDate} to {endDate} · {rows.length} day(s) with data</div></div><button type="button" onClick={exportCsv} style={styles.retryButton}>Export CSV</button></div>
+      <div style={{overflowX:'auto'}}><table style={{...styles.table,width:'100%',minWidth:700}}><thead><tr>{columns.map(([key,label])=><th key={key} style={{...styles.overviewHeaderCell,textAlign:key==='date'?'left':'right'}}>{label}</th>)}</tr></thead><tbody>{[...rows,total].map(row=><tr key={row.date} style={row.date==='TOTAL'?{background:'#fef3c7',fontWeight:800}:{}}>{columns.map(([key])=><td key={key} style={{padding:'11px 14px',textAlign:key==='date'?'left':'right',borderBottom:'1px solid #e2e8f0'}}>{key==='feeTotal'||key==='average'||key==='premium'?money(getValue(row,key)):key==='date'?row.date:formatNumber(getValue(row,key))}</td>)}</tr>)}</tbody></table></div>
+      {!rows.length && <div style={{padding:18,color:'#64748b'}}>No matching detailed transactions in this date range.</div>}
+      {scopeType === 'region' && <div style={{padding:'18px 16px',borderTop:'2px solid #e2e8f0'}}>
+        <h3 style={{margin:'0 0 4px',fontSize:17}}>Office Totals — Selected Date Range</h3>
+        <p style={{margin:'0 0 12px',fontSize:12,color:'#64748b'}}>One total per office in {selected}, {startDate} through {endDate}. Select an office to filter individual transactions below.</p>
+        <div style={{overflowX:'auto'}}><table style={{...styles.table,width:'100%',minWidth:700}}>
+          <thead><tr>{[['office','Office'],...columns.filter(([key])=>key!=='date')].map(([key,label])=><th key={key} style={{...styles.overviewHeaderCell,textAlign:key==='office'?'left':'right'}}>{label}</th>)}</tr></thead>
+          <tbody>{officeTotals.map(row=><tr key={row.office} style={{background:detailOffice===row.office?'#eff6ff':undefined}}>
+            {['office',...columns.filter(([key])=>key!=='date').map(([key])=>key)].map(key=><td key={key} style={{padding:'11px 14px',textAlign:key==='office'?'left':'right',borderBottom:'1px solid #e2e8f0'}}>{key==='office'?<button type="button" onClick={()=>setDetailOffice(detailOffice===row.office?'all':row.office)} style={{background:'none',border:0,color:'#1d4ed8',fontWeight:700,cursor:'pointer',padding:0}}>{row.office}</button>:['feeTotal','average','premium'].includes(key)?money(getValue(row,key)):formatNumber(getValue(row,key))}</td>)}
+          </tr>)}</tbody>
+        </table></div>
+        {!officeTotals.length && <div style={{padding:12,color:'#64748b'}}>No matching office transactions.</div>}
+      </div>}
+      <div style={{padding:'18px 16px',borderTop:'2px solid #e2e8f0'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12,marginBottom:14}}>
+          <div><h3 style={{margin:0,fontSize:17}}>Individual Transactions</h3><div style={{fontSize:12,color:'#64748b'}}>Source transaction detail for the selected report · {visibleDetails.length} row(s) · Policy numbers included</div></div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {scopeType === 'region' && <select aria-label="Filter transactions by office" style={{...inputStyle,width:150}} value={detailOffice} onChange={e=>setDetailOffice(e.target.value)}><option value="all">All offices</option>{officeTotals.map(row=><option key={row.office} value={row.office}>{row.office}</option>)}</select>}
+            <select aria-label="Filter transaction date" style={{...inputStyle,width:160}} value={detailDate} onChange={e=>setDetailDate(e.target.value)}><option value="all">All dates</option>{rows.map(row=><option key={row.date} value={row.date}>{row.date}</option>)}</select>
+            <input aria-label="Search transactions" style={{...inputStyle,width:250}} placeholder="Search customer, policy, receipt..." value={detailSearch} onChange={e=>setDetailSearch(e.target.value)} />
+            <button type="button" style={styles.retryButton} onClick={()=>{
+              const headers=['Date/Time','Office','Agent','Customer','Customer ID','Receipt','Policy Number','Type','Company','Premium','Fee','Total'];
+              const csv=[headers,...visibleDetails.map(r=>[r.date_time,r.office,r.agent_email||r.csr,r.customer,r.customer_id,r.receipt_id,r.policy,r.type,r.company,r.premium,r.fee,r.total])].map(line=>line.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');
+              const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`custom-transactions-${startDate}-${endDate}.csv`;a.click();URL.revokeObjectURL(url);
+            }}>Export Transactions CSV</button>
+          </div>
+        </div>
+        <div style={{overflowX:'auto',maxHeight:540,overflowY:'auto'}}><table style={{...styles.table,width:'100%',minWidth:1350}}><thead><tr>{['Date / Time','Office','Agent','Customer','Customer ID','Receipt','Policy Number','Type','Company','Premium','Fee','Total'].map(label=><th key={label} style={{...styles.overviewHeaderCell,whiteSpace:'nowrap',position:'sticky',top:0,zIndex:1}}>{label}</th>)}</tr></thead><tbody>{visibleDetails.map((r,i)=><tr key={`${r.id||r.sync_key||r.receipt_id||'txn'}-${i}`}>{[cleanStr(r.date_time).replace('T',' ').slice(0,19),normalizeOffice(r.office),r.agent_email||r.csr,r.customer,r.customer_id,r.receipt_id,r.policy,r.type,r.company,money(parseMoney(r.premium)),money(parseMoney(r.fee)),money(parseMoney(r.total))].map((value,j)=><td key={j} style={{padding:'9px 12px',borderBottom:'1px solid #e2e8f0',whiteSpace:'nowrap',textAlign:j>=9?'right':'left'}}>{value||'—'}</td>)}</tr>)}</tbody></table></div>
+        {!visibleDetails.length && <div style={{padding:16,color:'#64748b'}}>No matching transactions for these filters.</div>}
+      </div>
+    </div>}
+  </div>;
+};
+
 const OfficeNumbers = () => {
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthValue);
   const [monthlyRows, setMonthlyRows] = useState([]);
@@ -580,6 +1027,7 @@ const OfficeNumbers = () => {
   const [selectedFeeType, setSelectedFeeType] = useState('broker');
   const [viewMode, setViewMode] = useState('office');
   const [selectedOffice, setSelectedOffice] = useState('');
+  const [reportScope, setReportScope] = useState(null);
   const [selectedAgentEmail, setSelectedAgentEmail] = useState('');
   const [officeDetailData, setOfficeDetailData] = useState(null);
   const [officeDetailLoading, setOfficeDetailLoading] = useState(false);
@@ -2228,7 +2676,7 @@ const OfficeNumbers = () => {
       <div className="office-numbers-page" style={styles.page}>
       <div style={styles.header}>
         <div>
-          <h1 style={styles.title}>{viewMode === 'office' ? 'Monthly Office Performance' : viewMode === 'agent' ? 'Monthly Agent Performance' : 'Performance Leaderboard'}</h1>
+          <h1 style={styles.title}>{viewMode === 'office' ? 'Monthly Office Performance' : viewMode === 'agent' ? 'Monthly Agent Performance' : viewMode === 'leaderboard' ? 'Performance Leaderboard' : 'Custom Reports'}</h1>
           <p style={styles.subtitle}>
             Switch between office and agent performance. NB/RW goals appear only in Broker Fee view; other fee views focus on counts, totals, averages, pacing, and historical comparisons.
           </p>
@@ -2252,7 +2700,7 @@ const OfficeNumbers = () => {
         </div>
       </div>
 
-      <div style={styles.controlBar}>
+      {!reportScope && (<><div style={styles.controlBar}>
         <div>
           <h2 style={styles.monthTitle}>{getMonthLabel(selectedMonth)}</h2>
           <p style={styles.monthDescription}>
@@ -2295,6 +2743,7 @@ const OfficeNumbers = () => {
             >
               Leaderboard
             </button>
+            <button type="button" onClick={() => { setSelectedOffice(''); setSelectedAgentEmail(''); setViewMode('custom'); fetchDashboardData({ includeAgents: true }); }} style={{...styles.segmentButton,...(viewMode === 'custom' ? styles.segmentButtonActive : {})}}>Custom Reports</button>
           </div>
 
           <div style={styles.feeSelectorWrap}>
@@ -2357,11 +2806,36 @@ const OfficeNumbers = () => {
           </button>
         </div>
       )}
+      </>)}
+
+      {reportScope && (
+        <ThirteenMonthDataReport
+          key={`${reportScope.label}|${selectedMonth}`}
+          month={selectedMonth}
+          scope={reportScope.label}
+          scopeType={reportScope.scopeType || 'region'}
+          scopeOffices={reportScope.offices}
+          officeCodes={reportScope.offices}
+          agentEmail={reportScope.agentEmail || ''}
+          onClose={() => setReportScope(null)}
+        />
+      )}
+
+      {!reportScope && (<>
+      {viewMode === 'custom' && <CustomReportsPanel
+        officeRegions={officeRegions}
+        allowedOfficeCodes={[...new Set(visibleMonthlyRows.map(row => normalizeOffice(row.office_code)))]}
+        agentOptions={[...new Set(visibleAgentMonthlyRows.map(row => cleanStr(row.agent_email).toLowerCase()).filter(Boolean))].sort()}
+        isAdmin={isAdmin}
+        assignedRegion={assignedRegion}
+      />}
 
       {viewMode === 'office' && selectedOfficeMetric && selectedAgentMetric && (
         <AgentDetail
           agent={allAuthorizedAgentMetric || selectedAgentMetric}
           office={selectedOfficeMetric}
+          reportOfficeCodes={[selectedOfficeMetric.officeName]}
+          reportAgentEmail={selectedAgentMetric.agentEmail}
           selectedFeeConfig={selectedFeeConfig}
           selectedMetricConfig={selectedMetricConfig}
           selectedMonth={selectedMonth}
@@ -2418,6 +2892,11 @@ const OfficeNumbers = () => {
 
       {viewMode === 'office' && !selectedOfficeMetric && (
         <>
+      <div style={{ marginBottom: 12 }}>
+        <button type="button" style={{ ...styles.retryButton, padding: '7px 12px', background: '#fff', color: '#475569', border: '1px solid #cbd5e1', fontSize: 12, fontWeight: 700, boxShadow: 'none' }} onClick={() => setReportScope({ label: isAdmin ? 'All G&P' : normalizedAssignedRegion, scopeType: isAdmin ? 'company' : 'region', offices: Object.keys(officeRegions).filter((code) => canViewOffice(code)) })}>
+          View More Details · {isAdmin ? 'All G&P' : 'Region'}
+        </button>
+      </div>
       <div style={styles.summaryGrid}>
         <SummaryCard
           label={selectedMetricConfig.countLabel}
@@ -2572,6 +3051,7 @@ const OfficeNumbers = () => {
                         >
                           <div style={styles.regionHeaderContent}>
                             <strong>{group.regionName}</strong>
+                            <button type="button" style={{ ...styles.retryButton, marginLeft: 12, padding: '5px 10px', background: '#fff', color: '#475569', border: '1px solid #cbd5e1', fontSize: 11, fontWeight: 700, boxShadow: 'none' }} onClick={() => setReportScope({ label: group.regionName, scopeType: 'region', offices: Object.keys(officeRegions).filter((code) => cleanStr(officeRegions[code]).toUpperCase() === cleanStr(group.regionName).toUpperCase() && canViewOffice(code)) })}>View More Details →</button>
                           </div>
                         </td>
                       </tr>
@@ -3392,6 +3872,7 @@ const OfficeNumbers = () => {
         </>
       )}
 
+      </>)}
       </div>
     </>
   );
@@ -3447,29 +3928,6 @@ const MetricBar = ({ label, value, max, displayValue }) => {
       <div style={styles.metricBarLabel}>{label}</div>
       <div style={styles.metricBarTrack}><div style={{ ...styles.metricBarFill, width: `${width}%` }} /></div>
       <div style={styles.metricBarValue}>{displayValue}</div>
-    </div>
-  );
-};
-
-const TrendBars = ({ rows = [], selectedMetricConfig }) => {
-  const max = Math.max(1, ...rows.map((row) => Number(row.selectedMetricCount) || 0));
-
-  return (
-    <div style={styles.trendChart}>
-      {rows.map((row) => {
-        const value = Number(row.selectedMetricCount) || 0;
-        const height = Math.max(3, (value / max) * 100);
-        return (
-          <div key={row.month} style={styles.trendColumn} title={`${row.month}: ${formatNumber(value)} ${selectedMetricConfig.shortCountLabel}`}>
-            <div style={styles.trendValue}>{formatNumber(value)}</div>
-            <div style={styles.trendBarWell}>
-              <div style={{ ...styles.trendBar, height: `${height}%` }} />
-            </div>
-            <div style={styles.trendMonth}>{row.month ? row.month.slice(5) : '—'}</div>
-            <div style={styles.trendSource}>{row.dataSource === 'legacy' ? 'L' : row.dataSource === 'detailed' ? 'D' : '—'}</div>
-          </div>
-        );
-      })}
     </div>
   );
 };
@@ -3566,19 +4024,12 @@ const OfficeDetail = ({
         </div>
       </div>
 
-      <div style={styles.chartCardWide}>
-        <div style={styles.chartTitle}>12-Month Performance Trend</div>
-        <div style={styles.chartSubtext}>
-          {selectedMetricConfig.shortCountLabel} by month. D = detailed transaction data; L = legacy monthly data.
-        </div>
-        {detailLoading && !trend.length ? (
-          <div style={styles.emptyDetail}>Loading office trend...</div>
-        ) : trend.length ? (
-          <TrendBars rows={trend} selectedMetricConfig={selectedMetricConfig} />
-        ) : (
-          <div style={styles.emptyDetail}>No trend data is available for this office.</div>
-        )}
-      </div>
+      <ThirteenMonthDataReport
+        month={selectedMonth}
+        scope={office.officeName}
+        officeCodes={[office.officeName]}
+        embedded
+      />
 
       <div style={styles.tableCard}>
         <div style={styles.detailSectionHeader}>
@@ -3653,6 +4104,7 @@ const OfficeDetail = ({
 const AgentDetail = ({
   agent,
   office,
+  reportOfficeCodes, reportAgentEmail,
   selectedFeeConfig,
   selectedMetricConfig,
   selectedMonth,
@@ -3692,8 +4144,6 @@ const AgentDetail = ({
 
   const weeklyRows = Array.isArray(detailData?.weeks) ? detailData.weeks : [];
   const officeRows = Array.isArray(detailData?.offices) ? detailData.offices : [];
-  const trendRows = Array.isArray(detailData?.trend) ? detailData.trend : [];
-  const trendMax = Math.max(1, ...trendRows.map((row) => Number(row.nb_rw_count) || 0));
   const [expandedFeeType, setExpandedFeeType] = useState('');
   const [copiedValue, setCopiedValue] = useState('');
 
@@ -3927,13 +4377,13 @@ const AgentDetail = ({
       </div>
 
 
-      <div style={styles.chartCard}>
-        <div style={styles.chartTitle}>12-Month NB/RW Trend</div>
-        <div style={styles.chartSubtext}>All authorized offices for this agent.</div>
-        {trendRows.length ? trendRows.map((row) => (
-          <MetricBar key={row.month} label={row.month} value={Number(row.nb_rw_count) || 0} max={trendMax} displayValue={formatNumber(row.nb_rw_count)} />
-        )) : <div style={styles.emptyDetail}>No trend data returned.</div>}
-      </div>
+      <ThirteenMonthDataReport
+        month={selectedMonth}
+        scope={agent.csrName || agent.name || 'Agent'}
+        officeCodes={reportOfficeCodes || [office.officeName]}
+        agentEmail={reportAgentEmail || agent.agentEmail || ''}
+        embedded
+      />
 
       {!hideEstimatedCommission && (
         <>

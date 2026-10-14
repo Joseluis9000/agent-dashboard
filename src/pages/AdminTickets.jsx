@@ -24,6 +24,7 @@ const StatisticsCard = ({ title, value, color, icon }) => (
 );
 
 const StatusBadge = ({ text }) => {
+  text = normalizeTicketStatus(text);
   const map = {
     New: 'bg-blue-100 text-blue-800',
     'In Progress': 'bg-yellow-100 text-yellow-800',
@@ -54,55 +55,94 @@ const UrgencyBadge = ({ urgency }) => {
   );
 };
 
-const TicketsTable = ({ tickets, columns }) => (
-  <div className="bg-white shadow-lg rounded-lg overflow-hidden">
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm text-left text-gray-600">
-        <thead className="text-xs text-gray-700 uppercase bg-gray-100">
-          <tr>
-            {columns.map((col) => (
-              <th
-                key={col.header}
-                scope="col"
-                className="px-4 py-3 whitespace-nowrap"
-              >
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {tickets.length > 0 ? (
-            tickets.map((ticket) => (
-              <tr
-                key={ticket.id}
-                className="bg-white border-b hover:bg-gray-50"
-              >
-                {columns.map((col) => (
-                  <td
-                    key={`${ticket.id}-${col.header}`}
-                    className="px-4 py-3 align-top"
-                  >
-                    {col.cell(ticket)}
-                  </td>
-                ))}
-              </tr>
-            ))
-          ) : (
+const TicketsTable = ({
+  tickets,
+  columns,
+  selectedTicketIds,
+  onToggleTicket,
+  onToggleAll,
+}) => {
+  const allSelected =
+    tickets.length > 0 && tickets.every((ticket) => selectedTicketIds.has(ticket.id));
+  const someSelected =
+    tickets.some((ticket) => selectedTicketIds.has(ticket.id)) && !allSelected;
+
+  return (
+    <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left text-gray-600">
+          <thead className="text-xs text-gray-700 uppercase bg-gray-100">
             <tr>
-              <td
-                colSpan={columns.length}
-                className="text-center py-10 text-gray-500"
-              >
-                No tickets to display.
-              </td>
+              <th scope="col" className="px-4 py-3 w-12 text-center">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someSelected;
+                  }}
+                  onChange={(e) => onToggleAll(e.target.checked)}
+                  aria-label="Select all visible tickets"
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+              </th>
+              {columns.map((col) => (
+                <th
+                  key={col.header}
+                  scope="col"
+                  className="px-4 py-3 whitespace-nowrap"
+                >
+                  {col.header}
+                </th>
+              ))}
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tickets.length > 0 ? (
+              tickets.map((ticket) => {
+                const isSelected = selectedTicketIds.has(ticket.id);
+                return (
+                  <tr
+                    key={ticket.id}
+                    className={`${
+                      isSelected ? 'bg-blue-50' : 'bg-white'
+                    } border-b hover:bg-gray-50`}
+                  >
+                    <td className="px-4 py-3 align-top text-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleTicket(ticket.id)}
+                        aria-label={`Select ticket ${ticket.id}`}
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    {columns.map((col) => (
+                      <td
+                        key={`${ticket.id}-${col.header}`}
+                        className="px-4 py-3 align-top"
+                      >
+                        {col.cell(ticket)}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td
+                  colSpan={columns.length + 1}
+                  className="text-center py-10 text-gray-500"
+                >
+                  No tickets to display.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // --- Utility helpers --- //
 
@@ -154,8 +194,227 @@ const getDescriptionPreview = (ticket, max = 80) => {
   return text.slice(0, max).trimEnd() + '…';
 };
 
+// Some legacy records store statuses surrounded by literal quotes.
+// Normalize only for display, filtering and counting; do not rewrite database values.
+const normalizeTicketStatus = (status) => {
+  const cleaned = String(status ?? '').trim().replace(/^[\s'"`]+|[\s'"`]+$/g, '').trim();
+  return cleaned || 'New';
+};
+
 const isCompletedStatus = (status) =>
-  status === 'Completed' || status === 'Cancelled';
+  ['Completed', 'Cancelled'].includes(normalizeTicketStatus(status));
+
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+
+const formatPrintDate = (value) => {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+};
+
+const getPrintableInventoryItems = (ticket) => {
+  // Support structured inventory data if it exists on the ticket row.
+  const possibleLists = [
+    ticket.requested_inventory,
+    ticket.inventory_items,
+    ticket.supply_items,
+    ticket.requested_items,
+  ];
+
+  for (const value of possibleLists) {
+    if (!value) continue;
+
+    let list = value;
+    if (typeof list === 'string') {
+      try {
+        list = JSON.parse(list);
+      } catch {
+        list = null;
+      }
+    }
+
+    if (Array.isArray(list) && list.length) {
+      return list.map((item, index) => ({
+        name:
+          item?.name ||
+          item?.item ||
+          item?.item_name ||
+          item?.supply_item ||
+          `Item ${index + 1}`,
+        actual:
+          item?.actual ??
+          item?.actual_on_hand ??
+          item?.stock_on_hand ??
+          item?.on_hand ??
+          '',
+        actualUnit:
+          item?.actual_unit ||
+          item?.unit ||
+          item?.uom ||
+          '',
+        requested:
+          item?.requested ??
+          item?.request ??
+          item?.requested_quantity ??
+          item?.quantity_requested ??
+          item?.quantity ??
+          '',
+        requestedUnit:
+          item?.requested_unit ||
+          item?.unit ||
+          item?.uom ||
+          '',
+        custom:
+          Boolean(item?.custom || item?.is_custom || item?.custom_item) ||
+          String(item?.name || item?.item || item?.item_name || '').toLowerCase().includes('item not in catalog'),
+      }));
+    }
+  }
+
+  // Current office-supply tickets also contain the full inventory request in the
+  // description, so use that as a reliable fallback for printing.
+  const description = String(ticket.description || '');
+  const items = [];
+
+  description.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line.startsWith('-')) return;
+
+    const match = line.match(
+      /^-\s*(.+?)(\s*\(item not in catalog\))?\s*:\s*Actual\s+([^·|]+?)\s*(?:·|\|)\s*Request\s+(.+)$/i
+    );
+
+    if (!match) return;
+
+    const parseQuantity = (text) => {
+      const cleaned = String(text || '').trim();
+      const qtyMatch = cleaned.match(/^([0-9]+(?:\.[0-9]+)?)\s*(.*)$/);
+      if (!qtyMatch) return { quantity: cleaned, unit: '' };
+      return { quantity: qtyMatch[1], unit: qtyMatch[2].trim() };
+    };
+
+    const actual = parseQuantity(match[3]);
+    const requested = parseQuantity(match[4]);
+
+    items.push({
+      name: match[1].trim(),
+      actual: actual.quantity,
+      actualUnit: actual.unit,
+      requested: requested.quantity,
+      requestedUnit: requested.unit,
+      custom: Boolean(match[2]),
+    });
+  });
+
+  return items;
+};
+
+const buildTicketPrintHtml = (ticket) => {
+  const { department: dept, ticketType } = getDeptAndType(ticket);
+  const requester = ticket.requester_name || formatEmailAsName(ticket.agent_email);
+  const supplyDetails = [
+    ticket.supply_item && ['Supply item', ticket.supply_item],
+    ticket.supply_stock_on_hand !== null &&
+      ticket.supply_stock_on_hand !== undefined &&
+      ['Stock on hand', ticket.supply_stock_on_hand],
+    ticket.supply_extra_notes && ['Supply notes', ticket.supply_extra_notes],
+  ].filter(Boolean);
+
+  const extraRows = supplyDetails
+    .map(
+      ([label, value]) => `
+        <div class="field">
+          <div class="label">${escapeHtml(label)}</div>
+          <div class="value">${escapeHtml(value)}</div>
+        </div>`
+    )
+    .join('');
+
+  const inventoryItems = getPrintableInventoryItems(ticket);
+  const inventorySection = inventoryItems.length
+    ? `
+      <div class="inventory-block">
+        <div class="inventory-heading">
+          <div>
+            <div class="label inventory-title">Requested Inventory</div>
+            <div class="inventory-subtitle">Physical count reported by the office and quantity requested.</div>
+          </div>
+          <div class="inventory-count">${inventoryItems.length} item${inventoryItems.length === 1 ? '' : 's'}</div>
+        </div>
+        <table class="inventory-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Actual on hand</th>
+              <th>Requested</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${inventoryItems
+              .map(
+                (item) => `
+                  <tr>
+                    <td>
+                      <div class="inventory-item-name">${escapeHtml(item.name)}</div>
+                      ${item.custom ? '<div class="custom-item">Custom item</div>' : ''}
+                    </td>
+                    <td>${escapeHtml(`${item.actual ?? ''}${item.actualUnit ? ` ${item.actualUnit}` : ''}` || 'N/A')}</td>
+                    <td>${escapeHtml(`${item.requested ?? ''}${item.requestedUnit ? ` ${item.requestedUnit}` : ''}` || 'N/A')}</td>
+                  </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>`
+    : '';
+
+  return `
+    <section class="ticket-sheet">
+      <div class="ticket-header">
+        <div>
+          <div class="eyebrow">Operations Support Ticket</div>
+          <h1>Ticket #${escapeHtml(ticket.id)}</h1>
+        </div>
+        <div class="ticket-meta">
+          <span>${escapeHtml(ticket.status || 'New')}</span>
+          <span>${escapeHtml(ticket.urgency || 'Medium')} priority</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="field"><div class="label">Office</div><div class="value">${escapeHtml(ticket.office || 'N/A')}</div></div>
+        <div class="field"><div class="label">Department</div><div class="value">${escapeHtml(dept || 'N/A')}</div></div>
+        <div class="field"><div class="label">Ticket Type</div><div class="value">${escapeHtml(ticketType || 'N/A')}</div></div>
+        <div class="field"><div class="label">Submitted</div><div class="value">${escapeHtml(formatPrintDate(ticket.created_at))}</div></div>
+        <div class="field"><div class="label">Requester</div><div class="value">${escapeHtml(requester || 'N/A')}</div></div>
+        <div class="field"><div class="label">Requester Email</div><div class="value">${escapeHtml(ticket.agent_email || 'N/A')}</div></div>
+        <div class="field"><div class="label">Assigned To</div><div class="value">${escapeHtml(ticket.assigned_to ? formatEmailAsName(ticket.assigned_to) : 'Unassigned')}</div></div>
+        <div class="field"><div class="label">Completed</div><div class="value">${escapeHtml(formatPrintDate(ticket.completed_at))}</div></div>
+        ${extraRows}
+      </div>
+
+      ${inventoryItems.length ? inventorySection : `
+        <div class="description-block">
+          <div class="label">Request Details</div>
+          <div class="description">${escapeHtml(ticket.description || 'No description provided.').replaceAll('\n', '<br />')}</div>
+        </div>
+      `}
+
+      ${ticket.priority_reason ? `
+        <div class="description-block">
+          <div class="label">Priority Reason</div>
+          <div class="description">${escapeHtml(ticket.priority_reason)}</div>
+        </div>` : ''}
+
+      <div class="print-footer">Printed ${escapeHtml(new Date().toLocaleString())}</div>
+    </section>`;
+};
 
 // --- Main Component --- //
 
@@ -258,6 +517,7 @@ const AdminTickets = () => {
   const [filterTicketType, setFilterTicketType] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTicketIds, setSelectedTicketIds] = useState(() => new Set());
 
   const handleOpenModal = (ticket) => {
     setSelectedTicket(ticket);
@@ -267,6 +527,77 @@ const AdminTickets = () => {
     setIsModalOpen(false);
     setSelectedTicket(null);
   };
+
+  const handleToggleTicket = (ticketId) => {
+    setSelectedTicketIds((current) => {
+      const next = new Set(current);
+      if (next.has(ticketId)) next.delete(ticketId);
+      else next.add(ticketId);
+      return next;
+    });
+  };
+
+  const openPrintWindow = (ticketsToPrint) => {
+    if (!ticketsToPrint.length) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Your browser blocked the print window. Please allow pop-ups for this site and try again.');
+      return;
+    }
+
+    const sheets = ticketsToPrint.map(buildTicketPrintHtml).join('');
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${ticketsToPrint.length === 1 ? `Ticket #${escapeHtml(ticketsToPrint[0].id)}` : `${ticketsToPrint.length} Tickets`}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111827; background: #fff; }
+            .ticket-sheet { padding: 28px 32px; min-height: 100vh; page-break-after: always; }
+            .ticket-sheet:last-child { page-break-after: auto; }
+            .ticket-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; padding-bottom: 16px; border-bottom: 2px solid #111827; }
+            .eyebrow { text-transform: uppercase; font-size: 11px; letter-spacing: .09em; color: #6b7280; font-weight: 700; }
+            h1 { font-size: 25px; margin: 4px 0 0; }
+            .ticket-meta { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+            .ticket-meta span { border: 1px solid #d1d5db; border-radius: 999px; padding: 6px 10px; font-size: 11px; font-weight: 700; }
+            .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+            .field { border: 1px solid #e5e7eb; border-radius: 8px; padding: 11px 12px; break-inside: avoid; }
+            .label { text-transform: uppercase; color: #6b7280; font-size: 10px; font-weight: 700; letter-spacing: .06em; margin-bottom: 4px; }
+            .value { font-size: 13px; overflow-wrap: anywhere; }
+            .description-block { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 13px; break-inside: avoid; }
+            .description { font-size: 13px; line-height: 1.55; white-space: normal; }
+            .inventory-block { margin-top: 14px; border: 1px solid #f0c36a; border-radius: 8px; padding: 12px; break-inside: avoid; }
+            .inventory-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+            .inventory-title { color: #92400e; margin-bottom: 3px; }
+            .inventory-subtitle { color: #b45309; font-size: 10px; }
+            .inventory-count { border: 1px solid #f0c36a; border-radius: 999px; padding: 4px 8px; color: #92400e; font-size: 10px; white-space: nowrap; }
+            .inventory-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+            .inventory-table th { background: #f9fafb; color: #374151; text-transform: uppercase; font-size: 9px; letter-spacing: .04em; text-align: left; padding: 7px 8px; border: 1px solid #e5e7eb; }
+            .inventory-table td { padding: 8px; border: 1px solid #e5e7eb; vertical-align: top; }
+            .inventory-table th:nth-child(2), .inventory-table th:nth-child(3), .inventory-table td:nth-child(2), .inventory-table td:nth-child(3) { width: 22%; text-align: right; }
+            .inventory-item-name { font-weight: 700; color: #111827; }
+            .custom-item { color: #b45309; font-size: 9px; margin-top: 2px; }
+            .print-footer { margin-top: 20px; text-align: right; color: #9ca3af; font-size: 9px; }
+            @page { size: letter; margin: 0.35in; }
+            @media print {
+              .ticket-sheet { min-height: auto; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>${sheets}</body>
+      </html>`);
+    printWindow.document.close();
+
+    window.setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 250);
+  };
+
+  const handlePrintTicket = (ticket) => openPrintWindow([ticket]);
 
   const fetchOfficeOptions = useCallback(async () => {
     const { data, error } = await supabase
@@ -296,14 +627,37 @@ const AdminTickets = () => {
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('tickets')
-      .select('*')
-      .order('created_at', { ascending: false });
+    setError(null);
 
-    if (error) setError(error.message);
-    else setTickets(data);
-    setLoading(false);
+    try {
+      const allTickets = [];
+      const batchSize = 500;
+      let from = 0;
+
+      while (true) {
+        const { data, error: fetchError } = await supabase
+          .from('tickets')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + batchSize - 1);
+
+        if (fetchError) throw fetchError;
+
+        const batch = data || [];
+        allTickets.push(...batch);
+
+        if (batch.length < batchSize) break;
+        from += batchSize;
+      }
+
+      setTickets(allTickets);
+    } catch (fetchError) {
+      console.error('Error loading tickets:', fetchError);
+      setError(fetchError.message || 'Unable to load tickets.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -401,7 +755,7 @@ const AdminTickets = () => {
 
       if (
         filterStatus !== 'All' &&
-        (t.status || 'New') !== filterStatus
+        normalizeTicketStatus(t.status) !== filterStatus
       )
         return false;
 
@@ -440,6 +794,30 @@ const AdminTickets = () => {
     user,
   ]);
 
+  const selectedVisibleTickets = useMemo(
+    () => filteredTickets.filter((ticket) => selectedTicketIds.has(ticket.id)),
+    [filteredTickets, selectedTicketIds]
+  );
+
+  const handleToggleAllVisible = (checked) => {
+    setSelectedTicketIds((current) => {
+      const next = new Set(current);
+      filteredTickets.forEach((ticket) => {
+        if (checked) next.add(ticket.id);
+        else next.delete(ticket.id);
+      });
+      return next;
+    });
+  };
+
+  const handlePrintSelected = () => {
+    if (!selectedVisibleTickets.length) {
+      alert('Select at least one visible ticket to print.');
+      return;
+    }
+    openPrintWindow(selectedVisibleTickets);
+  };
+
   // --- Options for Department & Ticket Type filters (derived from data) --- //
 
   const departmentOptions = useMemo(() => {
@@ -467,8 +845,8 @@ const AdminTickets = () => {
   const allActiveTickets = tickets.filter((t) => !isCompletedStatus(t.status));
   const completedTickets = tickets.filter((t) => isCompletedStatus(t.status));
 
-  const notStartedCount = allActiveTickets.filter((t) => !t.assigned_to).length;
-  const inProgressCount = allActiveTickets.filter((t) => t.assigned_to).length;
+  const notStartedCount = allActiveTickets.filter((t) => normalizeTicketStatus(t.status) === 'New').length;
+  const inProgressCount = allActiveTickets.filter((t) => normalizeTicketStatus(t.status) === 'In Progress').length;
   const completedCount = completedTickets.length;
   const totalTickets = tickets.length;
 
@@ -576,12 +954,20 @@ const AdminTickets = () => {
       cell: (ticket) => (
         <div className="whitespace-nowrap">
           <ActionMenu>
-            <button
-              onClick={() => handleOpenModal(ticket)}
-              className="text-blue-600 hover:underline text-xs"
-            >
-              View / Edit
-            </button>
+            <div className="flex flex-col items-start gap-2">
+              <button
+                onClick={() => handleOpenModal(ticket)}
+                className="text-blue-600 hover:underline text-xs"
+              >
+                View / Edit
+              </button>
+              <button
+                onClick={() => handlePrintTicket(ticket)}
+                className="text-gray-700 hover:text-gray-900 hover:underline text-xs"
+              >
+                Print Ticket
+              </button>
+            </div>
           </ActionMenu>
         </div>
       ),
@@ -595,12 +981,20 @@ const AdminTickets = () => {
       cell: (ticket) => (
         <div className="whitespace-nowrap">
           <ActionMenu>
-            <button
-              onClick={() => handleOpenModal(ticket)}
-              className="text-blue-600 hover:underline text-xs"
-            >
-              View / Edit
-            </button>
+            <div className="flex flex-col items-start gap-2">
+              <button
+                onClick={() => handleOpenModal(ticket)}
+                className="text-blue-600 hover:underline text-xs"
+              >
+                View / Edit
+              </button>
+              <button
+                onClick={() => handlePrintTicket(ticket)}
+                className="text-gray-700 hover:text-gray-900 hover:underline text-xs"
+              >
+                Print Ticket
+              </button>
+            </div>
           </ActionMenu>
         </div>
       ),
@@ -632,12 +1026,20 @@ const AdminTickets = () => {
       cell: (ticket) => (
         <div className="whitespace-nowrap">
           <ActionMenu>
-            <button
-              onClick={() => handleOpenModal(ticket)}
-              className="text-blue-600 hover:underline text-xs"
-            >
-              View Details
-            </button>
+            <div className="flex flex-col items-start gap-2">
+              <button
+                onClick={() => handleOpenModal(ticket)}
+                className="text-blue-600 hover:underline text-xs"
+              >
+                View Details
+              </button>
+              <button
+                onClick={() => handlePrintTicket(ticket)}
+                className="text-gray-700 hover:text-gray-900 hover:underline text-xs"
+              >
+                Print Ticket
+              </button>
+            </div>
           </ActionMenu>
         </div>
       ),
@@ -992,7 +1394,7 @@ const AdminTickets = () => {
               onChange={(e) => setFilterStatus(e.target.value)}
               className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2"
             >
-              {['All', 'New', 'In Progress', 'On Hold', 'Completed', 'Cancelled'].map(
+              {['All', 'New', 'In Progress', 'Pending (Needs Info)', 'On Hold', 'Completed', 'Cancelled'].map(
                 (opt) => (
                   <option key={opt} value={opt}>
                     {opt}
@@ -1017,8 +1419,46 @@ const AdminTickets = () => {
         </div>
       </div>
 
+      {/* Bulk print controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 -mt-4">
+        <div className="text-sm text-gray-600">
+          {selectedVisibleTickets.length > 0 ? (
+            <span className="font-medium text-gray-800">
+              {selectedVisibleTickets.length} ticket{selectedVisibleTickets.length === 1 ? '' : 's'} selected
+            </span>
+          ) : (
+            <span>Select tickets below to print them together.</span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedVisibleTickets.length > 0 && (
+            <button
+              type="button"
+              onClick={() => handleToggleAllVisible(false)}
+              className="px-3 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              Clear Selection
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handlePrintSelected}
+            disabled={selectedVisibleTickets.length === 0}
+            className="px-4 py-2 text-xs font-semibold text-white bg-slate-800 rounded-lg hover:bg-slate-900 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          >
+            Print Selected ({selectedVisibleTickets.length})
+          </button>
+        </div>
+      </div>
+
       {/* Main table */}
-      <TicketsTable tickets={filteredTickets} columns={tableColumns} />
+      <TicketsTable
+        tickets={filteredTickets}
+        columns={tableColumns}
+        selectedTicketIds={selectedTicketIds}
+        onToggleTicket={handleToggleTicket}
+        onToggleAll={handleToggleAllVisible}
+      />
 
       <Modal
         isOpen={isModalOpen}
@@ -1027,11 +1467,22 @@ const AdminTickets = () => {
         maxWidth="max-w-6xl"
       >
         {selectedTicket && (
-          <TicketDetails
-            ticket={selectedTicket}
-            onClose={handleCloseModal}
-            onUpdate={fetchTickets}
-          />
+          <>
+            <div className="flex justify-end mb-4">
+              <button
+                type="button"
+                onClick={() => handlePrintTicket(selectedTicket)}
+                className="px-4 py-2 text-sm font-semibold text-white bg-slate-800 rounded-lg hover:bg-slate-900"
+              >
+                Print Ticket
+              </button>
+            </div>
+            <TicketDetails
+              ticket={selectedTicket}
+              onClose={handleCloseModal}
+              onUpdate={fetchTickets}
+            />
+          </>
         )}
       </Modal>
     </div>
