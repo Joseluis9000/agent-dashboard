@@ -221,7 +221,10 @@ async function fetchAll(buildQuery, pageSize = 1000) {
 
 export default function AgentCommission() {
   const payContext = useMemo(() => getPayContext(new Date()), []);
-  const [anchorDate, setAnchorDate] = useState(() => dateFromKey(payContext.payingWeekStart));
+  const dashboardView = new URLSearchParams(window.location.search).get('view');
+  const [anchorDate, setAnchorDate] = useState(() => dateFromKey(
+    dashboardView === 'production' ? payContext.currentProductionWeekStart : payContext.payingWeekStart
+  ));
   const week = useMemo(() => getWeekRange(anchorDate), [anchorDate]);
 
   const weekStart = week.weekStart;
@@ -249,7 +252,7 @@ export default function AgentCommission() {
   const [errorMessage, setErrorMessage] = useState('');
   const [productionPage, setProductionPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
-  const [activeView, setActiveView] = useState('current');
+  const [activeView, setActiveView] = useState(() => dashboardView === 'ar-scanning' ? 'balance' : 'current');
   const [historyModalRecord, setHistoryModalRecord] = useState(null);
   const [balanceModalTab, setBalanceModalTab] = useState('current');
   const [disqualifiedModalTab, setDisqualifiedModalTab] = useState('current');

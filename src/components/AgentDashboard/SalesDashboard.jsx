@@ -1,7 +1,21 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import modern from "./SalesDashboard.module.css";
+import { calculateAgentCommission } from "../../utils/commissionCalculations";
+import { useAuth } from "../../AuthContext";
+import {
+  STALE_AFTER_MS,
+  QUOTE_PRIMARY_BUCKETS,
+  classifyQuoteGroup,
+  isGroupLive,
+  isGroupFollowUp,
+  isGroupClosed,
+  isGroupRegularQuote,
+} from "../../utils/quoteClassification";
+
 
 /**
- * SALES DASHBOARD (Supabase + EOD)
+ * SALES DASHBOARD (Supabase + Matrix transaction details)
  * - Static announcements (no ticker)
  * - Top 5 shows Avg $/Sale + inline “Most Improved”
  * - Agent Insights v2 header (metric pills), pacing, coaching, disclaimer
@@ -274,33 +288,21 @@ const Info = (props) => (
 );
 
 // ---------- DATA & FORMATTING HELPERS ----------
-const REGION_MAP = {
-  "CEN-CAL": [
-    "CA010", "CA011", "CA012", "CA022", "CA183", "CA229", "CA230", "CA239",
-  ],
-  "KERN COUNTY": ["CA016", "CA047", "CA048", "CA049", "CA172", "CA240"],
-  "THE VALLEY": [
-    "CA025", "CA030", "CA045", "CA046", "CA065", "CA074", "CA075",
-    "CA095", "CA118", "CA119", "CA231", "CA238",
-  ],
-  "BAY AREA": [
-    "CA076", "CA103", "CA104", "CA114", "CA117", "CA149", "CA150",
-    "CA216", "CA236", "CA248",
-  ],
-  "SOUTHERN CALI": [
-    "CA131", "CA132", "CA133", "CA166", "CA249", "CA250", "CA251", "CA252",
-  ],
+// Office regions are loaded from office_dashboard_settings, matching OfficeNumbers.
+const normalizeOffice = (value = "") => {
+  // Matrix transaction office values and Office Numbers settings can be
+  // "CA104", "CA 104", "104", "104 Richmond", or "CA104 Richmond".
+  const raw = String(value ?? "").trim().toUpperCase();
+  if (!raw) return "Unknown";
+  const caCode = raw.match(/\bCA[\s-]*0*(\d{1,3})\b/);
+  if (caCode) return `CA${caCode[1].padStart(3, "0")}`;
+  const numericCode = raw.match(/(?:^|\bOFFICE[\s#:-]*)(\d{1,3})(?=\b|\s|$)/);
+  if (numericCode) return `CA${numericCode[1].padStart(3, "0")}`;
+  return raw;
 };
-const OFFICE_TO_REGION = Object.entries(REGION_MAP)
-  .flatMap(([region, list]) => list.map((code) => [code, region]))
-  .reduce((m, [c, r]) => {
-    m[c] = r;
-    return m;
-  }, {});
 const currency = (n) =>
   Number(n || 0).toLocaleString(undefined, { style: "currency", currency: "USD" });
 const pct = (n) => `${Math.round(Number(n || 0) * 100)}%`;
-const officeCode = (s = "") => String(s).trim().split(/\s+/)[0];
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const startOfWeek = (d) => {
   const dt = new Date(d);
@@ -320,16 +322,6 @@ const startOfMonth = (d) =>
   new Date(new Date(d).getFullYear(), new Date(d).getMonth(), 1);
 const endOfMonth = (d) =>
   new Date(new Date(d).getFullYear(), new Date(d).getMonth() + 1, 1);
-const startOfQuarter = (d) => {
-  const dt = new Date(d);
-  const q = Math.floor(dt.getMonth() / 3);
-  return new Date(dt.getFullYear(), q * 3, 1);
-};
-const endOfQuarter = (d) => {
-  const dt = new Date(d);
-  const q = Math.floor(dt.getMonth() / 3);
-  return new Date(dt.getFullYear(), q * 3 + 3, 1);
-};
 
 // ---------- COACHING ----------
 function coachFromMetrics({ nbCount, preDeductionRevenue, afterDeductionsRevenue }) {
@@ -365,87 +357,115 @@ function coachFromMetrics({ nbCount, preDeductionRevenue, afterDeductionsRevenue
   return notes;
 }
 
-async function mockEvents() {
+// Production and fee rules mirror OfficeNumbers.jsx.
+const cleanTxnStr = (value) => String(value ?? "").trim();
+const parseTxnMoney = (value) => {
+  const parsed = parseFloat(cleanTxnStr(value || "0").replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const isVoidedTransaction = (row) => cleanTxnStr(row?.voided).toUpperCase().includes("VOIDED");
+const getTransferTxnKey = (row) => {
+  if (row.sync_key) return `sync:${row.sync_key}`;
   return [
-    { id: "1", title: "Tax Season Kickoff – Jan 2 – All Offices", start: "2026-01-02" },
-  ];
-}
+    cleanTxnStr(row.receipt_id || row.receipt || ""),
+    cleanTxnStr(row.customer_id || row.id || ""),
+    parseTxnMoney(row.premium).toFixed(2),
+    parseTxnMoney(row.fee).toFixed(2),
+    parseTxnMoney(row.total).toFixed(2),
+    cleanTxnStr(row.company),
+    cleanTxnStr(row.type),
+  ].join("|");
+};
+const getFeeCategory = (row) => {
+  const combined = [row.company, row.policy_type, row.type, row.policy]
+    .map((value) => cleanTxnStr(value).toUpperCase()).join(" ");
+  if (combined.includes("BROKER FEE")) return "broker";
+  if (combined.includes("ENDORSEMENT FEE")) return "endorsement";
+  if (combined.includes("RENEWAL FEE")) return "renewal";
+  if (combined.includes("REINSTATEMENT FEE")) return "reinstatement";
+  if (combined.includes("PAYMENT FEE")) return "payment";
+  if (combined.includes("REGISTRATION FEE")) return "registration";
+  if (combined.includes("CONVENIENCE FEE")) return "convenience";
+  if (["TAX PREP", "TAX ESTIMATE", "DEFENDMYID", "MAX SHIELD"].some((type) => combined.includes(type))) return "tax_prep";
+  return null;
+};
+const transactionAgent = (row) => cleanTxnStr(row.agent_email).toLowerCase();
 
-// ---------- Aggregation ----------
-function aggregateFromRows(rows, prevRows, profiles = []) {
-  const profileMap = new Map(profiles.map((p) => [p.email, p.full_name]));
-  const byAgent = new Map();
-  const byOffice = new Map();
-  const incAgent = (email, sales, nbFee, enFee, off) => {
-    const cur = byAgent.get(email) || { sales: 0, nbFee: 0, enFee: 0, offices: {} };
-    cur.sales += sales;
-    cur.nbFee += nbFee;
-    cur.enFee += enFee;
-    cur.offices[off] = (cur.offices[off] || 0) + sales;
-    byAgent.set(email, cur);
+function aggregateFromRows(rows, prevRows, profiles = [], officeRegionMap = {}) {
+  const profileMap = new Map(
+    profiles
+      .filter((p) => cleanTxnStr(p.email))
+      .map((p) => [cleanTxnStr(p.email).toLowerCase(), cleanTxnStr(p.full_name) || cleanTxnStr(p.csr_name)])
+  );
+  const formatAgentName = (email) => {
+    const storedName = cleanTxnStr(profileMap.get(email));
+    if (storedName && !storedName.includes("@")) return storedName;
+    // Some transactions use account usernames instead of full names.
+    // Display a readable name rather than exposing an email address.
+    const local = cleanTxnStr(email).split("@")[0];
+    return local.split(/[._-]+/).filter(Boolean).map((part) =>
+      part.charAt(0).toUpperCase() + part.slice(1)
+    ).join(" ") || "Unknown agent";
   };
-  const incOffice = (code, sales, revenue) => {
-    const cur = byOffice.get(code) || { sales: 0, revenue: 0 };
-    cur.sales += sales;
-    cur.revenue += revenue;
-    byOffice.set(code, cur);
+  const process = (source) => {
+    const byAgent = new Map();
+    const byOffice = new Map();
+    const seen = new Set();
+    const add = (map, key, sales, revenue) => {
+      if (!key) return;
+      const item = map.get(key) || { sales: 0, revenue: 0 };
+      item.sales += sales;
+      item.revenue += revenue;
+      map.set(key, item);
+    };
+    for (const row of source || []) {
+      if (isVoidedTransaction(row)) continue;
+      const txnKey = getTransferTxnKey(row);
+      if (seen.has(txnKey)) continue;
+      seen.add(txnKey);
+      const type = cleanTxnStr(row.type).toUpperCase();
+      // OfficeNumbers counts NEW and RWR production, regardless of fee sign.
+      const sales = type === "NEW" || type === "RWR" ? 1 : 0;
+      // OfficeNumbers fee totals classify the fee rows by company/policy/type.
+      const revenue = getFeeCategory(row) === "broker" ? parseTxnMoney(row.fee) : 0;
+      add(byAgent, transactionAgent(row), sales, revenue);
+      add(byOffice, normalizeOffice(row.office), sales, revenue);
+    }
+    return { byAgent, byOffice };
   };
-  for (const r of rows) {
-    const email = r.agent_email || "unknown@agent";
-    const off = officeCode(r.office_number);
-    const sales = Number(r.nb_rw_count || 0);
-    const nb = Number(r.nb_rw_fee || 0);
-    const en = Number(r.en_fee || 0);
-    incAgent(email, sales, nb, en, off);
-    incOffice(off, sales, nb + en);
-  }
-  const prevAgent = new Map();
-  const prevOffice = new Map();
-  for (const r of prevRows || []) {
-    const email = r.agent_email || "unknown@agent";
-    const off = officeCode(r.office_number);
-    const sales = Number(r.nb_rw_count || 0);
-    const nb = Number(r.nb_rw_fee || 0);
-    const en = Number(r.en_fee || 0);
-    prevAgent.set(email, (prevAgent.get(email) || 0) + sales);
-    const po = prevOffice.get(off) || { sales: 0, revenue: 0 };
-    po.sales += sales;
-    po.revenue += nb + en;
-    prevOffice.set(off, po);
-  }
-  const agentStats = Array.from(byAgent.entries()).map(([email, v]) => ({
+  const current = process(rows);
+  const previous = process(prevRows);
+  const agentStats = Array.from(current.byAgent.entries()).map(([email, value]) => ({
     agentId: email,
-    salesCount: v.sales,
-    lastWeekSales: prevAgent.get(email) || 0,
-    monthSalesCount: v.sales,
-    revenueNB: v.nbFee,
-    revenueEN: v.enFee,
+    salesCount: value.sales,
+    lastWeekSales: previous.byAgent.get(email)?.sales || 0,
+    monthSalesCount: value.sales,
+    revenueNB: value.revenue,
+    revenueEN: 0,
   }));
-  const agents = agentStats.map((a) => ({
-    id: a.agentId,
-    name: profileMap.get(a.agentId) || a.agentId.split("@")[0],
+  const agents = agentStats.map((agent) => ({
+    id: agent.agentId,
+    name: formatAgentName(agent.agentId),
     office: "",
   }));
-  const offices = Array.from(byOffice.entries()).map(([code, v]) => ({
+  const offices = Array.from(current.byOffice.entries()).map(([code, value]) => ({
     office: code,
-    totalSales: v.sales,
-    totalRevenue: v.revenue,
+    totalSales: value.sales,
+    totalRevenue: value.revenue,
     wowChangePct: (() => {
-      const p = prevOffice.get(code)?.sales || 0;
-      if (!p) return null;
-      return (v.sales - p) / p;
+      const prev = previous.byOffice.get(code)?.sales || 0;
+      return prev ? (value.sales - prev) / Math.abs(prev) : null;
     })(),
   }));
   const regionTotals = {};
-  for (const o of offices) {
-    const region = OFFICE_TO_REGION[o.office] || "OTHER";
-    const cur = regionTotals[region] || { region, totalSales: 0, totalRevenue: 0 };
-    cur.totalSales += o.totalSales;
-    cur.totalRevenue += o.totalRevenue;
-    regionTotals[region] = cur;
+  for (const office of offices) {
+    const region = officeRegionMap[normalizeOffice(office.office)] || "Unassigned";
+    const entry = regionTotals[region] || { region, totalSales: 0, totalRevenue: 0 };
+    entry.totalSales += office.totalSales;
+    entry.totalRevenue += office.totalRevenue;
+    regionTotals[region] = entry;
   }
-  const regions = Object.values(regionTotals);
-  return { agents, stats: agentStats, offices, regions };
+  return { agents, stats: agentStats, offices, regions: Object.values(regionTotals) };
 }
 
 // ---------- Motivation Engine ----------
@@ -498,6 +518,8 @@ const MOTIVATION = {
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // ---------- UI Cards ----------
+// Legacy component retained for compatibility with the previous dashboard.
+// eslint-disable-next-line no-unused-vars
 const EventsBanner = ({ events }) => (
   <div style={{ width: "100%", overflow: "hidden", borderRadius: "0.75rem", border: "1px solid #e5e7eb", backgroundColor: "#fefce8" }}>
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.75rem", borderBottom: "1px solid #e5e7eb", backgroundColor: "rgba(255,255,255,0.4)" }}>
@@ -519,6 +541,8 @@ const EventsBanner = ({ events }) => (
   </div>
 );
 
+// Legacy component retained for compatibility with the previous dashboard.
+// eslint-disable-next-line no-unused-vars
 const LeaderboardCard = ({ agents, stats }) => {
   const rows = useMemo(
     () =>
@@ -637,6 +661,8 @@ const LeaderboardCard = ({ agents, stats }) => {
 
 // ---------- UPDATED Agent Insights Card ----------
 const GROSS_ASSUMPTION = 800;
+// Legacy component retained for compatibility with the previous dashboard.
+// eslint-disable-next-line no-unused-vars
 const AgentInsightsCard = ({ agents, stats, currentAgentId }) => {
   const agent = agents.find((a) => a.id === currentAgentId) || agents[0];
   const row = stats.find((s) => s.agentId === agent?.id);
@@ -993,6 +1019,8 @@ const AgentInsightsCard = ({ agents, stats, currentAgentId }) => {
 };
 
 // ---------- Other Cards ----------
+// Legacy component retained for compatibility with the previous dashboard.
+// eslint-disable-next-line no-unused-vars
 const TopOfficesCard = ({ offices }) => {
   const top5 = useMemo(
     () => [...offices].sort((a, b) => b.totalSales - a.totalSales).slice(0, 5),
@@ -1048,119 +1076,460 @@ const TopOfficesCard = ({ offices }) => {
 
 
 
+
+// Quote metrics share the classification rules used by AgentQuoteLog.
+function QuotePerformanceCard({ supabaseClient, currentUserEmail }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const email = String(currentUserEmail || "").trim().toLowerCase();
+
+  useEffect(() => {
+    const client = supabaseClient || (typeof window !== "undefined" ? window.supabase : null);
+    if (!client || !email) {
+      setLoading(false);
+      setError("Signed-in agent or database connection unavailable.");
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const now = new Date();
+        const monthStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const weekStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+        const weekEndDate = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 7);
+        const start = monthStartDate.toISOString();
+        const end = monthEndDate.toISOString();
+        const weekStart = weekStartDate.getTime();
+        const weekEnd = weekEndDate.getTime();
+        const { data: profile, error: profileError } = await client.from("profiles")
+          .select("csr_name,turborater_agent_name,full_name").eq("email", email).maybeSingle();
+        if (profileError) throw profileError;
+        const names = [...new Set([profile?.csr_name, profile?.turborater_agent_name, profile?.full_name]
+          .map((v) => String(v || "").trim().replace(/\s+/g, " ").toLowerCase()).filter(Boolean))];
+        const queries = [
+          () => client.from("quote_log_view").select("*").eq("agent_email", email).gte("started_at", start).lt("started_at", end),
+          () => client.from("quote_log_view").select("*").eq("agent_email", email).eq("status", "in_progress"),
+        ];
+        names.forEach((name) => {
+          queries.push(() => client.from("quote_log_view").select("*").ilike("captured_agent_name", name).gte("started_at", start).lt("started_at", end));
+          queries.push(() => client.from("quote_log_view").select("*").ilike("captured_agent_name", name).eq("status", "in_progress"));
+        });
+        // Follow-ups scheduled this month may originate from older quotes.
+        const followUpIds = [];
+        for (let offset = 0;; offset += 1000) {
+          const { data: rows, error: workflowError } = await client.from("quote_workflow")
+            .select("quote_id,follow_up_at")
+            .or("follow_up_needed.eq.true,outcome.eq.follow_up")
+            .gte("follow_up_at", start).lt("follow_up_at", end)
+            .range(offset, offset + 999);
+          if (workflowError) throw workflowError;
+          followUpIds.push(...(rows || []).map((r) => r.quote_id).filter(Boolean));
+          if ((rows || []).length < 1000) break;
+        }
+        for (let i = 0; i < followUpIds.length; i += 200) {
+          const ids = followUpIds.slice(i, i + 200);
+          queries.push(() => client.from("quote_log_view").select("*").in("id", ids).eq("agent_email", email));
+          names.forEach((name) => queries.push(() => client.from("quote_log_view").select("*").in("id", ids).ilike("captured_agent_name", name)));
+        }
+        const unique = new Map();
+        for (const query of queries) {
+          for (let offset = 0;; offset += 1000) {
+            const { data: rows, error: queryError } = await query().range(offset, offset + 999);
+            if (queryError) throw queryError;
+            (rows || []).forEach((row) => { if (row.id) unique.set(row.id, row); });
+            if ((rows || []).length < 1000) break;
+          }
+        }
+        const base = [...unique.values()].filter((row) => {
+          const ownerEmail = String(row.originating_agent_email || row.agent_email || "").trim().toLowerCase();
+          const ownerName = String(row.originating_agent_name || row.captured_agent_name || row.csr_name || "").trim().replace(/\s+/g, " ").toLowerCase();
+          return (ownerEmail && ownerEmail === email) || (ownerName && names.includes(ownerName));
+        });
+        const enriched = new Map(base.map((row) => [row.id, { ...row }]));
+        const ids = [...enriched.keys()];
+        for (let i = 0; i < ids.length; i += 200) {
+          const batch = ids.slice(i, i + 200);
+          const [detail, workflow, events] = await Promise.all([
+            client.from("quotes").select("*").in("id", batch),
+            client.from("quote_workflow").select("*").in("quote_id", batch),
+            client.from("quote_events").select("quote_id,event_type,event_at").in("quote_id", batch).eq("event_type", "POLICY_BOUND"),
+          ]);
+          if (detail.error || workflow.error || events.error) throw detail.error || workflow.error || events.error;
+          (detail.data || []).forEach((r) => enriched.set(r.id, { ...enriched.get(r.id), ...r }));
+          (workflow.data || []).forEach((r) => enriched.set(r.quote_id, { ...enriched.get(r.quote_id), ...r }));
+          (events.data || []).forEach((r) => enriched.set(r.quote_id, { ...enriched.get(r.quote_id), policy_bound_detected: true, policy_bound_at: r.event_at }));
+        }
+        const grouped = new Map();
+        [...enriched.values()].forEach((quote) => {
+          const key = quote.matrix_customer_id ? `customer:${quote.matrix_customer_id}` : `quote:${quote.id}`;
+          if (!grouped.has(key)) grouped.set(key, []);
+          grouped.get(key).push(quote);
+        });
+        const currentTime = Date.now();
+        const groups = [...grouped.values()].map((quotes) => {
+          quotes.sort((a, b) => new Date(b.last_live_activity_at || b.updated_at || b.started_at || b.created_at || 0) - new Date(a.last_live_activity_at || a.updated_at || a.started_at || a.created_at || 0));
+          const group = { quotes, latest: quotes[0] };
+          return { ...group, classification: classifyQuoteGroup(group, { now: currentTime, staleAfterMs: STALE_AFTER_MS }) };
+        });
+        // Match My Quotes: group by Matrix customer and use the shared classifier.
+        // Open quotes are the agent's actionable regular-quote bucket, not
+        // every historical quote that happened to start during this month.
+        const startedAt = (g) => {
+          const stamps = g.quotes.map((q) => new Date(q.started_at || q.created_at || 0).getTime())
+            .filter((t) => Number.isFinite(t) && t > 0);
+          return stamps.length ? Math.min(...stamps) : NaN;
+        };
+        const inWeek = (g) => startedAt(g) >= weekStart && startedAt(g) < weekEnd;
+        const isBound = (g) => g.quotes.some((q) => q.policy_bound_detected || q.policy_bound_at);
+        const weekQuotes = groups.filter(inWeek);
+        // A generic CLOSED workflow status does not necessarily mean a policy
+        // was bound. Only explicit POLICY_BOUND signals count as bound here.
+        const weekBound = weekQuotes.filter(isBound);
+        const openQuotes = groups.filter((g) =>
+          !isGroupLive(g, { now: currentTime, staleAfterMs: STALE_AFTER_MS }) &&
+          isGroupRegularQuote(g, { now: currentTime, staleAfterMs: STALE_AFTER_MS })
+        );
+        const closedDeals = groups.filter((g) => isBound(g) || isGroupClosed(g, { now: currentTime, staleAfterMs: STALE_AFTER_MS }));
+        const monthFollowUps = groups.filter((g) => isGroupFollowUp(g, { now: currentTime, staleAfterMs: STALE_AFTER_MS }));
+        const monthAttention = groups.filter((g) => g.classification?.primary === QUOTE_PRIMARY_BUCKETS.ATTENTION);
+        if (!cancelled) setData({
+          weekQuotes: weekQuotes.length,
+          weekClosed: weekBound.length,
+          weekCloseRate: weekQuotes.length ? Math.round(weekBound.length / weekQuotes.length * 100) : 0,
+          monthQuotes: openQuotes.length,
+          monthReady: closedDeals.length,
+          monthFollowUps: monthFollowUps.length,
+          monthAttention: monthAttention.length,
+        });
+      } catch (e) {
+        if (!cancelled) setError(e.message || "Unable to load quote performance.");
+      } finally { if (!cancelled) setLoading(false); }
+    }
+    load();
+    const timer = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [supabaseClient, email, refreshKey]);
+
+  const weekMetrics = [
+    ["Quotes started", data?.weekQuotes],
+    ["Policies bound", data?.weekClosed],
+    ["Weekly close rate", data ? `${data.weekCloseRate}%` : null],
+  ];
+  const monthMetrics = [
+    ["My open quotes", data?.monthQuotes],
+    ["Closed deals", data?.monthReady],
+    ["Follow-ups", data?.monthFollowUps],
+    ["Needs attention", data?.monthAttention],
+  ];
+  const renderMetric = ([label, value]) => (
+    <div key={label} className={`${modern.quoteMetric} ${label === "Needs attention" ? modern.quoteMetricAttention : ""} ${label === "Ready to close" ? modern.quoteMetricLive : ""}`}>
+      <span className={modern.metricLabel}>{label}</span>
+      <strong className={modern.metricNumber}>{loading && !data ? "…" : error && !data ? "—" : value ?? "—"}</strong>
+    </div>
+  );
+  return (
+    <section className={modern.quotePerformance} aria-label="My Quote Performance">
+      <div className={modern.quoteHeader}>
+        <div><h3>My quote performance</h3><small>Weekly closing performance + monthly opportunities · Your own quotes</small></div>
+        <button type="button" className={modern.refreshButton} onClick={() => setRefreshKey((n) => n + 1)} disabled={loading}>Refresh</button>
+      </div>
+      {error ? <p role="alert" style={{ color: "#b91c1c" }}>{error}</p> : null}
+      <div className={modern.quotePeriodHeading}><strong>This week</strong><span>Monday–Sunday · Close rate = policies bound from this week’s quotes ÷ quotes started this week</span></div>
+      <div className={modern.quoteMetricsWeekly}>{weekMetrics.map(renderMetric)}</div>
+      <div className={modern.quotePeriodHeading}><strong>This month</strong><span>Current actionable quotes · Same regular-quote category as My Quotes</span></div>
+      <div className={modern.quoteMetricsMonthly}>{monthMetrics.map(renderMetric)}</div>
+    </section>
+  );
+}
+
 // ---------- MAIN COMPONENT ----------
 export default function SalesDashboard({
   supabaseClient,
   currentUserEmail,
-  timeFilterDefault = "thisWeek",
 }) {
-  const [filter, setFilter] = useState(timeFilterDefault);
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
   const [stats, setStats] = useState([]);
   const [offices, setOffices] = useState([]);
   const [regions, setRegions] = useState([]);
-  const [events, setEvents] = useState([]);
   const [currentAgentId, setCurrentAgentId] = useState(null);
+  const [commissionSummary, setCommissionSummary] = useState(null);
+  const [commissionError, setCommissionError] = useState("");
 
-  const ranges = useMemo(() => {
-    if (filter === "thisMonth") {
-      return {
-        start: startOfMonth(new Date()),
-        end: endOfMonth(new Date()),
-        prevStart: startOfMonth(
-          new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)
-        ),
-        prevEnd: startOfMonth(new Date()),
-      };
-    }
-    if (filter === "thisQuarter") {
-      return {
-        start: startOfQuarter(new Date()),
-        end: endOfQuarter(new Date()),
-        prevStart: startOfQuarter(
-          new Date(new Date().getFullYear(), new Date().getMonth() - 3, 1)
-        ),
-        prevEnd: startOfQuarter(new Date()),
-      };
-    }
-    return {
-      start: startOfWeek(new Date()),
-      end: endOfWeek(new Date()),
-      prevStart: startOfWeek(
-        new Date(
-          new Date().getFullYear(),
-          new Date().getMonth(),
-          new Date().getDate() - 7
-        )
-      ),
-      prevEnd: startOfWeek(new Date()),
-    };
-  }, [filter]);
+  // Dashboard always shows the current Monday-Sunday reporting week.
+  const ranges = useMemo(() => ({
+    start: startOfWeek(new Date()),
+    end: endOfWeek(new Date()),
+    prevStart: startOfWeek(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 7)),
+    prevEnd: startOfWeek(new Date()),
+  }), []);
 
   useEffect(() => {
     (async () => {
-      setEvents(await mockEvents());
       const client = supabaseClient || (typeof window !== "undefined" ? window.supabase : null);
 
       if (client) {
         const { data: profiles, error } = await client
           .from("profiles")
-          .select("email, full_name");
+          .select("email, full_name, csr_name");
         if (error) console.error("Error fetching profiles:", error);
 
-        const curRows = await fetchEOD(client, ranges.start, ranges.end);
-        const prevRows = await fetchEOD(client, ranges.prevStart, ranges.prevEnd);
+        const { data: officeSettings, error: officeSettingsError } = await client
+          .from("office_dashboard_settings")
+          .select("office_code, region");
+        if (officeSettingsError) throw officeSettingsError;
+        // Use the exact same office-region source as OfficeNumbers.
+        // Normalize both sides of the lookup so office labels like "CA104 Richmond"
+        // and stored codes like "CA104" resolve to the same office.
+        const officeRegionMap = Object.fromEntries(
+          (officeSettings || [])
+            .filter((row) => cleanTxnStr(row.region) && normalizeOffice(row.office_code) !== "Unknown")
+            .map((row) => [normalizeOffice(row.office_code), cleanTxnStr(row.region)])
+        );
+        console.info("Agent Dashboard: office region lookup", {
+          settingsRows: officeSettings?.length || 0,
+          mappedOffices: Object.keys(officeRegionMap).length,
+          sampleSettings: (officeSettings || []).slice(0, 3).map((row) => ({
+            office_code: row.office_code,
+            normalized: normalizeOffice(row.office_code),
+            region: row.region,
+          })),
+        });
+        if (!Object.keys(officeRegionMap).length) {
+          console.warn(
+            "Agent Dashboard: no office regions returned from office_dashboard_settings. " +
+            "Check the table's region values and the signed-in user's SELECT/RLS permissions."
+          );
+        }
+        const curRows = await fetchTransactions(client, ranges.start, ranges.end);
+        const prevRows = await fetchTransactions(client, ranges.prevStart, ranges.prevEnd);
         const { agents, stats, offices, regions } = aggregateFromRows(
           curRows,
           prevRows,
-          profiles || []
+          profiles || [],
+          officeRegionMap
         );
         setAgents(agents);
         setStats(stats);
         setOffices(offices);
         setRegions(regions);
+        const unmappedOffices = offices
+          .filter((office) => !officeRegionMap[normalizeOffice(office.office)])
+          .map((office) => office.office);
+        if (unmappedOffices.length) {
+          console.warn(
+            "Agent Dashboard: offices missing a region in office_dashboard_settings:",
+            unmappedOffices,
+            "Sample transaction office values:", curRows.slice(0, 5).map((row) => ({
+              office: row.office,
+              normalized: normalizeOffice(row.office),
+            }))
+          );
+        }
 
-        if (currentUserEmail) setCurrentAgentId(currentUserEmail);
-        else setCurrentAgentId(agents?.[0]?.id || null);
+        const agentEmail = String(currentUserEmail || profile?.email || user?.email || "").trim().toLowerCase();
+        setCurrentAgentId(agentEmail || null);
+        setCommissionError("");
+        if (agentEmail) {
+          try {
+            // Use the same calculator and fee categories as AgentCommission.
+            const ownTransactions = curRows.filter((row) => transactionAgent(row) === agentEmail);
+            const weekStartKey = iso(ranges.start);
+            const assignedWeek = `deduction_week_start.eq.${weekStartKey},and(deduction_week_start.is.null,week_start_date.eq.${weekStartKey})`;
+            const [violationResponse, disqualifiedResponse, recordResponse] = await Promise.all([
+              client.from("violations").select("*").eq("agent_email", agentEmail).or(assignedWeek),
+              client.from("disqualified_policies").select("*").eq("agent_email", agentEmail).or(assignedWeek),
+              client.from("agent_commission_records").select("*").eq("agent_email", agentEmail).eq("week_start_date", weekStartKey).maybeSingle(),
+            ]);
+            for (const response of [violationResponse, disqualifiedResponse, recordResponse]) {
+              if (response.error) throw response.error;
+            }
+            const violations = (violationResponse.data || []).filter((row) => String(row.status || "").toLowerCase() !== "voided");
+            const disqualified = (disqualifiedResponse.data || []).filter((row) => String(row.status || "").toLowerCase() !== "voided");
+            const record = recordResponse.data || null;
+            const live = calculateAgentCommission({
+              transactions: ownTransactions,
+              violations,
+              disqualifiedPolicies: disqualified,
+              grossPay: Number(record?.gross_pay) || 0,
+              isLicensedCaDoi: record ? record.is_licensed_ca_doi !== false : true,
+              weekStart: weekStartKey,
+            });
+            setCommissionSummary({ live, record, violations, disqualified, weekStartKey });
+          } catch (commissionLoadError) {
+            console.error("Agent Dashboard: commission summary unavailable", commissionLoadError);
+            setCommissionError("Commission and violation details could not be loaded. Open Insurance Commission for verified amounts.");
+            setCommissionSummary(null);
+          }
+        } else {
+          setCommissionSummary(null);
+        }
       } else {
         setAgents([]);
         setStats([]);
         setOffices([]);
         setRegions([]);
         setCurrentAgentId(null);
+        setCommissionSummary(null);
       }
     })().catch(console.error);
-  }, [supabaseClient, currentUserEmail, ranges.start, ranges.end, ranges.prevStart, ranges.prevEnd]);
+  }, [supabaseClient, currentUserEmail, ranges.start, ranges.end, ranges.prevStart, ranges.prevEnd, profile?.email, user?.email]);
+
+  const personalRow = stats.find((entry) => entry.agentId === currentAgentId);
+  const personalSales = personalRow?.salesCount ?? 0;
+  const personalRevenue = (personalRow?.revenueNB ?? 0) + (personalRow?.revenueEN ?? 0);
+  const personalAverage = personalSales ? personalRevenue / personalSales : 0;
+  const rankedAgents = [...stats].sort((a, b) => b.salesCount - a.salesCount || (b.revenueNB + b.revenueEN) - (a.revenueNB + a.revenueEN));
+  const topAgents = rankedAgents.slice(0, 5).map((entry) => ({
+    ...entry,
+    name: agents.find((agent) => agent.id === entry.agentId)?.name || entry.agentId,
+    office: agents.find((agent) => agent.id === entry.agentId)?.office || '',
+    revenue: (entry.revenueNB || 0) + (entry.revenueEN || 0),
+  }));
+  const topOffices = [...offices].sort((a, b) => b.totalSales - a.totalSales).slice(0, 5);
+  const topRegions = [...regions].sort((a, b) => b.totalSales - a.totalSales);
+  // Identity comes from AuthContext, not the sales leaderboard (which may omit agents with no sales).
+  const authenticatedName = [
+    profile?.full_name,
+    profile?.csr_name,
+    user?.user_metadata?.full_name,
+    user?.user_metadata?.name,
+    user?.user_metadata?.first_name,
+  ].find((value) => typeof value === "string" && value.trim());
+  const firstName = authenticatedName?.trim().split(/\s+/)[0] ||
+    (user?.email ? user.email.split("@")[0].split(/[._-]/)[0] : "Agent");
 
   return (
-    <div style={styles.dashboardContainer}>
-      <EventsBanner events={events} />
-      <div style={styles.header}>
-        <h2 style={styles.headerTitle}>
-          <Crown />
-          Sales Dashboard
-        </h2>
-        <select
-          style={styles.select}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          <option value="thisWeek">This Week</option>
-          <option value="thisMonth">This Month</option>
-          <option value="thisQuarter">This Quarter</option>
-        </select>
+    <main className={modern.salesDashboard}>
+      <div className={modern.topBar}>
+        <div>
+          <h1 className={modern.pageTitle}>Welcome Back, <span>{firstName}!</span> 👋</h1>
+          <p className={modern.pageSubtitle}>Your performance, at a glance. Track your production and follow up on every opportunity.</p>
+        </div>
+
       </div>
-      <div style={styles.gridTwoCol}>
-        <LeaderboardCard agents={agents} stats={stats} />
-        <AgentInsightsCard agents={agents} stats={stats} currentAgentId={currentAgentId} />
-      </div>
-      <TopOfficesCard offices={offices} />
-      <div style={styles.gridTwoCol}>{/* GoalTrackerCard removed */}</div>
-      <RegionalLeaderboard regions={regions} />
-    </div>
+
+      <section className={modern.hero} aria-label="Personal sales and commission overview">
+        <div className={modern.heroIntro}>
+          <span className={modern.heroKicker}>MY PRODUCTION · THIS WEEK</span>
+          <h2>Make every conversation count.</h2>
+          <p>Matrix transaction-detail production and fee activity for the current Monday–Sunday week.</p>
+          <div className={modern.heroActions}>
+            <button type="button" onClick={() => navigate("/agent/commission?view=production")} className={modern.heroPrimary}>Insurance commission details <span aria-hidden="true">→</span></button>
+          </div>
+          <div className={modern.productionHighlights}>
+            <div><span>NB / RW sales</span><strong>{personalSales}</strong></div>
+            <div><span>Average broker fee / sale</span><strong>{currency(personalAverage)}</strong></div>
+          </div>
+          <div className={modern.commissionPreview}>
+            <span className={modern.heroKicker}>CURRENT WEEK COMMISSION</span>
+            {commissionError ? <p role="alert">{commissionError}</p> : commissionSummary ? (
+              <>
+                <div className={modern.commissionPreviewGrid}>
+                  <div><small>Gross fee revenue</small><strong>{currency(commissionSummary.live.grossRevenue)}</strong></div>
+                  <div><small>Net NBs</small><strong>{commissionSummary.live.netNbCount}</strong></div>
+                  <div><small>Commission tier</small><strong>{commissionSummary.live.tierName} · {(commissionSummary.live.commissionRate * 100).toFixed(1)}%</strong></div>
+                  <div><small>{commissionSummary.record ? "Published commission" : "Projected commission before carried balances"}</small><strong>{currency(commissionSummary.record?.final_payable_commission ?? commissionSummary.live.commissionBeforeBalance)}</strong></div>
+                </div>
+                {commissionSummary.disqualified.length > 0 && <div className={modern.commissionAlert} role="status">⚠ {commissionSummary.disqualified.length} disqualification(s) assigned to this commission week · {commissionSummary.live.disqualifiedNbCount} NB(s) excluded from tier calculation.</div>}
+                {!commissionSummary.record && <small className={modern.commissionDisclaimer}>Estimate only. Gross pay, carried AR/SV balances, licensing, and final adjustments are verified on the Insurance Commission page.</small>}
+              </>
+            ) : <p>Loading commission details…</p>}
+          </div>
+        </div>
+        <div className={modern.heroFeePanel}>
+          <div className={modern.heroFeeHeading}><strong>Revenue breakdown</strong><span>Transactions · Net fees</span></div>
+          {[
+            ["Broker Fee", "brokerFeeCount", "brokerFeeRevenue"],
+            ["Endorsement Fee", "endorsementFeeCount", "endorsementFeeRevenue"],
+            ["Reinstatement Fee", "reinstatementFeeCount", "reinstatementFeeRevenue"],
+            ["Renewal Fee", "renewalFeeCount", "renewalFeeRevenue"],
+          ].map(([label, countKey, revenueKey]) => (
+            <div className={modern.heroFeeRow} key={label}>
+              <span>{label}</span>
+              <span className={modern.feeCount}>{commissionSummary ? commissionSummary.live[countKey] : "—"} <small>txn</small></span>
+              <strong>{commissionSummary ? currency(commissionSummary.live[revenueKey]) : "—"}</strong>
+            </div>
+          ))}
+          <div className={modern.heroFeeTotal}><span>Total commissionable fees</span><strong>{commissionSummary ? currency(commissionSummary.live.grossRevenue) : "—"}</strong></div>
+          <small className={modern.feeFootnote}>Source: daily_transaction_detail_transfers · Net of valid negative adjustments</small>
+        </div>
+      </section>
+
+      <section className={modern.violationSection} aria-label="Weekly violations">
+        <div className={modern.violationHeading}>
+          <div><span className={modern.eyebrow}>COMPLIANCE & DEDUCTIONS</span><h2>My violations</h2><p>Violations are charged to the most recent unpublished commission week, not necessarily the week they occurred.</p></div>
+          <button type="button" onClick={() => navigate("/agent/commission?view=ar-scanning")} className={modern.textLink}>View Full AR / Scanning History →</button>
+        </div>
+        {commissionError ? <p role="alert">{commissionError}</p> : commissionSummary ? (
+          <div className={modern.violationBody}>
+            <div><strong>{commissionSummary.violations.length}</strong><span>Assigned violations</span></div>
+            <div><strong>{currency(commissionSummary.live.totalDeductions)}</strong><span>Calculated deductions for this week</span></div>
+            <div className={modern.violationNote}>
+              <strong>Applied commission week: {commissionSummary.weekStartKey}</strong>
+              <span>{commissionSummary.record ? "Published week — review the finalized commission record." : "Unpublished week — amounts and assignment may change until publication."} Violations from other weeks are not included here unless assigned to this week.</span>
+            </div>
+          </div>
+        ) : <p>Loading assigned violations…</p>}
+      </section>
+
+      <section className={modern.workspaceSection}>
+        <div className={modern.sectionHeading}><div><span className={modern.eyebrow}>CUSTOMER OPPORTUNITIES</span><h2>Quote pipeline</h2><p>Stay on top of customers who are ready for your next call.</p></div><button type="button" onClick={() => navigate("/agent/quotes")} className={modern.textLink}>Open quote workspace →</button></div>
+        <QuotePerformanceCard supabaseClient={supabaseClient} currentUserEmail={currentUserEmail} />
+      </section>
+
+      <section className={modern.workspaceSection}>
+        <div className={modern.sectionHeading}><div><span className={modern.eyebrow}>SALES RECOGNITION</span><h2>People making moves</h2><p>Companywide performance for the current week.</p></div></div>
+        <div className={modern.leaderGrid}>
+          <article className={modern.panel}>
+            <div className={modern.panelHeading}><div><span className={modern.eyebrow}>TOP PERFORMERS</span><h3>Top 5 agents</h3></div><span className={modern.panelIcon}>★</span></div>
+            <div className={modern.rankList}>{topAgents.length ? topAgents.map((agent, index) => (
+              <div className={modern.rankRow} key={agent.agentId}>
+                <span className={`${modern.rankNumber} ${index === 0 ? modern.rankWinner : ''}`}>{String(index + 1).padStart(2, '0')}</span>
+                <div className={modern.rankIdentity}><strong>{agent.name}</strong><small>{agent.office || 'Fiesta agent'}</small></div>
+                <div className={modern.rankMetrics}><div><strong>{agent.salesCount}</strong><small>Sales</small></div><div><strong>{currency(agent.revenue)}</strong><small>Fees</small></div><div><strong>{currency(agent.salesCount ? agent.revenue / agent.salesCount : 0)}</strong><small>Avg / sale</small></div></div>
+              </div>
+            )) : <p className={modern.emptyState}>No agent sales reported for this period.</p>}</div>
+          </article>
+          <article className={modern.panel}>
+            <div className={modern.panelHeading}><div><span className={modern.eyebrow}>LOCATION PERFORMANCE</span><h3>Top 5 offices</h3></div><span className={modern.panelIcon}>⌂</span></div>
+            <div className={modern.rankList}>{topOffices.length ? topOffices.map((office, index) => (
+              <div className={modern.rankRow} key={office.office}>
+                <span className={`${modern.rankNumber} ${index === 0 ? modern.rankWinner : ''}`}>{String(index + 1).padStart(2, '0')}</span>
+                <div className={modern.rankIdentity}><strong>{office.office}</strong><small>{typeof office.wowChangePct === 'number' ? `${office.wowChangePct >= 0 ? '+' : ''}${pct(office.wowChangePct)} vs. previous period` : 'Office sales'}</small></div>
+                <div className={modern.rankMetrics}><div><strong>{office.totalSales}</strong><small>Sales</small></div><div><strong>{currency(office.totalRevenue)}</strong><small>Fees</small></div><div><strong>{currency(office.totalSales ? office.totalRevenue / office.totalSales : 0)}</strong><small>Avg / sale</small></div></div>
+              </div>
+            )) : <p className={modern.emptyState}>No office sales reported for this period.</p>}</div>
+          </article>
+        </div>
+      </section>
+
+      <section className={modern.workspaceSection}>
+        <div className={modern.sectionHeading}><div><span className={modern.eyebrow}>THE BIG PICTURE</span><h2>Regional performance</h2><p>Sales volume across all reporting regions.</p></div></div>
+        <article className={modern.panel}>
+          {topRegions.length ? <div className={modern.regionList}>{topRegions.map((region, index) => {
+            const maxSales = Math.max(1, topRegions[0]?.totalSales || 0);
+            return <div className={modern.regionRow} key={region.region}>
+              <span className={modern.regionRank}>{String(index + 1).padStart(2, '0')}</span>
+              <div className={modern.regionBody}><div className={modern.regionLabel}><strong>{region.region}</strong></div><div className={modern.barTrack}><div className={modern.barFill} style={{ width: `${Math.max(0, Math.min(100, (region.totalSales / maxSales) * 100))}%` }} /></div></div>
+              <div className={modern.regionMetrics}><div><strong>{region.totalSales}</strong><small>Sales</small></div><div><strong>{currency(region.totalRevenue)}</strong><small>Fees</small></div><div><strong>{currency(region.totalSales ? region.totalRevenue / region.totalSales : 0)}</strong><small>Avg / sale</small></div></div>
+            </div>;
+          })}</div> : <p className={modern.emptyState}>No regional sales reported for this period.</p>}
+        </article>
+      </section>
+      <footer className={modern.footer}>Fiesta Agent Workspace · Transaction-detail sales are informational; verified commissions and quote dispositions are maintained in their respective systems.</footer>
+    </main>
   );
 }
 
+// Legacy component retained for compatibility with the previous dashboard.
+// eslint-disable-next-line no-unused-vars
 const RegionalLeaderboard = ({ regions }) => {
   const ranked = useMemo(() => [...regions].sort((a, b) => b.totalSales - a.totalSales), [regions]);
   const top = ranked[0];
@@ -1198,23 +1567,31 @@ const RegionalLeaderboard = ({ regions }) => {
   );
 };
 
-async function fetchEOD(supabase, start, end) {
-  const startDate = iso(start);
-  const endDate = iso(end);
-  console.log(`Fetching EOD reports from ${startDate} to ${endDate}`);
-  const { data, error } = await supabase
-    .from("eod_reports")
-    .select(
-      "agent_email, office_number, nb_rw_count, nb_rw_fee, en_fee, report_date"
-    )
-    .gte("report_date", startDate)
-    .lt("report_date", endDate);
-  if (error) {
-    console.error("Supabase fetchEOD error:", error);
-    return [];
+// Supabase defaults to a maximum of 1,000 rows per request. Page through
+// the selected period so companywide leaderboards do not silently truncate.
+async function fetchTransactions(supabase, start, end) {
+  const startDate = `${iso(start)} 00:00:00`;
+  const endDate = `${iso(end)} 00:00:00`;
+  const pageSize = 1000;
+  const all = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await supabase
+      .from("daily_transaction_detail_transfers")
+      .select("id, sync_key, receipt_id, customer_id, agent_email, office, date_time, type, company, policy, policy_type, premium, fee, total, voided")
+      .gte("date_time", startDate)
+      .lt("date_time", endDate)
+      .order("date_time", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) {
+      console.error("Supabase transaction detail fetch error:", error);
+      throw error;
+    }
+    all.push(...(data || []));
+    if (!data || data.length < pageSize) break;
   }
-  console.log(`Fetched ${data?.length} rows for the period.`);
-  return data || [];
+  // De-duplicate within the aggregation, using OfficeNumbers transaction keys.
+  return all;
 }
 
 // -------------------- Dev Sanity Tests --------------------
@@ -1234,7 +1611,7 @@ async function fetchEOD(supabase, start, end) {
     const after = pre - 20 * nbCount - 0.2 * enFee - 800;
     console.assert(typeof after === "number", "After-deductions computes");
     // Office region map presence
-    console.assert(typeof OFFICE_TO_REGION === "object", "OFFICE_TO_REGION exists");
+    console.assert(typeof normalizeOffice === "function", "Office normalization exists");
   } catch (err) {
     console.warn("Dev tests skipped or minor failure:", err?.message);
   }
