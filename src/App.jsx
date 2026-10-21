@@ -54,6 +54,11 @@ import AdminTaxWip from './pages/admin/AdminTaxWip';
 // ✅ ADDED: Admin Quote Log
 import AdminQuoteLog from './pages/admin/AdminQuoteLog';
 
+// Office Management (independent admin module)
+import OfficeManagement from './pages/admin/officeManagement/OfficeManagement';
+import OfficeProfile from './pages/admin/officeManagement/OfficeProfile';
+import CompanyServices from './pages/admin/officeManagement/CompanyServices';
+
 
 // ✅ ADDED: Supervisor Tax WIP page import
 import SupervisorTaxWip from './pages/supervisor/SupervisorTaxWip';
@@ -520,6 +525,12 @@ function AppRoutes() {
 
           {/* ✅ ADDED: Admin Quote Log Route */}
           <Route path="quote-log" element={<AdminQuoteLog />} />
+
+          {/* Office Management */}
+          <Route path="offices" element={<OfficeManagement />} />
+          <Route path="offices/company-services" element={<CompanyServices />} />
+          <Route path="offices/renewals" element={<CompanyServices renewalsOnly />} />
+          <Route path="offices/:officeId" element={<OfficeProfile />} />
         </Route>
       </Route>
 

@@ -18,6 +18,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import styles from './AdminDashboard.module.css';
+import { canAccess } from '../../utils/adminPermissions';
 
 const menuItems = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -25,6 +26,7 @@ const menuItems = [
   { to: '/admin/quote-log', label: 'Quote Operations', icon: ClipboardList },
   { to: '/admin/office-numbers', label: 'Office Numbers', icon: ChartNoAxesCombined },
   { to: '/admin/office-eods', label: 'Office EODs', icon: Building2 },
+  { to: '/admin/offices', label: 'Office Management', icon: Building2 },
   { to: '/admin/manage-users', label: 'Manage Users', icon: Users },
   { to: '/admin/violations', label: 'Manage Violations', icon: ShieldAlert },
   { to: '/admin/commission', label: 'Tax Commission Log', icon: DollarSign },
@@ -123,7 +125,7 @@ const AdminSidebar = ({ onLogout, collapsed = false, onToggle }) => {
       )}
 
       <nav className={styles.nav}>
-        {menuItems.map(({ to, label, icon: Icon, end }) => (
+        {menuItems.filter(item => canAccess(profile?.permissions, ({'/admin':'dashboard','/admin/tickets':'tickets','/admin/quote-log':'quotes','/admin/office-numbers':'office_numbers','/admin/office-eods':'office_eods','/admin/offices':'offices','/admin/manage-users':'manage_users','/admin/violations':'violations','/admin/commission':'tax_commission','/admin/commission-upload':'eod_calendar','/admin/marketing':'marketing','/admin/tax-wip':'agent_commissions'})[item.to])).map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}

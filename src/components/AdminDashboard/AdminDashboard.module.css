@@ -3330,3 +3330,15 @@
   border-color: #94a3b8;
   box-shadow: 0 0 0 3px rgba(23, 63, 115, .10);
 }
+
+/* Sidebar width correction: preserve original 260px/72px dimensions.
+   Explicit dimensions prevent a stale dashboard collapsed attribute from
+   shrinking the sidebar when its own state is expanded. */
+.sidebar:not(.sidebarCollapsed) {
+  width: 260px;
+  min-width: 260px;
+}
+.sidebar.sidebarCollapsed {
+  width: 72px;
+  min-width: 72px;
+}

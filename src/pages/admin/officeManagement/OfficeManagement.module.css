@@ -1,0 +1,57 @@
+.page{padding:28px;min-height:100vh;background:#f6f8fb;color:#172033}.header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px;flex-wrap:wrap}.header small{font-size:11px;font-weight:800;letter-spacing:.1em;color:#b48712}.header h1{font-size:30px;margin:5px 0}.header p{color:#667085;margin:0}.primary{background:#d93632;color:white;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer}.primary:disabled{opacity:.6}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}.stats>div{background:#15191f;color:white;border-radius:14px;padding:20px}.stats span{display:block;color:#ffcc33;font-size:12px}.stats strong{display:block;font-size:29px;margin-top:5px}.panel{background:white;border:1px solid #e1e6ed;border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 5px 16px #0f172a0a}.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}.filters input{flex:1;min-width:230px}.filters input,.filters select,.formGrid input,.formGrid select,.formGrid textarea{padding:10px;border:1px solid #d5dce6;border-radius:9px;font:inherit;background:white;color:#172033}.tableScroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:690px;text-align:left}th,td{padding:13px;border-bottom:1px solid #edf0f4;font-size:13px}th{background:#f8fafc;color:#667085;font-size:11px;text-transform:uppercase}td a,.page>a{color:#b42825;font-weight:700;text-decoration:none}.pill{display:inline-block;padding:5px 9px;background:#fff4d6;color:#745600;border-radius:999px;text-transform:capitalize;font-size:12px;font-weight:700}.formGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin:16px 0}.formGrid label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700}.wide{grid-column:1/-1}.error{background:#fff1f2;color:#a61b1b;border:1px solid #fecaca;border-radius:9px;padding:12px}.empty{color:#667085;text-align:center;padding:18px}.tabs{display:flex;gap:8px;overflow-x:auto;margin-bottom:18px}.tabs button{border:1px solid #dce2ea;background:white;padding:10px 14px;border-radius:9px;white-space:nowrap;cursor:pointer}.tabs .selected{background:#15191f;color:#ffcc33}.details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.details b{font-size:12px;color:#667085}.details p{margin:6px 0}@media(max-width:700px){.page{padding:16px}.stats,.formGrid,.details{grid-template-columns:1fr}}
+
+.serviceHeading{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap;margin-bottom:20px}.serviceHeading h2{margin:0 0 6px}.serviceHeading p{margin:0;color:#667085}.serviceForm{background:#f8fafc;border:1px solid #dce2ea;border-radius:12px;padding:18px;margin-bottom:20px}.serviceForm h3{margin:0}.serviceCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:16px}.serviceCard{border:1px solid #dce2ea;border-radius:12px;padding:18px;min-width:0}.serviceCardTop{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.serviceCardTop h3{margin:6px 0 15px}.serviceType{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#a77b12;font-weight:800}.serviceDetails{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.serviceDetails b{font-size:11px;color:#667085}.serviceDetails p{font-size:13px;margin:4px 0;overflow-wrap:anywhere}.serviceNotes{padding:10px;background:#f8fafc;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.serviceCard a{color:#b42825}.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}.actions button:not(.primary){border:1px solid #d5dce6;background:white;padding:10px 14px;border-radius:9px;cursor:pointer}.actions .dangerButton{color:#b42318!important}.textButton{border:0;background:transparent;color:#b42825;cursor:pointer;font-size:12px;text-decoration:underline}.helper{font-size:12px;color:#667085}.success{background:#ecfdf3;border:1px solid #a6f4c5;color:#027a48;padding:12px;border-radius:9px}@media(max-width:700px){.serviceDetails{grid-template-columns:1fr}}
+
+.moduleNav{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 22px;padding-bottom:14px;border-bottom:1px solid #dce2ea}.moduleNavLink{display:inline-flex;align-items:center;border:1px solid #dce2ea;background:white;color:#172033;padding:10px 15px;border-radius:9px;text-decoration:none;font-size:13px;font-weight:700}.moduleNavLink:hover{border-color:#b48712}.moduleNavActive{background:#15191f;color:#ffcc33;border-color:#15191f}
+
+.pendingDocs{border:1px solid #dce2ea;border-radius:12px;background:white;padding:18px;margin:8px 0}.pendingDocs h3{margin:0 0 6px}.pendingDrop{border:2px dashed #aeb8c6;border-radius:12px;padding:24px;text-align:center;margin:12px 0;background:#f8fafc}.pendingDropActive{border-color:#d93632;background:#fff7f7}.pendingButtons{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}.pendingButtons button,.pendingFileList button{border:1px solid #d5dce6;background:white;border-radius:8px;padding:8px 12px;cursor:pointer}.pendingButtons button:disabled,.pendingFileList button:disabled{opacity:.5;cursor:not-allowed}.pendingFileList ul{padding-left:20px;max-height:180px;overflow:auto}.pendingFileList li{margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;overflow-wrap:anywhere}.pendingFileList li span{min-width:0}
+
+/* Office Management Settings: row actions */
+.settingsActionCell{width:210px;white-space:nowrap}
+.settingsRowActions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.settingsRowActions button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:7px 11px;border:1px solid transparent;border-radius:8px;font:inherit;font-size:12px;font-weight:700;line-height:1;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s}
+.settingsRowActions button svg{width:15px;height:15px;flex-shrink:0}
+.settingsEditButton{background:#fff;color:#344054;border-color:#d0d5dd!important}
+.settingsEditButton:hover{background:#f2f4f7;border-color:#98a2b3!important}
+.settingsArchiveButton{background:#fff;color:#b42318;border-color:#fecdca!important}
+.settingsArchiveButton:hover{background:#fff1f0;border-color:#fda29b!important}
+.settingsRestoreButton{background:#ecfdf3;color:#027a48;border-color:#abefc6!important}
+.settingsRestoreButton:hover{background:#d1fadf;border-color:#75e0a7!important}
+.settingsRowActions button:focus-visible{outline:3px solid #f7b5b3;outline-offset:2px}
+@media(max-width:700px){.settingsActionCell{width:auto}.settingsRowActions{justify-content:flex-start}}
+
+/* Phase 8 - read-only office activity history */
+.historyTimeline{border-left:2px solid #e2e8f0;margin:18px 0 8px 11px;padding-left:22px}
+.historyEntry{position:relative;padding:0 0 24px}
+.historyDot{position:absolute;left:-31px;top:5px;width:14px;height:14px;border:3px solid #d93632;border-radius:50%;background:#fff}
+.historyEntryBody{background:#fff;border:1px solid #e1e6ed;border-radius:12px;padding:16px;overflow-wrap:anywhere}
+.historyTop{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.historyTop time{font-size:12px;color:#667085}
+.historySubject{font-size:14px;margin:8px 0 3px}
+.historyToggle{border:1px solid #d5dce6;background:#f8fafc;color:#172033;padding:7px 11px;border-radius:8px;cursor:pointer;font-weight:700}
+.historyToggle:hover{border-color:#d93632}
+.historyDiff{overflow-x:auto;margin-top:12px}.historyDiff table{min-width:480px}.historyDiff td{word-break:break-word;max-width:350px}
+
+/* Office directory and ZIP finder */
+.directoryHeading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:15px}
+.directoryHeading h2{font-size:19px;margin:0 0 5px}
+.directoryHeading p{font-size:13px;color:#667085;margin:0}
+.countLabel{font-size:12px;font-weight:700;color:#667085;background:#f2f4f7;border-radius:20px;padding:7px 11px}
+.zipFinder{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.zipFinder input{padding:12px;border:1px solid #d5dce6;border-radius:9px;min-width:240px;flex:1;font:inherit;color:#172033;background:white}
+.secondaryButton{padding:12px 15px;border:1px solid #d5dce6;background:white;border-radius:9px;font-weight:700;cursor:pointer}
+.nearbyResults{margin-top:20px;border-top:1px solid #edf0f4;padding-top:16px}
+.nearbyResults h3{margin:0 0 5px;font-size:16px}
+.nearbyGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;margin-top:14px}
+.nearbyCard{border:1px solid #e1e6ed;border-radius:12px;padding:15px;background:#fafbfc}
+.nearbyCardTop{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;font-size:13px}
+.nearbyCardTop span{font-weight:800;color:#b42825;white-space:nowrap}
+.nearbyCard p{font-size:12px;color:#667085;margin:9px 0 14px}
+.directoryActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.directoryActions a{font-size:12px;color:#b42825;font-weight:800;text-decoration:none;white-space:nowrap}
+.directoryActions a:hover{text-decoration:underline}
+.directoryTable{min-width:1080px}
+.directoryTable td{vertical-align:top;line-height:1.5}
+.directoryTable td a{color:#b42825;text-decoration:none;font-weight:700}
+.officeSubtext{color:#667085;font-size:12px;margin-top:3px;max-width:180px;overflow-wrap:anywhere}
+@media(max-width:700px){.zipFinder input{min-width:100%}.zipFinder .primary{flex:1}}

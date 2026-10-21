@@ -324,3 +324,9 @@
         grid-template-columns: 1fr;
     }
 }
+
+.permissionsGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; }
+.permissionRow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:10px 0; font-size:13px; }
+.permissionRow input[type=password] { width:100%; padding:9px; border:1px solid #cbd5e1; border-radius:8px; }
+.permissionRow select { padding:8px; border:1px solid #cbd5e1; border-radius:8px; }
+@media(max-width:560px){.permissionsGrid{grid-template-columns:1fr}}

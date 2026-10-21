@@ -1,5 +1,7 @@
+import { ADMIN_FEATURES } from '../utils/adminPermissions';
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../AuthContext';
 import styles from './AdminManageUsers.module.css';
 import CreateUserModal from '../components/Modals/CreateUserModal';
 
@@ -80,7 +82,7 @@ const getCachedDirectory = async ({ force = false } = {}) => {
     const request = (async () => {
         const [authResult, profilesResult, activityResult, activeAgentsResult] = await Promise.all([
             supabase.functions.invoke('manage-users', { body: { action: 'list_users' } }),
-            supabase.from('profiles').select('id, full_name, email, role, tax_vet, office, region, turborater_agent_name, csr_name'),
+            supabase.from('profiles').select('id, full_name, email, role, tax_vet, office, region, turborater_agent_name, csr_name, permissions'),
             supabase.rpc('get_manage_users_work_activity', { p_lookback_days: WORK_ACTIVITY_LOOKBACK_DAYS }),
             supabase.from('active_agent_registry').select('email, full_name, is_active').eq('is_active', true),
         ]);
@@ -118,7 +120,7 @@ const getCachedDirectory = async ({ force = false } = {}) => {
             const email = normalizeEmail(user.email);
             return {
                 ...user,
-                profile: profilesByEmail.get(email) || null,
+                profile: (profilesResult.data || []).find(p => p.id === user.id) || profilesByEmail.get(email) || null,
                 work_activity: activityByEmail.get(email) || null,
                 active_registry: activeAgentByEmail.get(email) || null,
             };
@@ -248,6 +250,23 @@ const AdminManageUsers = () => {
             setError(err?.message || 'Unable to update profile.');
             return false;
         }
+    };
+
+    const handleSavePermissions = async (targetUser, permissions, authorizationPassword) => {
+        setError(''); setFeedback('');
+        try {
+            const { data, error: fnError } = await supabase.functions.invoke('manage-users', {
+                body: { action: 'update_permissions', payload: { userId: targetUser.id, permissions, authorizationPassword } },
+            });
+            if (fnError) throw fnError;
+            if (data?.error) throw new Error(data.message || data.error);
+            directoryCache = null; directoryCacheAt = 0;
+            const refreshed = await getCachedDirectory({ force: true });
+            setUsers(refreshed);
+            setSelectedUser(refreshed.find(item => item.id === targetUser.id) || null);
+            setFeedback('Permissions saved.');
+            return true;
+        } catch (err) { setError(err?.message || 'Unable to save permissions.'); return false; }
     };
 
     const handleToggleDisabled = async (targetUser) => {
@@ -785,6 +804,7 @@ const AdminManageUsers = () => {
                     onClose={() => setSelectedUser(null)}
                     onReset={() => handleSendReset(selectedUser.email)}
                     onSaveProfile={(profileValues) => handleSaveProfile(selectedUser, profileValues)}
+                    onSavePermissions={(permissions, password) => handleSavePermissions(selectedUser, permissions, password)}
                     onToggleDisabled={() => handleToggleDisabled(selectedUser)}
                     onDelete={() => handleDeleteUser(selectedUser.id, selectedUser.email)}
                 />
@@ -795,12 +815,19 @@ const AdminManageUsers = () => {
     );
 };
 
-function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, onSaveProfile, onToggleDisabled, onDelete }) {
+function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, onSaveProfile, onSavePermissions, onToggleDisabled, onDelete }) {
     const work = getWorkStatus(user);
     const activity = user.work_activity || {};
     const disabled = isBannedUser(user);
     const emailConfirmed = Boolean(user.email_confirmed_at || user.confirmed_at);
     const externalEmail = normalizeEmail(user.email) && !normalizeEmail(user.email).endsWith('@fiestainsurance.com');
+    const { user: signedInUser, profile: signedInProfile } = useAuth();
+    const isSelf = signedInUser?.id === user.id;
+    const canManagePermissions = signedInProfile?.role === 'admin' && signedInProfile?.permissions?.manage_users !== false;
+    const [featurePermissions, setFeaturePermissions] = useState(() => user.profile?.permissions || {});
+    const [authorizationPassword, setAuthorizationPassword] = useState('');
+    const [savingPermissions, setSavingPermissions] = useState(false);
+    const [permissionError, setPermissionError] = useState('');
     const [editingProfile, setEditingProfile] = useState(false);
     const [savingProfile, setSavingProfile] = useState(false);
     const [profileForm, setProfileForm] = useState(() => ({
@@ -826,6 +853,8 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
             csr_name: user.profile?.csr_name || '',
         });
         setEditingProfile(false);
+        setFeaturePermissions(user.profile?.permissions || {});
+        setAuthorizationPassword('');
     }, [user]);
 
     const updateProfileField = (field, value) => {
@@ -936,6 +965,44 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
                     {duplicate && <div className={styles.drawerAlert}>Possible duplicate: another Auth account uses the same display name.</div>}
                 </DrawerSection>
 
+                {String(user.profile?.role || user.user_metadata?.role || '') === 'admin' && (
+                    <DrawerSection title="Admin Feature Permissions">
+                        <p>Existing admins have full access until you turn off a feature. Changes require a password every time.</p>
+                        <div className={styles.permissionsGrid}>
+                            {ADMIN_FEATURES.map(([key, label]) => key === 'offices' ? null : (
+                                <label key={key} className={styles.permissionRow}>
+                                    <input type="checkbox" disabled={isSelf || !canManagePermissions || savingPermissions}
+                                        checked={featurePermissions[key] !== false}
+                                        onChange={e => setFeaturePermissions(p => ({...p, [key]: e.target.checked}))} /> {label}
+                                </label>
+                            ))}
+                        </div>
+                        <label className={styles.permissionRow}>Office Management access
+                            <select disabled={isSelf || !canManagePermissions || savingPermissions}
+                                value={featurePermissions.office_management || (featurePermissions.offices === false ? 'none' : 'full')}
+                                onChange={e => setFeaturePermissions(p => ({...p, office_management:e.target.value, offices:e.target.value !== 'none'}))}>
+                                <option value="full">Full Access</option>
+                                <option value="directory">Directory Only</option>
+                                <option value="none">No Access</option>
+                            </select>
+                        </label>
+                        {isSelf && <p>You cannot change your own permissions.</p>}
+                        {!isSelf && canManagePermissions && <>
+                            <label className={styles.permissionRow}>Authorization password
+                                <input type="password" autoComplete="new-password" value={authorizationPassword}
+                                    onChange={e => setAuthorizationPassword(e.target.value)} placeholder="Required for every save" />
+                            </label>
+                            {permissionError && <p role="alert">{permissionError}</p>}
+                            <button type="button" className={styles.saveProfileButton} disabled={!authorizationPassword || savingPermissions}
+                                onClick={async () => {
+                                    setPermissionError(''); setSavingPermissions(true);
+                                    const ok = await onSavePermissions(featurePermissions, authorizationPassword);
+                                    if (!ok) setPermissionError('Save failed. Check the error banner and authorization password.');
+                                    setAuthorizationPassword(''); setSavingPermissions(false);
+                                }}>{savingPermissions ? 'Saving…' : 'Save Permissions'}</button>
+                        </>}
+                    </DrawerSection>
+                )}
                 <DrawerSection title="Working Identity">
                     <DetailRow label="Activity" value={work.label} subvalue={activity.last_activity_at ? formatDateTime(activity.last_activity_at) : work.detail} />
                     <DetailRow label="Latest CSR" value={activity.csr_name || 'Not seen'} />

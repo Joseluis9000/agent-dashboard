@@ -7,7 +7,7 @@ import styles from './AdminLayout.module.css';
 
 const AdminLayout = () => {
   // ✅ Use signOut from context to keep app state in sync
-  const { user, loading, signOut } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
 
   const handleLogout = async () => {
     await signOut();
@@ -23,8 +23,8 @@ const AdminLayout = () => {
     return <Navigate to="/login" replace />;
   }
 
-  // 2. Must be admin role
-  if (user.user_metadata?.role !== 'admin') {
+  // 2. Use the same profile role as ProtectedRoute; fall back to Auth metadata if unavailable.
+  if ((profile?.role ?? user.user_metadata?.role) !== 'admin') {
     return <Navigate to="/dashboard" replace />;
   }
 
