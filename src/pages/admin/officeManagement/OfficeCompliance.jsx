@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listOfficeCompliance, saveOfficeCompliance, deleteOfficeCompliance } from './officeComplianceService';
 import { listOfficeDocuments } from './officeDocumentsService';
 import styles from './OfficeManagement.module.css';
-import {listSettings,getOfficeSettings,labelOf} from './officeSettingsService';
+import {listSettings,getOfficeSettings} from './officeSettingsService';
 
 const fallbackCategories = ['business_license','fire_safety','permit','insurance','inspection','tax','lease','other'];
 const statuses = ['pending','in_progress','complete','not_applicable'];
@@ -40,7 +40,11 @@ export default function OfficeCompliance({ officeId }) {
     } catch(e) { setError(e.message || 'Unable to load compliance records.'); }
     finally { setLoading(false); }
   },[officeId]);
-  useEffect(() => { refresh(); },[refresh]);
+  useEffect(() => {
+    // Defer loading so the effect does not synchronously trigger state updates.
+    const task = Promise.resolve().then(() => refresh());
+    void task;
+  }, [refresh]);
   const visible = useMemo(() => items.filter(item => filter === 'all' || (filter === 'attention' ? attention(item) : item.category === filter)),[items,filter]);
   const change = (key,value) => setForm(f => ({...f,[key]:value}));
   const startNew = () => { setForm({...initial,category:categories[0]||'other'});setEditingId(null);setError('');setNotice(''); };

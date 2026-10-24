@@ -6,7 +6,15 @@ import OfficeManagementSettings from './OfficeManagementSettings';
 import { createOffice, listOffices } from './officeService';
 import styles from './OfficeManagement.module.css';
 import OfficeManagementNav from './OfficeManagementNav';
-const REGIONS = ['BAY AREA', 'VALLEY', 'CEN-CAL', 'KERN', 'SOUTHERN CALIFORNIA'];
+const REGIONS = [
+  'BAY AREA',
+  'CEN-CAL',
+  'KERN',
+  'MERCED',
+  'SAN DIEGO',
+  'SOUTHERN CALIFORNIA',
+  'STANISLAUS',
+];
 const zipCache = new Map();
 const ZIP_API = 'https://api.zippopotam.us/us/';
 const zip5 = value => String(value || '').match(/\b\d{5}\b/)?.[0] || '';

@@ -1,0 +1,21 @@
+import React,{useEffect,useState} from 'react';
+import {Link} from 'react-router-dom';
+import OfficeManagementNav from './OfficeManagementNav';
+import {listLandlords,saveLandlord,listLeases} from './landlordService';
+import styles from './OfficeManagement.module.css';
+const empty={name:'',management_company:'',contact_name:'',phone:'',email:'',mailing_address:'',emergency_phone:'',backup_contact:'',notes:''};
+export default function LandlordDirectory(){
+ const [landlords,setLandlords]=useState([]),[leases,setLeases]=useState([]),[form,setForm]=useState(null),[editId,setEditId]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[search,setSearch]=useState('');
+ const reload=async()=>{const [a,b]=await Promise.all([listLandlords(),listLeases()]);setLandlords(a);setLeases(b);};
+ useEffect(()=>{reload().catch(e=>setError(e.message));},[]);
+ const save=async e=>{e.preventDefault();setBusy(true);setError('');try{await saveLandlord(Object.fromEntries(Object.entries(form).map(([k,v])=>[k,v.trim()||null])),editId);setForm(null);setEditId(null);await reload();}catch(e){setError(e.message);}finally{setBusy(false);}};
+ const filtered=landlords.filter(x=>[x.name,x.management_company,x.contact_name].join(' ').toLowerCase().includes(search.toLowerCase()));
+ const soon=leases.filter(x=>x.status==='active'&&x.lease_end&&new Date(x.lease_end+'T00:00:00')<=new Date(Date.now()+180*86400000));
+ return <main className={styles.page}><OfficeManagementNav/><header className={styles.header}><div><small>OFFICE MANAGEMENT</small><h1>Landlords & Leases</h1><p>Property contacts, lease renewals, and repair obligations.</p></div><button className={styles.primary} onClick={()=>{setForm({...empty});setEditId(null);}}>+ Add Landlord</button></header>
+ {error&&<p role="alert" className={styles.error}>{error}</p>}
+ <div className={styles.stats}><div><span>Landlords</span><strong>{landlords.length}</strong></div><div><span>Recorded leases</span><strong>{leases.length}</strong></div><div><span>Active leases expiring within 180 days / overdue</span><strong>{soon.length}</strong></div></div>
+ {form&&<form className={styles.panel} onSubmit={save}><h2>{editId?'Edit':'Add'} Landlord</h2><div className={styles.formGrid}>{Object.keys(empty).map(k=><label key={k}>{k.replaceAll('_',' ')}{k==='notes'?<textarea value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}/>:<input required={k==='name'} type={k==='email'?'email':'text'} value={form[k]||''} onChange={e=>setForm({...form,[k]:e.target.value})}/>}</label>)}</div><div className={styles.actions}><button className={styles.primary} disabled={busy}>Save Landlord</button><button type="button" onClick={()=>setForm(null)}>Cancel</button></div></form>}
+ <section className={styles.panel}><h2>Landlord Directory</h2><input placeholder="Search landlords..." value={search} onChange={e=>setSearch(e.target.value)}/><div className={styles.serviceCards}>{filtered.map(l=><article className={styles.serviceCard} key={l.id}><h3>{l.name}</h3><p>{l.management_company||''}</p><p>{l.contact_name} · {l.phone}</p><p>{l.email}</p><p>Emergency: {l.emergency_phone||'Not recorded'}</p><p>Linked leases: {leases.filter(x=>x.landlord_id===l.id).length}</p><button onClick={()=>{setEditId(l.id);setForm(Object.fromEntries(Object.keys(empty).map(k=>[k,l[k]||''])));}}>Edit</button></article>)}</div></section>
+ <section className={styles.panel}><h2>Lease Overview</h2><p>Deadlines are informational. Confirm the exact notice terms in the signed contract.</p><div className={styles.serviceCards}>{leases.map(l=><article className={styles.serviceCard} key={l.id}><h3>{l.om_offices?.office_code} — {l.om_offices?.office_name}</h3><p>{l.om_landlords?.name} · {l.status}</p><p>Expiration: {l.lease_end||'Not recorded'}</p><p>Renewal notice by: {l.renewal_notice_deadline||'Not recorded'}</p><p>Base rent: {l.base_rent==null?'Not recorded':`$${Number(l.base_rent).toFixed(2)}`}</p><Link to={`/admin/offices/${l.office_id}?tab=${encodeURIComponent('Landlord & Lease')}`}>Open office lease →</Link></article>)}</div></section>
+ </main>;
+}
