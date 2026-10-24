@@ -79,6 +79,13 @@ export default function CompanyServices({ renewalsOnly = false }) {
   const deadlines = services.filter(s => nextDeadline(s) && daysTo(nextDeadline(s)) <= 90).length;
   return <main className={styles.page}>
     <OfficeManagementNav />
+    {!renewalsOnly && (
+      <p style={{ margin: '12px 0 18px' }}>
+        <Link to="/admin/offices/service-providers">
+          Browse Service Provider Directory →
+        </Link>
+      </p>
+    )}
     <header className={styles.header}><div><small>OFFICE MANAGEMENT</small><h1>{renewalsOnly ? 'Contract Renewals' : 'Company Services'}</h1><p>{renewalsOnly ? 'Companywide contracts sorted by their next renewal, expiration or cancellation deadline. Office-specific renewals remain in each office profile.' : 'Track companywide subscriptions, vendor contracts, renewal deadlines and office coverage.'}</p></div><button type="button" className={styles.primary} onClick={startNew}>+ Add Company Service</button></header>
     <div className={styles.stats}><div><span>Company services</span><strong>{services.length}</strong></div><div><span>Deadlines within 90 days / overdue</span><strong>{deadlines}</strong></div><div><span>Office locations</span><strong>{offices.length}</strong></div></div>
     {error && <p className={styles.error} role="alert">{error}</p>}{notice && <p className={styles.success} role="status">{notice}</p>}

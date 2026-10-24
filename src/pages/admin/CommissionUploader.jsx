@@ -1,5 +1,5 @@
 // CommissionUploader.jsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 
 const PAGE_SIZE = 1000;
@@ -57,65 +57,7 @@ const getStatusLabel = (status) => {
   return 'No data';
 };
 
-const CommissionUploader = () => {
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [calendarData, setCalendarData] = useState({});
-  const [loadingCalendar, setLoadingCalendar] = useState(false);
-  const [loadingDay, setLoadingDay] = useState(false);
-
-  const isInitialLoadRef = useRef(true);
-
-  const days = useMemo(() => getMonthDays(currentMonth), [currentMonth]);
-  const selectedRecord = selectedDate ? calendarData[selectedDate] : null;
-
-  const monthName = currentMonth.toLocaleString('default', { month: 'long' });
-
-  useEffect(() => {
-    initializeLatestDate();
-  }, []);
-
-  useEffect(() => {
-    if (isInitialLoadRef.current) return;
-
-    fetchMonthCalendarSummary(currentMonth);
-  }, [currentMonth]);
-
-  useEffect(() => {
-    if (!selectedDate) return;
-
-    fetchSelectedDayData(selectedDate);
-  }, [selectedDate]);
-
-  const initializeLatestDate = async () => {
-    setLoadingCalendar(true);
-
-    try {
-      const latestDateKey = await fetchMostRecentDataDate();
-
-      if (!latestDateKey) {
-        setLoadingCalendar(false);
-        isInitialLoadRef.current = false;
-        return;
-      }
-
-      const [year, month] = latestDateKey.split('-').map(Number);
-      const latestMonth = new Date(year, month - 1, 1);
-
-      setCurrentMonth(latestMonth);
-
-      await fetchMonthCalendarSummary(latestMonth);
-
-      setSelectedDate(latestDateKey);
-    } catch (error) {
-      console.error('Error initializing EOD calendar:', error.message);
-    }
-
-    isInitialLoadRef.current = false;
-    setLoadingCalendar(false);
-  };
-
-  const fetchMostRecentDataDate = async () => {
+const fetchMostRecentDataDate = async () => {
     const { data, error } = await supabase
       .from('daily_eod_transfers')
       .select('date_time')
@@ -131,7 +73,7 @@ const CommissionUploader = () => {
     return getUploadedDateKey(data?.date_time);
   };
 
-  const fetchAllRowsForRange = async ({
+const fetchAllRowsForRange = async ({
     startDateKey,
     endDateKey,
     columns,
@@ -165,7 +107,21 @@ const CommissionUploader = () => {
     return allRows;
   };
 
-  const fetchMonthCalendarSummary = async (monthDate = currentMonth) => {
+const CommissionUploader = () => {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [calendarData, setCalendarData] = useState({});
+  const [loadingCalendar, setLoadingCalendar] = useState(false);
+  const [loadingDay, setLoadingDay] = useState(false);
+
+  const isInitialLoadRef = useRef(true);
+
+  const days = useMemo(() => getMonthDays(currentMonth), [currentMonth]);
+  const selectedRecord = selectedDate ? calendarData[selectedDate] : null;
+
+  const monthName = currentMonth.toLocaleString('default', { month: 'long' });
+
+  const fetchMonthCalendarSummary = useCallback(async (monthDate) => {
     setLoadingCalendar(true);
 
     try {
@@ -244,9 +200,9 @@ const CommissionUploader = () => {
     }
 
     setLoadingCalendar(false);
-  };
+  }, []);
 
-  const fetchSelectedDayData = async (dateKey) => {
+  const fetchSelectedDayData = useCallback(async (dateKey) => {
     setLoadingDay(true);
 
     try {
@@ -287,7 +243,49 @@ const CommissionUploader = () => {
     }
 
     setLoadingDay(false);
-  };
+  }, []);
+
+  const initializeLatestDate = useCallback(async () => {
+    setLoadingCalendar(true);
+
+    try {
+      const latestDateKey = await fetchMostRecentDataDate();
+
+      if (!latestDateKey) {
+        setLoadingCalendar(false);
+        isInitialLoadRef.current = false;
+        return;
+      }
+
+      const [year, month] = latestDateKey.split('-').map(Number);
+      const latestMonth = new Date(year, month - 1, 1);
+
+      setCurrentMonth(latestMonth);
+
+      await fetchMonthCalendarSummary(latestMonth);
+
+      setSelectedDate(latestDateKey);
+    } catch (error) {
+      console.error('Error initializing EOD calendar:', error.message);
+    }
+
+    isInitialLoadRef.current = false;
+    setLoadingCalendar(false);
+  }, [fetchMonthCalendarSummary]);
+
+  useEffect(() => {
+    initializeLatestDate();
+  }, [initializeLatestDate]);
+
+  useEffect(() => {
+    if (isInitialLoadRef.current) return;
+    fetchMonthCalendarSummary(currentMonth);
+  }, [currentMonth, fetchMonthCalendarSummary]);
+
+  useEffect(() => {
+    if (!selectedDate) return;
+    fetchSelectedDayData(selectedDate);
+  }, [selectedDate, fetchSelectedDayData]);
 
   const changeMonth = (amount) => {
     setCurrentMonth(

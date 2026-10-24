@@ -58,6 +58,9 @@ import AdminQuoteLog from './pages/admin/AdminQuoteLog';
 import OfficeManagement from './pages/admin/officeManagement/OfficeManagement';
 import OfficeProfile from './pages/admin/officeManagement/OfficeProfile';
 import CompanyServices from './pages/admin/officeManagement/CompanyServices';
+import CompanyContacts from './pages/admin/officeManagement/CompanyContacts';
+import ServiceProviders from './pages/admin/officeManagement/ServiceProviders';
+import LandlordDirectory from './pages/admin/officeManagement/LandlordDirectory';
 
 
 // ✅ ADDED: Supervisor Tax WIP page import
@@ -528,7 +531,10 @@ function AppRoutes() {
 
           {/* Office Management */}
           <Route path="offices" element={<OfficeManagement />} />
+          <Route path="offices/contacts" element={<CompanyContacts />} />
           <Route path="offices/company-services" element={<CompanyServices />} />
+          <Route path="offices/service-providers" element={<ServiceProviders />} />
+          <Route path="offices/landlords" element={<LandlordDirectory />} />
           <Route path="offices/renewals" element={<CompanyServices renewalsOnly />} />
           <Route path="offices/:officeId" element={<OfficeProfile />} />
         </Route>

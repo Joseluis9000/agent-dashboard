@@ -1,6 +1,6 @@
 // src/pages/admin/marketing/components/ActivityPhotoGallery.jsx
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from '../../MarketingOps.module.css';
 import {
   ACTIVITY_PHOTO_TYPES,
@@ -48,54 +48,58 @@ const ActivityPhotoGallery = ({
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState('');
 
-  const activePhoto = photos[activeIndex] || photos[0] || null;
+  const safeActiveIndex = Math.min(activeIndex, Math.max(photos.length - 1, 0));
+  const activePhoto = photos[safeActiveIndex] || null;
 
-  const notifyPhotosChange = useCallback((nextPhotos) => {
+  const notifyPhotosChange = (nextPhotos) => {
     if (typeof onPhotosChange === 'function') {
       onPhotosChange(resolvedActivityId, nextPhotos);
     }
-  }, [onPhotosChange, resolvedActivityId]);
+  };
 
-  const loadPhotos = useCallback(async () => {
-    if (!resolvedActivityId) {
-      setPhotos([]);
-      setActiveIndex(0);
-      return;
-    }
+  useEffect(() => {
+    let cancelled = false;
 
-    setIsLoading(true);
-    setError('');
+    // Start the asynchronous fetch after the effect setup, avoiding synchronous
+    // setState calls inside the effect and ignoring stale activity responses.
+    Promise.resolve().then(async () => {
+      if (cancelled) return;
+      if (!resolvedActivityId) {
+        setPhotos([]);
+        setActiveIndex(0);
+        setIsLoading(false);
+        return;
+      }
 
-    try {
-      const nextPhotos = await getActivityPhotos(resolvedActivityId);
-      setPhotos(nextPhotos);
-      setActiveIndex(0);
-    } catch (loadError) {
-      console.error('Error loading activity photos:', loadError);
-      setError(loadError?.message || 'Could not load activity photos.');
-    } finally {
-      setIsLoading(false);
-    }
+      setIsLoading(true);
+      setError('');
+      try {
+        const nextPhotos = await getActivityPhotos(resolvedActivityId);
+        if (cancelled) return;
+        setPhotos(nextPhotos);
+        setActiveIndex(0);
+      } catch (loadError) {
+        if (cancelled) return;
+        console.error('Error loading activity photos:', loadError);
+        setError(loadError?.message || 'Could not load activity photos.');
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [resolvedActivityId]);
-
-  useEffect(() => {
-    loadPhotos();
-  }, [loadPhotos]);
-
-  useEffect(() => {
-    if (activeIndex > photos.length - 1) {
-      setActiveIndex(Math.max(photos.length - 1, 0));
-    }
-  }, [activeIndex, photos.length]);
 
   const goPrevious = () => {
     if (photos.length <= 1) return;
-    setActiveIndex((current) => (current === 0 ? photos.length - 1 : current - 1));
+    setActiveIndex((current) => (current <= 0 ? photos.length - 1 : Math.min(current, photos.length - 1) - 1));
   };
 
   const goNext = () => {
     if (photos.length <= 1) return;
-    setActiveIndex((current) => (current === photos.length - 1 ? 0 : current + 1));
+    setActiveIndex((current) => (current >= photos.length - 1 ? 0 : current + 1));
   };
 
   const uploadFiles = async (fileList) => {
@@ -191,11 +195,9 @@ const ActivityPhotoGallery = ({
 
     try {
       const updated = await updateActivityPhoto(photo.id, changes);
-      setPhotos((currentPhotos) => {
-        const nextPhotos = currentPhotos.map((item) => (item.id === updated.id ? updated : item));
-        notifyPhotosChange(nextPhotos);
-        return nextPhotos;
-      });
+      const nextPhotos = photos.map((item) => (item.id === updated.id ? updated : item));
+      setPhotos(nextPhotos);
+      notifyPhotosChange(nextPhotos);
     } catch (updateError) {
       console.error('Error updating activity photo:', updateError);
       setError(updateError?.message || 'Could not update photo.');
@@ -266,7 +268,7 @@ const ActivityPhotoGallery = ({
           <>
             <img
               src={activePhoto.photoUrl}
-              alt={getPhotoTitle(activePhoto, activeIndex)}
+              alt={getPhotoTitle(activePhoto, safeActiveIndex)}
               onClick={() => setFullscreen(true)}
               style={{ cursor: 'zoom-in' }}
             />
@@ -312,6 +314,7 @@ const ActivityPhotoGallery = ({
           <label style={{ display: 'grid', gap: 5, fontSize: 12, color: '#334155', fontWeight: 850 }}>
             Photo Title
             <input
+              key={`${activePhoto.id}-title`}
               defaultValue={activePhoto.title || ''}
               onBlur={(event) => handleUpdate(activePhoto, { title: event.target.value })}
               style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 8 }}
@@ -321,6 +324,7 @@ const ActivityPhotoGallery = ({
           <label style={{ display: 'grid', gap: 5, fontSize: 12, color: '#334155', fontWeight: 850 }}>
             Description
             <textarea
+              key={`${activePhoto.id}-description`}
               defaultValue={activePhoto.description || ''}
               onBlur={(event) => handleUpdate(activePhoto, { description: event.target.value })}
               rows={2}
@@ -338,7 +342,7 @@ const ActivityPhotoGallery = ({
               type="button"
               onClick={() => setActiveIndex(index)}
               style={{
-                border: index === activeIndex ? '2px solid #0ea5e9' : '1px solid #e2e8f0',
+                border: index === safeActiveIndex ? '2px solid #0ea5e9' : '1px solid #e2e8f0',
                 borderRadius: 10,
                 padding: 3,
                 background: '#fff',
@@ -382,7 +386,7 @@ const ActivityPhotoGallery = ({
           </button>
           <img
             src={activePhoto.photoUrl}
-            alt={getPhotoTitle(activePhoto, activeIndex)}
+            alt={getPhotoTitle(activePhoto, safeActiveIndex)}
             onClick={(event) => event.stopPropagation()}
             style={{ maxWidth: '94vw', maxHeight: '88vh', objectFit: 'contain', borderRadius: 14, background: '#fff' }}
           />
