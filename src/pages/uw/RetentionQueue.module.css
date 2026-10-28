@@ -637,3 +637,79 @@ button.summaryCard {
   color: var(--ret-red);
   text-decoration: underline;
 }
+
+/* Retention review additions */
+.reviewToolbar { display:flex; flex-wrap:wrap; align-items:center; gap:16px; padding:12px 16px; border-bottom:1px solid var(--ret-border); }
+.reviewToolbar label { font-size:12px; font-weight:700; }
+.reviewToolbar select { margin-left:8px; padding:8px; border:1px solid var(--ret-border); border-radius:8px; background:white; }
+.reviewToolbar > span { color:var(--ret-muted); font-size:12px; }
+.table { min-width:1840px; }
+.tableWrap { max-height:70vh; }
+.table th { position:sticky; top:0; z-index:2; }
+.table th:first-child { left:0; z-index:3; }
+.table td:first-child { position:sticky; left:0; z-index:1; background:white; min-width:210px; box-shadow:3px 0 5px #00000005; }
+.notesCell { min-width:230px; max-width:300px; }
+.notesCell > span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-wrap; }
+.reviewCard { margin:18px 22px; border:1px solid var(--ret-border); border-radius:14px; overflow:hidden; background:white; }
+.reviewBody { padding:16px; }
+.reviewHint { font-size:12px; color:var(--ret-muted); line-height:1.6; margin:0 0 12px; }
+.reviewGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:14px 0; }
+.reviewField { display:flex; flex-direction:column; gap:6px; font-size:12px; font-weight:700; }
+.reviewField span { color:#344054; }
+.reviewField input,.reviewField select,.reviewField textarea { box-sizing:border-box; width:100%; min-height:40px; padding:10px; border:1px solid #cfd5dc; border-radius:8px; background:white; color:#15181c; font:inherit; }
+.reviewField textarea { resize:vertical; font-weight:400; line-height:1.6; }
+.reviewField [aria-invalid=true] { border-color:#b42318; }
+.fieldError { color:#b42318; font-size:12px; }
+.reviewFieldset { border:0; margin:0; padding:0; min-width:0; }
+.reviewFieldset:disabled { opacity:.65; }
+.reviewActions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:14px 0; }
+.reviewActions button,.quickActive { border:1px solid #d7dce2; border-radius:8px; padding:10px 14px; background:#fff; color:#15181c; font:inherit; font-size:12px; font-weight:800; cursor:pointer; }
+.reviewActions button:nth-child(n+2) { background:#151515; color:white; }
+.reviewActions button:disabled { opacity:.45; cursor:default; }
+.quickActive { color:#18794e; background:#ecfdf3; border-color:#abefc6; }
+.saveNotice { background:#ecfdf3; color:#08663b; border-radius:8px; padding:12px; margin-bottom:12px; font-size:12px; }
+.historyToggle { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:12px; }
+.historyEntry { padding:14px; margin-bottom:12px; border:1px solid var(--ret-border); border-radius:10px; }
+.historyEntry > small { display:block; margin-top:5px; color:var(--ret-muted); font-size:11px; }
+.historyDetails { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; font-size:12px; }
+.historyDetails dt { color:var(--ret-muted); }
+.historyDetails dd { margin:3px 0 0; }
+.historyNotes { margin-bottom:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.6; }
+.reviewActions span { font-size:12px; }
+.drawer :focus-visible,.queueCard :focus-visible { outline:3px solid #0b85bd; outline-offset:2px; }
+@media(max-width:760px) { .reviewGrid,.historyDetails { grid-template-columns:1fr; } .reviewCard { margin:12px; } }
+
+/* Use the saved current-day review, including saved drafts, for the full-row highlight. */
+.table tr.activeRow > td,
+.table tr.activeRow > td:first-child {
+  background: #ecfdf3;
+}
+
+/* On-demand transaction history */
+.transactionCard { margin:18px 22px; border:1px solid var(--ret-border); border-radius:14px; overflow:hidden; background:#fff; }
+.transactionToolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:12px; }
+.transactionToolbar button,.transactionFooter button { padding:9px 11px; border:1px solid #d7dce2; border-radius:8px; background:#fff; color:#15181c; font:inherit; font-size:12px; font-weight:750; cursor:pointer; }
+.transactionToolbar button:disabled,.transactionFooter button:disabled { opacity:.5; cursor:default; }
+.transactionTabs { display:flex; flex-wrap:wrap; gap:6px; }
+.transactionTabs button[aria-pressed=true] { color:#fff; background:#151515; border-color:#151515; }
+.transactionToolbar .historyToggle { margin:0; }
+.transactionSummaryGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+.transactionSummaryCard { background:#f8fafc; border:1px solid var(--ret-border); border-radius:10px; padding:12px; overflow-wrap:anywhere; }
+.transactionSummaryCard > span { display:block; font-size:10px; color:var(--ret-muted); text-transform:uppercase; font-weight:800; margin-bottom:7px; }
+.transactionSummaryCard > strong { display:block; font-size:13px; }
+.transactionSummaryCard small { display:block; font-size:11px; line-height:1.5; margin-top:5px; color:#475467; }
+.transactionList { max-height:470px; overflow-y:auto; overscroll-behavior:contain; }
+.transactionEntry { padding:14px; margin-bottom:10px; border:1px solid var(--ret-border); border-radius:10px; }
+.transactionEntryHeader { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:8px; }
+.transactionEntryHeader strong { font-size:13px; }
+.transactionEntryHeader small,.historyReceiptLines small { display:block; color:var(--ret-muted); font-size:11px; margin-top:4px; overflow-wrap:anywhere; }
+.afterDay,.transactionSummaryCard small.afterDay { display:inline-block; padding:4px 7px; border-radius:6px; color:#925800; background:#fff7e6; font-size:10px; font-weight:750; }
+.transactionAmounts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:12px 0; }
+.transactionAmounts dt { color:var(--ret-muted); font-size:10px; }
+.transactionAmounts dd { margin:4px 0 0; font-size:14px; font-weight:800; }
+.transactionEntry details { border-top:1px solid var(--ret-border); padding-top:9px; font-size:12px; }
+.transactionEntry summary { cursor:pointer; font-weight:700; }
+.historyReceiptLines > div { padding:10px 0; border-bottom:1px solid var(--ret-border); }
+.sharedReceipt { padding:8px; background:#fff7e6; color:#925800; font-size:11px; line-height:1.5; border-radius:6px; }
+.transactionFooter { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; font-size:12px; color:var(--ret-muted); }
+@media(max-width:760px) { .transactionCard { margin:12px; } .transactionSummaryGrid { grid-template-columns:1fr; } }

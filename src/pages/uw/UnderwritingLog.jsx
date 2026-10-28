@@ -172,23 +172,23 @@ const ChatCell = ({ row, canMessage, openChatRow }) => {
   );
 };
 
+// Determine checklist type without capturing a component's current row.
+const getListType = (transactionType) => {
+  const type = (transactionType || '').toUpperCase();
+  if (type.includes('TAX')) return 'TAX';
+  if (type.includes('NB')) return 'NB';
+  return 'EN';
+};
+
 /* ---------------- Checklist (Read-only) ---------------- */
 const ChecklistTab = ({ row, readOnly }) => {
-  // Determine Type
-  const getListType = () => {
-    const type = (row.transaction_type || '').toUpperCase();
-    if (type.includes('TAX')) return 'TAX';
-    if (type.includes('NB')) return 'NB';
-    return 'EN';
-  };
-
-  const [selectedList, setSelectedList] = useState(getListType());
+  const [selectedList, setSelectedList] = useState(() => getListType(row.transaction_type));
   const [checklistData, setChecklistData] = useState(row.checklist_data || {});
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     setChecklistData(row.checklist_data || {});
-    setSelectedList(getListType()); // Ensure correct default
+    setSelectedList(getListType(row.transaction_type)); // Ensure correct default
   }, [row]);
 
   // Logic Helpers
