@@ -1,8 +1,12 @@
 // src/pages/uw/RetentionQueue.jsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 import { useAuth } from '../../AuthContext';
 import styles from './RetentionQueue.module.css';
+
+import RetentionReview from './RetentionReview';
+import RetentionTransactions from './RetentionTransactions';
+import { policyIdentity, policyKey } from './retentionRules';
 
 const PAGE_SIZE = 100;
 
@@ -108,8 +112,63 @@ export default function RetentionQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedRow, setSelectedRow] = useState(null);
+  const [reviewSummaries, setReviewSummaries] = useState({});
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState('original');
+  const [summaryRefresh, setSummaryRefresh] = useState(0);
+  const dirtyRef = useRef(false);
+  const setReviewDirty = useCallback(value => { dirtyRef.current = value; }, []);
+  const closeReview = useCallback(() => {
+    if (dirtyRef.current && !window.confirm('This review has unsaved changes or a save in progress. Close it?')) return;
+    dirtyRef.current = false;
+    setSelectedRow(null);
+  }, []);
+  useEffect(() => {
+    if (!selectedRow) return undefined;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const previousFocus = document.activeElement;
+    const drawer = document.querySelector('[data-retention-drawer]');
+    const focusable = () => Array.from(drawer?.querySelectorAll('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)') || []).filter(el => el.getClientRects().length);
+    focusable()[0]?.focus();
+    const handleKey = event => {
+      if (event.key === 'Escape') closeReview();
+      if (event.key === 'Tab') {
+        const fields = focusable(); const first = fields[0]; const last = fields[fields.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => { document.body.style.overflow = oldOverflow; document.removeEventListener('keydown', handleKey); previousFocus?.focus(); };
+  }, [selectedRow, closeReview]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadReviews() {
+      setReviewLoading(true); setReviewError(''); setReviewSummaries({});
+      try {
+        const unique = [...new Map(items.filter(row => row.customer_id && row.policy_number).map(row => [policyKey(row), policyIdentity(row)])).values()];
+        const merged = {};
+        for (let offset = 0; offset < unique.length; offset += 200) {
+          const { data, error: fetchError } = await supabase.rpc('uw_retention_review_summaries', { p_keys: unique.slice(offset, offset + 200), p_day: selectedDay });
+          if (fetchError) throw fetchError;
+          (data || []).forEach(entry => { merged[policyKey(entry)] = entry; });
+        }
+        if (!cancelled) setReviewSummaries(merged);
+      } catch (err) {
+        if (!cancelled) setReviewError('Review summaries unavailable. Run the included Supabase SQL if not installed. ' + (err?.message || ''));
+      } finally { if (!cancelled) setReviewLoading(false); }
+    }
+    if (isUW && !loading) loadReviews();
+    return () => { cancelled = true; };
+  }, [items, selectedDay, isUW, loading, summaryRefresh]);
 
   const loadWorklist = useCallback(async () => {
+    if (dirtyRef.current && !window.confirm('Discard unsaved review changes and refresh?')) return;
+    dirtyRef.current = false;
     setLoading(true);
     setError('');
     setSelectedRow(null);
@@ -154,7 +213,7 @@ export default function RetentionQueue() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedDay, office, search, typeFilter, anchorOnly]);
+  }, [selectedDay, office, search, typeFilter, anchorOnly, reviewFilter, sortOrder]);
 
   const offices = useMemo(
     () =>
@@ -171,7 +230,13 @@ export default function RetentionQueue() {
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return items.filter((row) => {
+    const result = items.filter((row) => {
+      const current = reviewSummaries[policyKey(row)]?.current_review;
+      if (reviewFilter === 'unstarted' && current) return false;
+      if (reviewFilter === 'completed' && current?.work_status !== 'Completed') return false;
+      if (reviewFilter === 'followup' && current?.work_status !== 'Follow-up needed') return false;
+      if (reviewFilter === 'due' && !(current?.follow_up_date && current.follow_up_date <= getLocalDateValue() && current.work_status !== 'Completed')) return false;
+      if (reviewFilter === 'inprogress' && current?.work_status !== 'In progress') return false;
       if (
         typeFilter !== 'all' &&
         String(row.transaction_type || '').toUpperCase() !== typeFilter
@@ -193,6 +258,8 @@ export default function RetentionQueue() {
         row.office_code,
         row.receipt_id,
         row.transaction_type,
+        current?.notes,
+        current?.policy_status,
       ]
         .filter(Boolean)
         .join(' ')
@@ -200,7 +267,10 @@ export default function RetentionQueue() {
 
       return haystack.includes(query);
     });
-  }, [items, search, typeFilter, anchorOnly]);
+    if (sortOrder === 'customer') result.sort((a, b) => String(a.customer_name || '').localeCompare(String(b.customer_name || '')));
+    if (sortOrder === 'followup') result.sort((a, b) => String(reviewSummaries[policyKey(a)]?.current_review?.follow_up_date || '9999').localeCompare(String(reviewSummaries[policyKey(b)]?.current_review?.follow_up_date || '9999')));
+    return result;
+  }, [items, search, typeFilter, anchorOnly, reviewSummaries, reviewFilter, sortOrder]);
 
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -229,11 +299,9 @@ export default function RetentionQueue() {
       <section className={styles.hero}>
         <div>
           <div className={styles.eyebrow}>UW OPERATIONS</div>
-          <h1>Daily Policy Activity</h1>
+          <h1>Retention Worklist</h1>
           <p>
-            Review the actual insurance policy transactions recorded for a selected
-            business day. Policy history and retention investigation will be layered
-            on top of this daily worklist.
+            Review daily policy activity, verify coverage, and save investigation findings. Prior reviews stay with each policy for future reference.
           </p>
         </div>
 
@@ -248,6 +316,7 @@ export default function RetentionQueue() {
       </section>
 
       {error && <div className={styles.error}>{error}</div>}
+      {reviewError && <div className={styles.error} role="alert">{reviewError}</div>}
 
       <section className={styles.summaryGrid}>
         <div className={styles.summaryCard}>
@@ -383,6 +452,13 @@ export default function RetentionQueue() {
           </div>
         </div>
 
+        <div className={styles.reviewToolbar}>
+          <label>Review status <select value={reviewFilter} disabled={reviewLoading || Boolean(reviewError)} onChange={e => setReviewFilter(e.target.value)}>
+            <option value="all">All reviews</option><option value="unstarted">Not started</option><option value="inprogress">In progress</option><option value="followup">Follow-up needed</option><option value="due">Follow-ups due</option><option value="completed">Completed</option>
+          </select></label>
+          <label>Sort <select value={sortOrder} onChange={e => setSortOrder(e.target.value)}><option value="original">Transaction order</option><option value="customer">Customer A–Z</option><option value="followup">Follow-up date</option></select></label>
+          <span>{reviewLoading ? 'Loading review history…' : 'Review filters apply to the selected business day.'}</span>
+        </div>
         <div className={styles.tableMeta}>
           <span>
             {summary.worklist_count.toLocaleString()} policy transactions on{' '}
@@ -406,6 +482,9 @@ export default function RetentionQueue() {
                 <th>Fees</th>
                 <th>Total</th>
                 <th>Retention</th>
+                <th>Policy status / Work</th>
+                <th>Next action / Follow-up</th>
+                <th>Latest notes / Previous review</th>
                 <th></th>
               </tr>
             </thead>
@@ -413,7 +492,7 @@ export default function RetentionQueue() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={10} className={styles.emptyCell}>
+                  <td colSpan={13} className={styles.emptyCell}>
                     Loading daily policy activity…
                   </td>
                 </tr>
@@ -421,7 +500,7 @@ export default function RetentionQueue() {
 
               {!loading && pagedItems.length === 0 && (
                 <tr>
-                  <td colSpan={10} className={styles.emptyCell}>
+                  <td colSpan={13} className={styles.emptyCell}>
                     No insurance policy transactions were found for{' '}
                     {formatDate(selectedDay)}.
                   </td>
@@ -431,6 +510,7 @@ export default function RetentionQueue() {
               {!loading &&
                 pagedItems.map((row, index) => (
                   <tr
+                    className={reviewSummaries[policyKey(row)]?.current_review?.policy_status === 'Active' ? styles.activeRow : undefined}
                     key={`${row.receipt_id}-${row.policy_number}-${index}`}
                   >
                     <td>
@@ -505,12 +585,24 @@ export default function RetentionQueue() {
                     </td>
 
                     <td>
+                      <strong>{reviewLoading ? 'Loading…' : reviewError ? 'Unavailable' : reviewSummaries[policyKey(row)]?.current_review?.policy_status || 'Not verified'}</strong>
+                      <small>{reviewLoading ? '' : reviewError ? '' : reviewSummaries[policyKey(row)]?.current_review?.work_status || 'Not started'}</small>
+                    </td>
+                    <td>
+                      {reviewSummaries[policyKey(row)]?.current_review?.next_action || '—'}
+                      <small>{formatDate(reviewSummaries[policyKey(row)]?.current_review?.follow_up_date)}</small>
+                    </td>
+                    <td className={styles.notesCell}>
+                      <span title={reviewSummaries[policyKey(row)]?.current_review?.notes || ''}>{reviewSummaries[policyKey(row)]?.current_review?.notes || '—'}</span>
+                      {reviewSummaries[policyKey(row)]?.previous_review && <small>Previous: {reviewSummaries[policyKey(row)].previous_review.policy_status} · {formatDate(reviewSummaries[policyKey(row)].previous_review.business_day)}</small>}
+                    </td>
+                    <td>
                       <button
                         type="button"
                         className={styles.openButton}
                         onClick={() => setSelectedRow(row)}
                       >
-                        View
+                        Work Account
                       </button>
                     </td>
                   </tr>
@@ -543,10 +635,12 @@ export default function RetentionQueue() {
       {selectedRow && (
         <div
           className={styles.drawerBackdrop}
-          onMouseDown={() => setSelectedRow(null)}
+          onMouseDown={closeReview}
         >
           <aside
             className={styles.drawer}
+            data-retention-drawer
+            role="dialog" aria-modal="true" aria-label="Policy investigation"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className={styles.drawerHeader}>
@@ -559,11 +653,46 @@ export default function RetentionQueue() {
               <button
                 type="button"
                 className={styles.closeButton}
-                onClick={() => setSelectedRow(null)}
+                onClick={closeReview}
               >
                 ×
               </button>
             </div>
+
+            <div className={styles.drawerActions}>
+              {matrixUrl && (
+                <a
+                  href={matrixUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={styles.matrixButton}
+                >
+                  Open Customer in Agency Matrix ↗
+                </a>
+              )}
+            </div>
+
+            <RetentionTransactions
+              key={`transactions-${policyKey(selectedRow)}-${selectedDay}`}
+              row={selectedRow}
+              businessDay={selectedDay}
+            />
+
+            <RetentionReview
+              key={`${policyKey(selectedRow)}-${selectedDay}`}
+              row={selectedRow}
+              businessDay={selectedDay}
+              onDirtyChange={setReviewDirty}
+              onSaved={(saved, goNext) => {
+                setSummaryRefresh(value => value + 1);
+                if (goNext) {
+                  dirtyRef.current = false;
+                  const position = filteredItems.findIndex(row => policyKey(row) === policyKey(selectedRow));
+                  const next = filteredItems.slice(position + 1).find(row => policyKey(row) !== policyKey(selectedRow));
+                  setSelectedRow(next || null);
+                }
+              }}
+            />
 
             <section className={styles.detailGrid}>
               <div>
@@ -618,18 +747,7 @@ export default function RetentionQueue() {
               </div>
             </section>
 
-            <div className={styles.drawerActions}>
-              {matrixUrl && (
-                <a
-                  href={matrixUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={styles.matrixButton}
-                >
-                  Open Customer in Agency Matrix ↗
-                </a>
-              )}
-            </div>
+
 
             <section className={styles.receiptCard}>
               <div className={styles.sectionHeader}>
@@ -664,15 +782,7 @@ export default function RetentionQueue() {
               </div>
             </section>
 
-            <section className={styles.nextPhase}>
-              <strong>Next phase</strong>
-              <p>
-                Policy history will be added here next. We will use this policy
-                number/customer as the anchor and search prior structured EOD data
-                for earlier payments, rewrites, renewals, reinstatements, and other
-                policy activity.
-              </p>
-            </section>
+
           </aside>
         </div>
       )}
