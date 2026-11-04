@@ -25,7 +25,7 @@ const NOT_CLOSED_REASONS = [
 ];
 
 const EXISTING_CLIENT_NOT_CLOSED_REASONS = [
-  ['did_not_rw_stayed_current_carrier', 'Did Not RW - Stayed With Current Carrier'],
+  ['did_not_rewrite_current_carrier', 'Did Not RW - Stayed With Current Carrier'],
 ];
 
 const LEGACY_NOT_CLOSED_REASONS = [
@@ -1739,7 +1739,7 @@ export default function RegionalQuoteOperations() {
 
     if (
       agentEntry.status === 'not_closed' &&
-      agentEntry.reason === 'did_not_rw_stayed_current_carrier' &&
+      agentEntry.reason === 'did_not_rewrite_current_carrier' &&
       !agentEntry.notes.trim()
     ) {
       setSaveMessage('Add an explanation of why the customer stayed with the current carrier.');
