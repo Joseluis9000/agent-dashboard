@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../AuthContext';
+import { getAssignedRegions, isRegionManager } from '../../utils/regionAccess';
+
 import { supabase } from '../../supabaseClient';
 import ActionMenu from '../../components/AdminDashboard/ActionMenu';
 import TicketDetails from '../../components/AdminDashboard/TicketDetails';
@@ -239,8 +241,14 @@ const RegionalTickets = () => {
   const [accessError, setAccessError] = useState('');
 
   const currentRole = String(profile?.role || '').trim().toLowerCase();
-  const assignedRegion = normalizeRegion(profile?.region);
-  const isRegional = currentRole === 'regional';
+  const assignedRegions = useMemo(
+    () => getAssignedRegions(profile),
+    [profile]
+  );
+  const assignedRegion = assignedRegions.join(' / ');
+  const isRegional = isRegionManager(currentRole);
+  const managerLabel = currentRole === 'territory_manager' ? 'Territory Manager' : 'Regional Manager';
+  const [officeRegionMap, setOfficeRegionMap] = useState({});
 
   // Tabs & filters
   const [activeTab, setActiveTab] = useState('all'); // 'all' | 'mine' | 'completed'
@@ -269,14 +277,14 @@ const RegionalTickets = () => {
 
     if (!isRegional) {
       setAllowedOffices([]);
-      setAccessError('Regional Tickets requires role = regional.');
+      setAccessError('Tickets requires a Regional or Territory Manager profile.');
       setAccessLoading(false);
       return;
     }
 
-    if (!assignedRegion) {
+    if (!assignedRegions.length) {
       setAllowedOffices([]);
-      setAccessError('No region is assigned to this Regional profile.');
+      setAccessError('No regions are assigned to your manager profile.');
       setAccessLoading(false);
       return;
     }
@@ -293,8 +301,11 @@ const RegionalTickets = () => {
       return;
     }
 
+    setOfficeRegionMap(Object.fromEntries((data || []).map((row) =>
+      [normalizeOffice(row.office_code), normalizeRegion(row.region)])));
+
     const offices = (data || [])
-      .filter((row) => normalizeRegion(row.region) === assignedRegion)
+      .filter((row) => assignedRegions.includes(normalizeRegion(row.region)))
       .map((row) => normalizeOffice(row.office_code))
       .filter(Boolean);
 
@@ -317,7 +328,7 @@ const RegionalTickets = () => {
     });
 
     setAccessLoading(false);
-  }, [isRegional, assignedRegion, profile?.office]);
+  }, [isRegional, assignedRegions, profile?.office]);
 
   const fetchTickets = useCallback(async () => {
     if (accessLoading) return;
@@ -368,7 +379,7 @@ const RegionalTickets = () => {
         .order('item_name'),
       supabase.rpc('get_inventory_snapshot', {
         p_office_code: normalizedOffice,
-        p_region: assignedRegion || null,
+        p_region: officeRegionMap[normalizedOffice] || null,
       }),
     ]);
 
@@ -402,7 +413,7 @@ const RegionalTickets = () => {
       if (current && rows.some((item) => item.id === current)) return current;
       return rows[0]?.id || '';
     });
-  }, [allowedOffices, assignedRegion]);
+  }, [allowedOffices, officeRegionMap]);
 
   useEffect(() => {
     if (!office) return;
@@ -841,7 +852,7 @@ const RegionalTickets = () => {
         description: data.description,
         createdAt: data.created_at,
         submitterEmail: data.agent_email,
-        submitterName: csrName || 'Regional Manager',
+        submitterName: csrName || managerLabel,
       });
     } catch (notifyError) {
       console.error('Failed to send ticket notification', notifyError);
@@ -1141,7 +1152,7 @@ const RegionalTickets = () => {
             <div className="p-5 md:p-6 border-b border-gray-200 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="text-xs font-bold tracking-wide text-blue-600 uppercase">
-                  Regional Support / {assignedRegion || 'Region'}
+                  {managerLabel} Support / {assignedRegion || 'No regions assigned'}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <h1 className="text-2xl font-bold text-gray-900">
@@ -1210,11 +1221,11 @@ const RegionalTickets = () => {
           <div className="p-5 border-b border-gray-200 flex justify-between items-center">
             <div>
               <div className="text-xs font-bold tracking-wide text-blue-600 uppercase">
-                Regional Support / {assignedRegion || 'Region'}
+                {managerLabel} Support / {assignedRegion || 'No regions assigned'}
               </div>
-              <h1 className="text-xl font-semibold text-gray-800">Submit Regional Ticket</h1>
+              <h1 className="text-xl font-semibold text-gray-800">Submit {managerLabel} Ticket</h1>
               <p className="text-sm text-gray-500 mt-1">
-                Submit on behalf of any office inside your assigned region.
+                Submit on behalf of any office inside your assigned regions.
               </p>
             </div>
             <button
@@ -1303,7 +1314,7 @@ const RegionalTickets = () => {
               </div>
 
               <div>
-                <label className="block mb-2 text-sm font-medium text-gray-700">Regional Manager Name</label>
+                <label className="block mb-2 text-sm font-medium text-gray-700">{managerLabel} Name</label>
                 <input
                   value={csrName}
                   onChange={(e) => setCsrName(e.target.value)}
@@ -1553,7 +1564,7 @@ const RegionalTickets = () => {
   return (
     <div className="p-6 md:p-8 bg-gray-50 min-h-screen font-sans space-y-8">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-800">Regional Tickets</h1>
+        <h1 className="text-3xl font-bold text-gray-800">{managerLabel} Tickets</h1>
         <button
           onClick={() => setView('form')}
           className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 transition-all duration-200 shadow-md hover:shadow-lg"
@@ -1583,7 +1594,7 @@ const RegionalTickets = () => {
         <div className="space-y-4">
           <section className="bg-white shadow rounded-xl p-4 flex flex-col md:flex-row md:items-end gap-4 justify-between">
             <div>
-              <div className="text-xs font-bold uppercase tracking-wide text-blue-600">Regional Inventory</div>
+              <div className="text-xs font-bold uppercase tracking-wide text-blue-600">{managerLabel} Inventory</div>
               <h2 className="text-xl font-bold text-gray-800 mt-1">Office Inventory</h2>
               <p className="text-sm text-gray-500 mt-1">
                 Select any office in {assignedRegion || 'your region'} to manage its inventory the same way a supervisor can.

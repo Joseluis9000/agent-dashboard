@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
 import styles from './RegionalDashboard.module.css';
+import { getAssignedRegions, isRegionManager } from '../../utils/regionAccess';
+
 
 const PAGE_SIZE = 1000;
 
@@ -240,6 +242,17 @@ async function fetchRegionalTransfers(supabaseClient, offices, firstDay, nextMon
   return rows;
 }
 
+async function fetchAllDashboardRows(query) {
+  const rows = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const result = await query.range(from, from + PAGE_SIZE - 1);
+    if (result.error) return { data: null, error: result.error };
+    const page = result.data || [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
 function isSystemClosed(row) {
   return (
     clean(row?.outcome).toLowerCase() === 'sold' ||
@@ -265,7 +278,19 @@ export default function RegionalDashboard() {
   const navigate = useNavigate();
 
   const role = clean(profile?.role).toLowerCase();
-  const region = normalizeRegion(profile?.region);
+  const isTerritoryManager = role === 'territory_manager';
+  const managerLabel = isTerritoryManager ? 'Territory Manager' : 'Regional Manager';
+  const routeBase = isTerritoryManager ? '/territory' : '/regional';
+  const assignedRegions = useMemo(() => getAssignedRegions(profile),
+    [profile]);
+  const [selectedRegion, setSelectedRegion] = useState('all');
+  const dashboardRequestRef = useRef(0);
+  const displayedScopeRef = useRef('');
+  const activeRegion = assignedRegions.includes(selectedRegion) ? selectedRegion : 'all';
+  const activeRegions = useMemo(() => activeRegion === 'all' ? assignedRegions : [activeRegion],
+    [activeRegion, assignedRegions]);
+  const region = activeRegions.join(' / ');
+
   const [officeRegions, setOfficeRegions] = useState([]);
   const [monthQuotes, setMonthQuotes] = useState([]);
   const [liveQuotes, setLiveQuotes] = useState([]);
@@ -293,7 +318,7 @@ export default function RegionalDashboard() {
     clean(profile?.full_name) ||
     clean(profile?.csr_name) ||
     clean(profile?.email) ||
-    'Regional Manager';
+    managerLabel;
 
   const regionalOffices = useMemo(
     () =>
@@ -305,16 +330,30 @@ export default function RegionalDashboard() {
   );
 
   const loadDashboard = useCallback(async () => {
+    const requestId = ++dashboardRequestRef.current;
     if (!supabaseClient) return;
 
-    if (role !== 'regional') {
-      setError('Regional Dashboard requires role = regional.');
+    const scopeKey = JSON.stringify([role, activeRegions]);
+    if (displayedScopeRef.current !== scopeKey) {
+      displayedScopeRef.current = scopeKey;
+      setOfficeRegions([]);
+      setMonthQuotes([]);
+      setLiveQuotes([]);
+      setDealSaves([]);
+      setProductionRows([]);
+      setTopAgents([]);
+      setTopCompanies([]);
+      setLastUpdated(null);
+    }
+
+    if (!isRegionManager(role)) {
+      setError('This dashboard requires a Regional or Territory Manager profile.');
       setLoading(false);
       return;
     }
 
-    if (!region) {
-      setError('Your regional profile does not have a region assigned.');
+    if (!activeRegions.length) {
+      setError('No regions are assigned to your manager profile.');
       setLoading(false);
       return;
     }
@@ -322,161 +361,174 @@ export default function RegionalDashboard() {
     setLoading(true);
     setError('');
 
-    const settingsResult = await supabaseClient
-      .from('office_dashboard_settings')
-      .select('office_code, region')
-      .order('office_code');
+    try {
+      const settingsResult = await supabaseClient
+        .from('office_dashboard_settings')
+        .select('office_code, region')
+        .order('office_code');
 
-    if (settingsResult.error) {
-      setError(`Could not load regional offices: ${settingsResult.error.message}`);
-      setLoading(false);
-      return;
-    }
+      if (requestId !== dashboardRequestRef.current) return;
 
-    const settings = (settingsResult.data || []).filter(
-      (row) => normalizeRegion(row.region) === region
-    );
-    setOfficeRegions(settings);
-
-    const offices = settings
-      .map((row) => normalizeOffice(row.office_code))
-      .filter((office) => office && office !== 'Unknown');
-
-    if (!offices.length) {
-      setMonthQuotes([]);
-      setLiveQuotes([]);
-      setDealSaves([]);
-      setProductionRows([]);
-      setTopAgents([]);
-      setTopCompanies([]);
-      setLoading(false);
-      return;
-    }
-
-    const bounds = monthBounds();
-    const { start, end } = bounds;
-
-    const [monthResult, liveResult, dealSaveResult, productionResult, goalResult, transferRows] = await Promise.all([
-      supabaseClient
-        .from('quote_log_view')
-        .select('*')
-        .in('office', offices)
-        .gte('started_at', start)
-        .lt('started_at', end)
-        .order('started_at', { ascending: false }),
-
-      supabaseClient
-        .from('quote_log_view')
-        .select('*')
-        .in('office', offices)
-        .eq('status', 'in_progress')
-        .order('started_at', { ascending: false }),
-
-      supabaseClient
-        .from('quote_deal_save_requests')
-        .select('id, quote_id, customer_name, office, requested_by_name, current_broker_fee, premium, status, created_at, updated_at')
-        .in('office', offices)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: true }),
-
-      supabaseClient.rpc('get_office_numbers_dashboard', { p_month: bounds.monthKey }),
-
-      supabaseClient
-        .from('office_monthly_goals')
-        .select('office_code, report_month, nb_rw_goal')
-        .eq('report_month', bounds.monthKey)
-        .in('office_code', offices),
-
-      fetchRegionalTransfers(supabaseClient, offices, bounds.firstDay, bounds.nextMonthFirstDay),
-    ]);
-
-    const firstError = monthResult.error || liveResult.error || dealSaveResult.error || productionResult.error || goalResult.error;
-    if (firstError) {
-      setError(`Could not load the regional dashboard: ${firstError.message}`);
-      setLoading(false);
-      return;
-    }
-
-    setMonthQuotes(monthResult.data || []);
-    setLiveQuotes(liveResult.data || []);
-    setDealSaves(dealSaveResult.data || []);
-
-    const officeSet = new Set(offices);
-    const currentProduction = (productionResult.data || []).filter(
-      (row) => clean(row.comparison_period).toLowerCase() === 'current' && officeSet.has(normalizeOffice(row.office_code || row.office))
-    );
-
-    const goalMap = {};
-    (goalResult.data || []).forEach((row) => {
-      goalMap[normalizeOffice(row.office_code)] = Number(row.nb_rw_goal) || 0;
-    });
-
-    const latestDataDate = currentProduction.reduce((latest, row) => {
-      const value = clean(row.latest_data_date);
-      return value && (!latest || value > latest) ? value : latest;
-    }, '');
-
-    let asOfDay = bounds.daysInMonth;
-    if (latestDataDate) {
-      const [year, month, day] = latestDataDate.split('-').map(Number);
-      if (year === bounds.year && month === bounds.month) {
-        asOfDay = Math.max(1, Math.min(day, bounds.daysInMonth));
-      }
-    }
-
-    const projectionMultiplier = asOfDay < bounds.daysInMonth ? bounds.daysInMonth / asOfDay : 1;
-    const productionByOffice = new Map(
-      currentProduction.map((row) => [normalizeOffice(row.office_code || row.office), Number(row.nb_rw_count) || 0])
-    );
-
-    const nextProductionRows = offices.map((office) => {
-      const actual = productionByOffice.get(office) || 0;
-      const goal = goalMap[office] || 0;
-      const pace = actual * projectionMultiplier;
-      const pacePercent = goal > 0 ? (pace / goal) * 100 : 0;
-      const shortfall = goal > 0 ? Math.max(0, Math.ceil(goal - pace)) : 0;
-      const status = goal <= 0 ? 'No Goal' : pacePercent < 75 ? 'Critical' : pacePercent < 95 ? 'Needs Attention' : 'On Track';
-      return { office, actual, goal, pace, pacePercent, shortfall, status };
-    });
-    setProductionRows(nextProductionRows);
-
-    const seenTransactions = new Set();
-    const validSales = (transferRows || []).filter((row) => {
-      if (isVoided(row)) return false;
-      const key = transferKey(row);
-      if (seenTransactions.has(key)) return false;
-      seenTransactions.add(key);
-      const type = clean(row.type).toUpperCase();
-      return type === 'NEW' || type === 'RWR';
-    });
-
-    const agentBuckets = new Map();
-    const companyBuckets = new Map();
-    validSales.forEach((row) => {
-      const email = clean(row.agent_email).toLowerCase() || 'unknown-agent';
-      const office = normalizeOffice(row.office);
-      const stamp = new Date(row.date_time || 0).getTime();
-      const csr = clean(row.csr);
-      if (!agentBuckets.has(email)) {
-        agentBuckets.set(email, { email, name: csr || email, office, count: 0, latestNameAt: stamp });
-      }
-      const agent = agentBuckets.get(email);
-      agent.count += 1;
-      if (csr && stamp >= agent.latestNameAt) {
-        agent.name = csr;
-        agent.office = office;
-        agent.latestNameAt = stamp;
+      if (settingsResult.error) {
+        setError(`Could not load regional offices: ${settingsResult.error.message}`);
+        setLoading(false);
+        return;
       }
 
-      const company = clean(row.company);
-      if (company) companyBuckets.set(company, (companyBuckets.get(company) || 0) + 1);
-    });
+      const settings = (settingsResult.data || []).filter(
+        (row) => activeRegions.includes(normalizeRegion(row.region))
+      );
+      setOfficeRegions(settings);
 
-    setTopAgents(Array.from(agentBuckets.values()).sort((a, b) => b.count - a.count).slice(0, 5));
-    setTopCompanies(Array.from(companyBuckets.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5));
-    setLastUpdated(new Date());
-    setLoading(false);
-  }, [supabaseClient, role, region]);
+      const offices = settings
+        .map((row) => normalizeOffice(row.office_code))
+        .filter((office) => office && office !== 'Unknown');
+
+      if (!offices.length) {
+        setMonthQuotes([]);
+        setLiveQuotes([]);
+        setDealSaves([]);
+        setProductionRows([]);
+        setTopAgents([]);
+        setTopCompanies([]);
+        setLoading(false);
+        return;
+      }
+
+      const bounds = monthBounds();
+      const { start, end } = bounds;
+
+      const [monthResult, liveResult, dealSaveResult, productionResult, goalResult, transferRows] = await Promise.all([
+        fetchAllDashboardRows(supabaseClient
+          .from('quote_log_view')
+          .select('*')
+          .in('office', offices)
+          .gte('started_at', start)
+          .lt('started_at', end)
+          .order('started_at', { ascending: false })
+          .order('id')),
+
+        fetchAllDashboardRows(supabaseClient
+          .from('quote_log_view')
+          .select('*')
+          .in('office', offices)
+          .eq('status', 'in_progress')
+          .order('started_at', { ascending: false })
+          .order('id')),
+
+        fetchAllDashboardRows(supabaseClient
+          .from('quote_deal_save_requests')
+          .select('id, quote_id, customer_name, office, requested_by_name, current_broker_fee, premium, status, created_at, updated_at')
+          .in('office', offices)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: true })
+          .order('id')),
+
+        supabaseClient.rpc('get_office_numbers_dashboard', { p_month: bounds.monthKey }),
+
+        supabaseClient
+          .from('office_monthly_goals')
+          .select('office_code, report_month, nb_rw_goal')
+          .eq('report_month', bounds.monthKey)
+          .in('office_code', offices),
+
+        fetchRegionalTransfers(supabaseClient, offices, bounds.firstDay, bounds.nextMonthFirstDay),
+      ]);
+
+      if (requestId !== dashboardRequestRef.current) return;
+
+      const firstError = monthResult.error || liveResult.error || dealSaveResult.error || productionResult.error || goalResult.error;
+      if (firstError) {
+        setError(`Could not load the regional dashboard: ${firstError.message}`);
+        setLoading(false);
+        return;
+      }
+
+      setMonthQuotes(monthResult.data || []);
+      setLiveQuotes(liveResult.data || []);
+      setDealSaves(dealSaveResult.data || []);
+
+      const officeSet = new Set(offices);
+      const currentProduction = (productionResult.data || []).filter(
+        (row) => clean(row.comparison_period).toLowerCase() === 'current' && officeSet.has(normalizeOffice(row.office_code || row.office))
+      );
+
+      const goalMap = {};
+      (goalResult.data || []).forEach((row) => {
+        goalMap[normalizeOffice(row.office_code)] = Number(row.nb_rw_goal) || 0;
+      });
+
+      const latestDataDate = currentProduction.reduce((latest, row) => {
+        const value = clean(row.latest_data_date);
+        return value && (!latest || value > latest) ? value : latest;
+      }, '');
+
+      let asOfDay = bounds.daysInMonth;
+      if (latestDataDate) {
+        const [year, month, day] = latestDataDate.split('-').map(Number);
+        if (year === bounds.year && month === bounds.month) {
+          asOfDay = Math.max(1, Math.min(day, bounds.daysInMonth));
+        }
+      }
+
+      const projectionMultiplier = asOfDay < bounds.daysInMonth ? bounds.daysInMonth / asOfDay : 1;
+      const productionByOffice = new Map(
+        currentProduction.map((row) => [normalizeOffice(row.office_code || row.office), Number(row.nb_rw_count) || 0])
+      );
+
+      const nextProductionRows = offices.map((office) => {
+        const actual = productionByOffice.get(office) || 0;
+        const goal = goalMap[office] || 0;
+        const pace = actual * projectionMultiplier;
+        const pacePercent = goal > 0 ? (pace / goal) * 100 : 0;
+        const shortfall = goal > 0 ? Math.max(0, Math.ceil(goal - pace)) : 0;
+        const status = goal <= 0 ? 'No Goal' : pacePercent < 75 ? 'Critical' : pacePercent < 95 ? 'Needs Attention' : 'On Track';
+        return { office, actual, goal, pace, pacePercent, shortfall, status };
+      });
+      setProductionRows(nextProductionRows);
+
+      const seenTransactions = new Set();
+      const validSales = (transferRows || []).filter((row) => {
+        if (isVoided(row)) return false;
+        const key = transferKey(row);
+        if (seenTransactions.has(key)) return false;
+        seenTransactions.add(key);
+        const type = clean(row.type).toUpperCase();
+        return type === 'NEW' || type === 'RWR';
+      });
+
+      const agentBuckets = new Map();
+      const companyBuckets = new Map();
+      validSales.forEach((row) => {
+        const email = clean(row.agent_email).toLowerCase() || 'unknown-agent';
+        const office = normalizeOffice(row.office);
+        const stamp = new Date(row.date_time || 0).getTime();
+        const csr = clean(row.csr);
+        if (!agentBuckets.has(email)) {
+          agentBuckets.set(email, { email, name: csr || email, office, count: 0, latestNameAt: stamp });
+        }
+        const agent = agentBuckets.get(email);
+        agent.count += 1;
+        if (csr && stamp >= agent.latestNameAt) {
+          agent.name = csr;
+          agent.office = office;
+          agent.latestNameAt = stamp;
+        }
+
+        const company = clean(row.company);
+        if (company) companyBuckets.set(company, (companyBuckets.get(company) || 0) + 1);
+      });
+
+      setTopAgents(Array.from(agentBuckets.values()).sort((a, b) => b.count - a.count).slice(0, 5));
+      setTopCompanies(Array.from(companyBuckets.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5));
+      setLastUpdated(new Date());
+      setLoading(false);
+    } catch (loadError) {
+      if (requestId !== dashboardRequestRef.current) return;
+      setError(`Could not load the dashboard: ${loadError?.message || 'Unknown error'}`);
+      setLoading(false);
+    }
+  }, [supabaseClient, role, activeRegions]);
 
   useEffect(() => {
     loadDashboard();
@@ -692,17 +744,26 @@ export default function RegionalDashboard() {
   );
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} ${isTerritoryManager ? styles.territoryPage : ''}`}>
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>REGIONAL / PERFORMANCE OVERVIEW</p>
-          <h1>{region || 'Region'}</h1>
+          <p className={styles.eyebrow}>{isTerritoryManager ? 'TERRITORY MANAGER' : 'REGIONAL'} / PERFORMANCE OVERVIEW</p>
+          <h1>{isTerritoryManager && activeRegion === 'all' ? 'Territory Overview' : region || 'Region'}</h1>
           <p className={styles.subtitle}>
             Welcome, {regionalName}. Production, office performance, live sales activity, and the company daily scoreboard in one view.
           </p>
         </div>
 
         <div className={styles.headerActions}>
+          {isTerritoryManager && (
+            <label className={styles.regionSelector}>
+              Region
+              <select value={activeRegion} onChange={(event) => setSelectedRegion(event.target.value)}>
+                <option value="all">All assigned regions</option>
+                {assignedRegions.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+          )}
           {lastUpdated && (
             <span className={styles.updatedAt}>
               Updated {lastUpdated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
@@ -714,7 +775,7 @@ export default function RegionalDashboard() {
           <button
             type="button"
             className={styles.primaryButton}
-            onClick={() => navigate('/regional/quote-operations')}
+            onClick={() => navigate(`${routeBase}/quote-operations`)}
           >
             Open Quote Operations
           </button>
@@ -725,12 +786,12 @@ export default function RegionalDashboard() {
 
       <section className={styles.executiveStrip}>
         <div>
-          <span>Regional Production</span>
+          <span>{isTerritoryManager ? 'Territory' : 'Regional'} Production</span>
           <strong>{formatNumber(regionalProduction)}</strong>
           <small>NB/RW month to date</small>
         </div>
         <div>
-          <span>Regional Goal</span>
+          <span>{isTerritoryManager ? 'Territory' : 'Regional'} Goal</span>
           <strong>{regionalGoal ? formatNumber(regionalGoal) : 'Not Set'}</strong>
           <small>{regionalGoal ? `${Math.round((regionalProduction / regionalGoal) * 100)}% achieved` : 'Goals come from Office Numbers'}</small>
         </div>
@@ -769,7 +830,7 @@ export default function RegionalDashboard() {
                   type="button"
                   key={row.office}
                   className={styles.attentionRow}
-                  onClick={() => navigate(`/regional/quote-operations?office=${encodeURIComponent(row.office)}`)}
+                  onClick={() => navigate(`${routeBase}/quote-operations?office=${encodeURIComponent(row.office)}`)}
                 >
                   <div className={styles.attentionOffice}>
                     <strong>{row.office}</strong>
@@ -823,7 +884,7 @@ export default function RegionalDashboard() {
             </div>
           )}
 
-          <button type="button" className={styles.fullButton} onClick={() => navigate('/regional/quote-operations')}>
+          <button type="button" className={styles.fullButton} onClick={() => navigate(`${routeBase}/quote-operations`)}>
             Open Quote Operations
           </button>
         </section>
@@ -856,7 +917,7 @@ export default function RegionalDashboard() {
                 type="button"
                 key={row.office}
                 className={styles.officeRow}
-                onClick={() => navigate(`/regional/quote-operations?office=${encodeURIComponent(row.office)}`)}
+                onClick={() => navigate(`${routeBase}/quote-operations?office=${encodeURIComponent(row.office)}`)}
               >
                 <strong>{row.office}</strong>
                 <span>{row.monthQuotes}</span>
@@ -875,9 +936,9 @@ export default function RegionalDashboard() {
             <div>
               <p className={styles.sectionKicker}>LIVE SALES</p>
               <h2>Live Quote Activity</h2>
-              <p>Customers currently being quoted in your region.</p>
+              <p>Customers currently being quoted in the selected regions.</p>
             </div>
-            <button type="button" className={styles.textButton} onClick={() => navigate('/regional/quote-operations')}>
+            <button type="button" className={styles.textButton} onClick={() => navigate(`${routeBase}/quote-operations`)}>
               View all
             </button>
           </div>
@@ -982,6 +1043,8 @@ export default function RegionalDashboard() {
         <ScoreboardModal
           data={scoreboardData}
           region={region}
+          activeRegions={activeRegions}
+          isTerritoryManager={isTerritoryManager}
           scope={scoreboardScope}
           onScopeChange={setScoreboardScope}
           onClose={() => setScoreboardModalOpen(false)}
@@ -993,24 +1056,23 @@ export default function RegionalDashboard() {
   );
 }
 
-function ScoreboardModal({ data, region, scope, onScopeChange, onClose, onUpload, uploading }) {
+function ScoreboardModal({ data, region, activeRegions, isTerritoryManager, scope, onScopeChange, onClose, onUpload, uploading }) {
   const snapshot = data.snapshot;
-  const normalizedRegion = normalizeRegion(region);
   const isRegion = scope === 'region';
   const [screenshotMode, setScreenshotMode] = useState(false);
   const [screenshotView, setScreenshotView] = useState('offices');
 
   const scopedOffices = useMemo(
-    () => isRegion ? data.offices.filter((row) => normalizeRegion(row.region) === normalizedRegion) : data.offices,
-    [data.offices, isRegion, normalizedRegion]
+    () => isRegion ? data.offices.filter((row) => activeRegions.includes(normalizeRegion(row.region))) : data.offices,
+    [data.offices, isRegion, activeRegions]
   );
   const scopedAgents = useMemo(
-    () => isRegion ? data.agents.filter((row) => normalizeRegion(row.region) === normalizedRegion) : data.agents,
-    [data.agents, isRegion, normalizedRegion]
+    () => isRegion ? data.agents.filter((row) => activeRegions.includes(normalizeRegion(row.region))) : data.agents,
+    [data.agents, isRegion, activeRegions]
   );
   const scopedRegions = useMemo(
-    () => isRegion ? data.regions.filter((row) => normalizeRegion(row.region) === normalizedRegion) : data.regions,
-    [data.regions, isRegion, normalizedRegion]
+    () => isRegion ? data.regions.filter((row) => activeRegions.includes(normalizeRegion(row.region))) : data.regions,
+    [data.regions, isRegion, activeRegions]
   );
 
   const scopedNb = scopedOffices.reduce((sum, row) => sum + Number(row.nb || 0), 0);
@@ -1061,7 +1123,7 @@ function ScoreboardModal({ data, region, scope, onScopeChange, onClose, onUpload
         <div className={styles.scoreboardToolbar}>
           <div className={styles.scoreboardScopeToggle}>
             <button type="button" className={scope === 'company' ? styles.scopeActive : ''} onClick={() => onScopeChange('company')}>Company</button>
-            <button type="button" className={scope === 'region' ? styles.scopeActive : ''} onClick={() => onScopeChange('region')}>My Region</button>
+            <button type="button" className={scope === 'region' ? styles.scopeActive : ''} onClick={() => onScopeChange('region')}>{isTerritoryManager ? 'My Territory' : 'My Region'}</button>
           </div>
           <div className={styles.scoreboardToolbarActions}>
             <button type="button" className={styles.screenshotButton} onClick={() => { setScreenshotView('offices'); setScreenshotMode(true); }}>Screenshot View</button>
@@ -1093,7 +1155,7 @@ function ScoreboardModal({ data, region, scope, onScopeChange, onClose, onUpload
             <>
               <div className={styles.scoreboardTitleBand}>
                 <strong>{isRegion ? `${region} SCOREBOARD` : 'G&P COMPANY SCOREBOARD'}</strong>
-                <span>{isRegion ? 'Your region only' : 'All regions'}</span>
+                <span>{isRegion ? 'Selected regions only' : 'All regions'}</span>
               </div>
 
               <div className={styles.scoreboardSummaryStrip}>

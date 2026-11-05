@@ -371,6 +371,9 @@ function AppRoutes() {
       case 'supervisor':
         return '/dashboard';
 
+      case 'territory_manager':
+        return '/territory/dashboard';
+
       case 'regional':
         return '/regional/dashboard';
 
@@ -425,6 +428,7 @@ function AppRoutes() {
             allowedRoles={[
               'agent',
               'regional',
+              'territory_manager',
               'supervisor',
               'admin',
             ]}
@@ -432,7 +436,7 @@ function AppRoutes() {
         }
       >
         <Route element={<AuthLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard" element={profile?.role === 'territory_manager' ? <Navigate to="/territory/dashboard" replace /> : <Dashboard />} />
           <Route path="/sv-ar" element={<SVARPage />} />
           <Route path="/disqualified-policies" element={<DisqualifiedPolicies />} />
           <Route path="/ticketing-system" element={<TicketingSystem />} />
@@ -478,7 +482,7 @@ function AppRoutes() {
       <Route
         element={
           <ProtectedRoute
-            allowedRoles={['regional', 'admin']}
+            allowedRoles={['regional', 'territory_manager', 'admin']}
           />
         }
       >
@@ -487,6 +491,17 @@ function AppRoutes() {
           <Route path="dashboard" element={<RegionalDashboard />} />
           <Route path="quote-operations" element={<RegionalQuoteOperations />} />
           <Route path="office-numbers" element={<OfficeNumbers />} />
+          <Route path="tickets" element={<RegionalTickets />} />
+        </Route>
+      </Route>
+
+      {/* Territory managers share Regional features with explicit multi-region scope. */}
+      <Route element={<ProtectedRoute allowedRoles={['territory_manager']} />}>
+        <Route path="/territory" element={<AuthLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="office-numbers" element={<OfficeNumbers />} />
+          <Route path="dashboard" element={<RegionalDashboard />} />
+          <Route path="quote-operations" element={<RegionalQuoteOperations />} />
           <Route path="tickets" element={<RegionalTickets />} />
         </Route>
       </Route>
