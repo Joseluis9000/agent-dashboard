@@ -1,6 +1,8 @@
 // src/pages/regional/RegionalQuoteOperations.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../AuthContext';
+import { getAssignedRegions, isRegionManager } from '../../utils/regionAccess';
+
 import styles from '../admin/AdminQuoteLog.module.css';
 import {
   STALE_AFTER_MS as SHARED_STALE_AFTER_MS,
@@ -616,6 +618,11 @@ function groupQuotesByCustomer(quotes, now, officeRegions = {}) {
 
 export default function RegionalQuoteOperations() {
   const { supabaseClient, profile } = useAuth();
+  const assignedRegions = useMemo(
+    () => getAssignedRegions(profile),
+    [profile]
+  );
+  const isTerritoryManager = profile?.role === 'territory_manager';
 
   const [activeTab, setActiveTab] = useState('live');
   const [timeView, setTimeView] = useState('month');
@@ -657,19 +664,18 @@ export default function RegionalQuoteOperations() {
     if (!supabaseClient) return;
 
     const role = cleanStr(profile?.role).toLowerCase();
-    const profileRegion = normalizeRegion(profile?.region);
 
-    if (role !== 'regional') {
+    if (!isRegionManager(role)) {
       setOfficeRegions({});
       setSettingsLoading(false);
-      setError('Regional Quote Operations requires role = regional.');
+      setError('Quote Operations requires a Regional or Territory Manager profile.');
       return;
     }
 
-    if (!profileRegion) {
+    if (!assignedRegions.length) {
       setOfficeRegions({});
       setSettingsLoading(false);
-      setError('Your regional profile does not have a region assigned.');
+      setError('No regions are assigned to your manager profile.');
       return;
     }
 
@@ -699,7 +705,7 @@ export default function RegionalQuoteOperations() {
 
     setOfficeRegions(regionMap);
     setSettingsLoading(false);
-  }, [supabaseClient, profile?.role, profile?.region]);
+  }, [supabaseClient, profile?.role, assignedRegions]);
 
 
   const fetchDeviceTokens = useCallback(async ({ quiet = false } = {}) => {
@@ -736,15 +742,14 @@ export default function RegionalQuoteOperations() {
       setError('');
 
       const role = cleanStr(profile?.role).toLowerCase();
-      const profileRegion = normalizeRegion(profile?.region);
-      if (role !== 'regional') {
-        setError('Regional Quote Operations requires role = regional.');
+      if (!isRegionManager(role)) {
+        setError('Quote Operations requires a Regional or Territory Manager profile.');
         if (!quiet) setLoading(false);
         return;
       }
 
-      if (!profileRegion) {
-        setError('Your regional profile does not have a region assigned.');
+      if (!assignedRegions.length) {
+        setError('No regions are assigned to your manager profile.');
         if (!quiet) setLoading(false);
         return;
       }
@@ -1035,7 +1040,7 @@ export default function RegionalQuoteOperations() {
       month,
       supabaseClient,
       profile?.role,
-      profile?.region,
+      assignedRegions,
       settingsLoading,
     ]
   );
@@ -1126,56 +1131,57 @@ export default function RegionalQuoteOperations() {
   }, [customerGroups, selectedCustomer?.key]);
 
   const userRole = cleanStr(profile?.role || profile?.user_role).toLowerCase();
-  const profileRegion = normalizeRegion(profile?.region);
   const profileOffice = normalizeOffice(profile?.office);
   const isAdmin = userRole === 'admin';
-  const isRegional = cleanStr(profile?.role).toLowerCase() === 'regional';
+  const isRegional = isRegionManager(cleanStr(profile?.role).toLowerCase());
   const isSupervisor = userRole === 'supervisor';
 
   useEffect(() => {
-    if (isRegional && profileRegion) {
-      setRegionFilter(profileRegion);
+    if (isRegional) {
+      setRegionFilter(assignedRegions.length === 1 ? assignedRegions[0] : 'all');
       setOfficeFilter('all');
       setAgentFilter('all');
     } else if (isSupervisor && profileOffice && profileOffice !== 'Unknown') {
       setOfficeFilter(profileOffice);
       setAgentFilter('all');
     }
-  }, [isRegional, isSupervisor, profileRegion, profileOffice]);
+  }, [isRegional, isSupervisor, assignedRegions, profileOffice]);
 
   const regions = useMemo(() => {
-    const values = new Set(Object.values(officeRegions).filter(Boolean));
-    customerGroups.forEach((group) => values.add(normalizeRegion(group.region) || 'UNASSIGNED'));
+    const values = new Set(assignedRegions);
     return [...values].sort((a, b) => {
       if (a === 'UNASSIGNED') return 1;
       if (b === 'UNASSIGNED') return -1;
       return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [officeRegions, customerGroups]);
+  }, [assignedRegions]);
 
   const offices = useMemo(() => {
     const values = new Set();
 
     Object.entries(officeRegions).forEach(([office, region]) => {
+      if (!assignedRegions.includes(normalizeRegion(region))) return;
       if (regionFilter === 'all' || normalizeRegion(region) === normalizeRegion(regionFilter)) values.add(normalizeOffice(office));
     });
 
     customerGroups.forEach((group) => {
+      if (!assignedRegions.includes(normalizeRegion(group.region))) return;
       if (regionFilter === 'all' || normalizeRegion(group.region) === normalizeRegion(regionFilter)) values.add(group.office);
     });
 
     return [...values].sort((a, b) => getOfficeNumber(a) - getOfficeNumber(b));
-  }, [officeRegions, customerGroups, regionFilter]);
+  }, [officeRegions, customerGroups, regionFilter, assignedRegions]);
 
   const agents = useMemo(() => {
     const values = new Set();
     customerGroups.forEach((group) => {
+      if (!assignedRegions.includes(normalizeRegion(group.region))) return;
       if (regionFilter !== 'all' && normalizeRegion(group.region) !== normalizeRegion(regionFilter)) return;
       if (officeFilter !== 'all' && group.office !== officeFilter) return;
       if (group.agentName) values.add(group.agentName);
     });
     return [...values].sort((a, b) => a.localeCompare(b));
-  }, [customerGroups, regionFilter, officeFilter]);
+  }, [customerGroups, regionFilter, officeFilter, assignedRegions]);
 
   const scopeGroups = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -1183,7 +1189,7 @@ export default function RegionalQuoteOperations() {
     return customerGroups.filter((group) => {
       // Match Admin's scope behavior: classify the same grouped customer first,
       // then restrict Regional visibility by the group's mapped region.
-      if (isRegional && profileRegion && normalizeRegion(group.region) !== normalizeRegion(profileRegion)) return false;
+      if (!isRegional || !assignedRegions.includes(normalizeRegion(group.region))) return false;
       if (isSupervisor && profileOffice !== 'Unknown' && group.office !== profileOffice) return false;
       if (regionFilter !== 'all' && normalizeRegion(group.region) !== normalizeRegion(regionFilter)) return false;
       if (officeFilter !== 'all' && group.office !== officeFilter) return false;
@@ -1223,7 +1229,7 @@ export default function RegionalQuoteOperations() {
     search,
     isRegional,
     isSupervisor,
-    profileRegion,
+    assignedRegions,
     profileOffice,
   ]);
 
@@ -1890,10 +1896,10 @@ export default function RegionalQuoteOperations() {
     <div className={styles.page}>
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>Regional / Region View</p>
+          <p className={styles.eyebrow}>{isTerritoryManager ? 'Territory Manager / Multi-Region View' : 'Regional / Region View'}</p>
           <h1>Quote Operations</h1>
           <p className={styles.subtitle}>
-            Manage your region's live quotes, review Lost Deals and Walks, track existing-client re-writes, and confirm closed business by office and agent.
+            Manage live quotes across your assigned regions, review Lost Deals and Walks, track existing-client re-writes, and confirm closed business by office and agent.
           </p>
         </div>
 
@@ -1965,11 +1971,11 @@ export default function RegionalQuoteOperations() {
           <strong>{scopeLabel}</strong>
         </div>
 
-        {isAdmin ? (
+        {isAdmin || isTerritoryManager ? (
           <label>
             <span>Region</span>
             <select value={regionFilter} onChange={(e) => handleRegionChange(e.target.value)}>
-              <option value="all">All Regions</option>
+              <option value="all">All assigned regions</option>
               {regions.map((region) => (
                 <option key={region} value={region}>{region}</option>
               ))}
@@ -1978,7 +1984,7 @@ export default function RegionalQuoteOperations() {
         ) : (
           <label>
             <span>Region</span>
-            <input value={profileRegion || 'Assigned Region'} disabled />
+            <input value={assignedRegions[0] || 'No region assigned'} disabled />
           </label>
         )}
 

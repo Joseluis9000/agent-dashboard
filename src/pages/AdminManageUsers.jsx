@@ -1,4 +1,5 @@
 import { ADMIN_FEATURES } from '../utils/adminPermissions';
+import { getAssignedRegions, normalizeRegionName } from '../utils/regionAccess';
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../AuthContext';
@@ -51,7 +52,10 @@ const getName = (user) => cleanStr(
     'Unknown User'
 );
 const getOffice = (user) => cleanStr(user?.profile?.office || user?.user_metadata?.office || '');
-const getRegion = (user) => cleanStr(user?.profile?.region || user?.user_metadata?.region || '');
+const getUserRegions = (user) => getRole(user).toLowerCase() === 'territory_manager'
+    ? getAssignedRegions(user.profile)
+    : [cleanStr(user?.profile?.region || user?.user_metadata?.region || '')].filter(Boolean);
+const getRegion = (user) => getUserRegions(user).join(' / ');
 
 const getWorkStatus = (user) => {
     const activity = user?.work_activity;
@@ -82,7 +86,7 @@ const getCachedDirectory = async ({ force = false } = {}) => {
     const request = (async () => {
         const [authResult, profilesResult, activityResult, activeAgentsResult] = await Promise.all([
             supabase.functions.invoke('manage-users', { body: { action: 'list_users' } }),
-            supabase.from('profiles').select('id, full_name, email, role, tax_vet, office, region, turborater_agent_name, csr_name, permissions'),
+            supabase.from('profiles').select('id, full_name, email, role, tax_vet, office, region, assigned_regions, turborater_agent_name, csr_name, permissions'),
             supabase.rpc('get_manage_users_work_activity', { p_lookback_days: WORK_ACTIVITY_LOOKBACK_DAYS }),
             supabase.from('active_agent_registry').select('email, full_name, is_active').eq('is_active', true),
         ]);
@@ -148,6 +152,8 @@ const AdminManageUsers = () => {
     const [pageMode, setPageMode] = useState('review');
     const [reviewQueue, setReviewQueue] = useState('active');
     const [selectedUser, setSelectedUser] = useState(null);
+    const [regionOptions, setRegionOptions] = useState([]);
+    const [regionOptionsError, setRegionOptionsError] = useState('');
 
     const [search, setSearch] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
@@ -166,8 +172,13 @@ const AdminManageUsers = () => {
         setError('');
 
         try {
-            const rows = await getCachedDirectory({ force });
+            const [rows, regionResult] = await Promise.all([
+                getCachedDirectory({ force }),
+                supabase.from('office_dashboard_settings').select('region'),
+            ]);
             setUsers(rows);
+            setRegionOptionsError(regionResult.error ? 'Region choices could not be loaded. Refresh before changing Territory Manager assignments.' : '');
+            setRegionOptions([...new Set((regionResult.data || []).map(row => normalizeRegionName(row.region)).filter(Boolean))].sort());
         } catch (err) {
             setError(err?.message || 'Unable to load the user directory.');
         } finally {
@@ -234,7 +245,6 @@ const AdminManageUsers = () => {
 
             if (saveError) throw saveError;
 
-            setFeedback(data?.message || `Profile updated for ${profileValues.email || targetUser.email}.`);
             directoryCache = null;
             directoryCacheAt = 0;
 
@@ -243,6 +253,13 @@ const AdminManageUsers = () => {
 
             const refreshedUser = refreshed.find((item) => item.id === targetUser.id) || null;
             setSelectedUser(refreshedUser);
+            if (profileValues.role === 'territory_manager' &&
+                JSON.stringify(getAssignedRegions(refreshedUser?.profile)) !==
+                JSON.stringify(getAssignedRegions(profileValues))) {
+                throw new Error('The saved Territory Manager regions could not be confirmed. The manage-users function must support assigned_regions. Review the refreshed profile before retrying.');
+            }
+
+            setFeedback(data?.message || `Profile updated for ${profileValues.email || targetUser.email}.`);
 
             setTimeout(() => setFeedback(''), 4000);
             return true;
@@ -556,7 +573,7 @@ const AdminManageUsers = () => {
     }, [usersWithRecommendations]);
 
     const roles = useMemo(() => [...new Set(usersWithRecommendations.map(getRole).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [usersWithRecommendations]);
-    const regions = useMemo(() => [...new Set(usersWithRecommendations.map(getRegion).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [usersWithRecommendations]);
+    const regions = useMemo(() => [...new Set(usersWithRecommendations.flatMap(getUserRegions).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [usersWithRecommendations]);
     const offices = useMemo(() => [...new Set(usersWithRecommendations.map(getOffice).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [usersWithRecommendations]);
 
     const applyCommonFilters = (user) => {
@@ -568,7 +585,7 @@ const AdminManageUsers = () => {
         const disabled = isBannedUser(user);
 
         if (roleFilter !== 'all' && role !== roleFilter) return false;
-        if (regionFilter !== 'all' && region !== regionFilter) return false;
+        if (regionFilter !== 'all' && !getUserRegions(user).includes(regionFilter)) return false;
         if (officeFilter !== 'all' && office !== officeFilter) return false;
         if (accountFilter === 'active' && disabled) return false;
         if (accountFilter === 'disabled' && !disabled) return false;
@@ -799,6 +816,8 @@ const AdminManageUsers = () => {
             {selectedUser && (
                 <UserManageDrawer
                     user={selectedUser}
+                    regionOptions={regionOptions}
+                    regionOptionsError={regionOptionsError}
                     recommendation={selectedUser.recommendation || getRecommendation(selectedUser)}
                     duplicate={duplicateIds.has(selectedUser.id)}
                     onClose={() => setSelectedUser(null)}
@@ -815,7 +834,7 @@ const AdminManageUsers = () => {
     );
 };
 
-function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, onSaveProfile, onSavePermissions, onToggleDisabled, onDelete }) {
+function UserManageDrawer({ user, regionOptions, regionOptionsError, recommendation, duplicate, onClose, onReset, onSaveProfile, onSavePermissions, onToggleDisabled, onDelete }) {
     const work = getWorkStatus(user);
     const activity = user.work_activity || {};
     const disabled = isBannedUser(user);
@@ -837,6 +856,7 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
         tax_vet: user.profile?.tax_vet || '',
         office: user.profile?.office || '',
         region: user.profile?.region || '',
+        assigned_regions: getAssignedRegions(user.profile),
         turborater_agent_name: user.profile?.turborater_agent_name || '',
         csr_name: user.profile?.csr_name || '',
     }));
@@ -849,6 +869,7 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
             tax_vet: user.profile?.tax_vet || '',
             office: user.profile?.office || '',
             region: user.profile?.region || '',
+            assigned_regions: getAssignedRegions(user.profile),
             turborater_agent_name: user.profile?.turborater_agent_name || '',
             csr_name: user.profile?.csr_name || '',
         });
@@ -875,12 +896,20 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
             return;
         }
 
+        const role = cleanStr(profileForm.role).toLowerCase();
+        const assignedRegions = getAssignedRegions({ ...profileForm, role });
+        if (role === 'territory_manager' && (regionOptionsError || !assignedRegions.length ||
+            assignedRegions.some(region => !regionOptions.includes(region)))) {
+            window.alert(regionOptionsError || 'Select at least one region from the available office regions.');
+            return;
+        }
         setSavingProfile(true);
         const saved = await onSaveProfile({
             ...profileForm,
             email: normalizeEmail(profileForm.email),
             full_name: cleanStr(profileForm.full_name),
-            role: cleanStr(profileForm.role),
+            role,
+            assigned_regions: role === 'territory_manager' ? assignedRegions : [],
             tax_vet: cleanStr(profileForm.tax_vet),
             office: cleanStr(profileForm.office),
             region: cleanStr(profileForm.region),
@@ -942,10 +971,36 @@ function UserManageDrawer({ user, recommendation, duplicate, onClose, onReset, o
                         <div className={styles.profileFormGrid}>
                             <ProfileField label="Full name" value={profileForm.full_name} onChange={(value) => updateProfileField('full_name', value)} />
                             <ProfileField label="Email" value={profileForm.email} onChange={(value) => updateProfileField('email', value)} type="email" hint="Changing this also changes the Supabase Auth login email." />
-                            <ProfileField label="Role" value={profileForm.role} onChange={(value) => updateProfileField('role', value)} />
+                            <label style={{ display: 'grid', gap: 6 }}>
+                                Role
+                                <input list="profile-role-options" value={profileForm.role} onChange={event => updateProfileField('role', event.target.value)} />
+                                <datalist id="profile-role-options">
+                                    {['agent', 'supervisor', 'regional', 'territory_manager', 'admin', 'underwriter', 'uw_manager'].map(role => <option key={role} value={role} />)}
+                                </datalist>
+                                <small>territory_manager oversees multiple assigned regions.</small>
+                            </label>
                             <ProfileField label="Tax Vet" value={profileForm.tax_vet} onChange={(value) => updateProfileField('tax_vet', value)} />
                             <ProfileField label="Office" value={profileForm.office} onChange={(value) => updateProfileField('office', value)} placeholder="CA074" />
-                            <ProfileField label="Region" value={profileForm.region} onChange={(value) => updateProfileField('region', value)} />
+                            {profileForm.role.trim().toLowerCase() === 'territory_manager' ? (
+                                <fieldset style={{ gridColumn: '1 / -1', padding: 12, border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                                    <legend>Assigned regions</legend>
+                                    <p>Select every region this Territory Manager oversees.</p>
+                                    {regionOptionsError && <p role="alert">{regionOptionsError}</p>}
+                                    {[...new Set([...regionOptions, ...profileForm.assigned_regions])].sort().map(region => (
+                                        <label key={region} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                                            <input type="checkbox" checked={profileForm.assigned_regions.includes(region)}
+                                                disabled={Boolean(regionOptionsError)}
+                                                onChange={event => updateProfileField('assigned_regions', event.target.checked
+                                                    ? [...profileForm.assigned_regions, region]
+                                                    : profileForm.assigned_regions.filter(item => item !== region))} />
+                                            {region}{!regionOptions.includes(region) ? ' (not in current office settings)' : ''}
+                                        </label>
+                                    ))}
+                                    {!regionOptions.length && !regionOptionsError && <p>No office regions are configured.</p>}
+                                </fieldset>
+                            ) : (
+                                <ProfileField label="Region" value={profileForm.region} onChange={(value) => updateProfileField('region', value)} />
+                            )}
                             <ProfileField label="TurboRater agent name" value={profileForm.turborater_agent_name} onChange={(value) => updateProfileField('turborater_agent_name', value)} />
                             <ProfileField label="CSR name" value={profileForm.csr_name} onChange={(value) => updateProfileField('csr_name', value)} />
                         </div>

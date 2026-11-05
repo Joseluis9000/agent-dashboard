@@ -1,6 +1,7 @@
 // OfficeNumbers.jsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { getAssignedRegions, normalizeRegionName } from '../utils/regionAccess';
 
 const PAGE_SIZE = 1000;
 const SETTINGS_STORAGE_KEY = 'officeNumbersPacingSettingsV5';
@@ -18,13 +19,19 @@ const agentDetailRequestInFlight = new Map();
 const agentFeeRowsRequestCache = new Map();
 const agentFeeRowsRequestInFlight = new Map();
 
-const getCachedDashboardRows = async (month, force = false) => {
-  if (!force && dashboardRequestCache.has(month)) {
-    return dashboardRequestCache.get(month);
+const scopedRequestKey = (scopeKey, ...parts) => {
+  if (!scopeKey) throw new Error('Report access is still loading.');
+  return JSON.stringify([scopeKey, ...parts]);
+};
+
+const getCachedDashboardRows = async (month, force = false, scopeKey) => {
+  const cacheKey = scopedRequestKey(scopeKey, month);
+  if (!force && dashboardRequestCache.has(cacheKey)) {
+    return dashboardRequestCache.get(cacheKey);
   }
 
-  if (!force && dashboardRequestInFlight.has(month)) {
-    return dashboardRequestInFlight.get(month);
+  if (!force && dashboardRequestInFlight.has(cacheKey)) {
+    return dashboardRequestInFlight.get(cacheKey);
   }
 
   const request = supabase
@@ -32,19 +39,19 @@ const getCachedDashboardRows = async (month, force = false) => {
     .then(({ data, error }) => {
       if (error) throw error;
       const rows = data || [];
-      dashboardRequestCache.set(month, rows);
+      dashboardRequestCache.set(cacheKey, rows);
       return rows;
     })
     .finally(() => {
-      dashboardRequestInFlight.delete(month);
+      dashboardRequestInFlight.delete(cacheKey);
     });
 
-  dashboardRequestInFlight.set(month, request);
+  dashboardRequestInFlight.set(cacheKey, request);
   return request;
 };
 
-const getCachedRawRange = async (firstDay, nextMonthFirstDay, force = false) => {
-  const cacheKey = `${firstDay}|${nextMonthFirstDay}`;
+const getCachedRawRange = async (firstDay, nextMonthFirstDay, force = false, scopeKey) => {
+  const cacheKey = scopedRequestKey(scopeKey, firstDay, nextMonthFirstDay);
 
   if (!force && rawRangeRequestCache.has(cacheKey)) {
     return rawRangeRequestCache.get(cacheKey);
@@ -85,9 +92,9 @@ const getCachedRawRange = async (firstDay, nextMonthFirstDay, force = false) => 
   return request;
 };
 
-const getCachedOfficeDetail = async (month, officeCode, trendMonths = 12, force = false) => {
+const getCachedOfficeDetail = async (month, officeCode, trendMonths = 12, force = false, scopeKey) => {
   const normalizedOffice = normalizeOffice(officeCode);
-  const cacheKey = `${month}|${normalizedOffice}|${trendMonths}`;
+  const cacheKey = scopedRequestKey(scopeKey, month, normalizedOffice, trendMonths);
 
   if (!force && officeDetailRequestCache.has(cacheKey)) {
     return officeDetailRequestCache.get(cacheKey);
@@ -118,9 +125,9 @@ const getCachedOfficeDetail = async (month, officeCode, trendMonths = 12, force 
 };
 
 
-const getCachedAgentDetail = async (month, agentEmail, trendMonths = 12, force = false) => {
+const getCachedAgentDetail = async (month, agentEmail, trendMonths = 12, force = false, scopeKey) => {
   const normalizedEmail = cleanStr(agentEmail).toLowerCase();
-  const cacheKey = `${month}|${normalizedEmail}|${trendMonths}`;
+  const cacheKey = scopedRequestKey(scopeKey, month, normalizedEmail, trendMonths);
 
   if (!force && agentDetailRequestCache.has(cacheKey)) {
     return agentDetailRequestCache.get(cacheKey);
@@ -151,10 +158,10 @@ const getCachedAgentDetail = async (month, agentEmail, trendMonths = 12, force =
 };
 
 
-const getCachedAgentFeeRows = async (month, agentEmail, force = false) => {
+const getCachedAgentFeeRows = async (month, agentEmail, force = false, scopeKey) => {
   const normalizedEmail = cleanStr(agentEmail).toLowerCase();
   const monthInfo = getMonthDetails(month);
-  const cacheKey = `${month}|${normalizedEmail}`;
+  const cacheKey = scopedRequestKey(scopeKey, month, normalizedEmail);
 
   if (!force && agentFeeRowsRequestCache.has(cacheKey)) {
     return agentFeeRowsRequestCache.get(cacheKey);
@@ -586,7 +593,7 @@ const loadSavedSettings = () => {
 };
 
 // Loaded only when a user opens a report; the existing monthly dashboard stays fast.
-const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClose, embedded = false, scopeType = "office", scopeOffices = [] }) => {
+const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClose, embedded = false, scopeType = "office", scopeOffices = [], cacheScopeKey }) => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -605,7 +612,7 @@ const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClos
         const batch = await Promise.all(months.slice(start, start + 3).map(async (value) => {
           const dates = getMonthDetails(value);
           const [raw, legacyResult] = await Promise.all([
-            getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay),
+            getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay, false, cacheScopeKey),
             // The historical table stores a combined NB/RW count (despite its name).
             supabase.from('monthly_sales')
               .select('month_start_date,office,new_business_count,new_business_fees')
@@ -702,7 +709,7 @@ const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClos
     })().catch((err) => { if (!cancelled) setError(err.message || 'Unable to load report.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [months, allowedOffices, agentEmail]);
+  }, [months, allowedOffices, agentEmail, cacheScopeKey]);
 
   const total = rows.reduce((acc, row) => {
     REPORT_CATEGORIES.forEach((key) => { acc[key] += row[key]; acc.premiumCounts[key] += (row.premiumCounts?.[key] ?? 0); });
@@ -728,7 +735,7 @@ const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClos
   const currentCount = current.nb + current.rw + current.legacyNbRw;
   const previousCount = previous.nb + previous.rw + previous.legacyNbRw;
   const lastYearCount = lastYear.nb + lastYear.rw + lastYear.legacyNbRw;
-  const scopedSummary = scopeType === 'company' || scopeType === 'region';
+  const scopedSummary = ['company', 'region', 'territory'].includes(scopeType);
   const cardStyle = { background: '#fff', border: '1px solid #dce4ef', borderRadius: 12, padding: '17px 15px', boxShadow: '0 3px 12px rgba(16,24,40,.04)' };
   const smallLabel = { fontSize: 12, color: '#64748b', fontWeight: 800, marginBottom: 8 };
   const detailCard = (label, value, note = '') => <div style={cardStyle}><div style={smallLabel}>{label}</div><div style={{ fontSize: 23, fontWeight: 850 }}>{value}</div>{note && <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>{note}</div>}</div>;
@@ -784,7 +791,7 @@ const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClos
       {scopedSummary && <>
         <div style={{ marginBottom: 20 }}>
           <h2 style={{ ...styles.monthTitle, marginBottom: 4 }}>{getMonthLabel(month)}</h2>
-          <p style={styles.monthDescription}>{scopeType === 'company' ? 'All G&P offices' : `${scope} region`} · {scopeOffices.length || officeCodes.length} assigned office(s) · Current month may be partial</p>
+          <p style={styles.monthDescription}>{scopeType === 'company' ? 'All G&P offices' : scopeType === 'territory' ? 'Assigned territory regions' : `${scope} region`} · {scopeOffices.length || officeCodes.length} assigned office(s) · Current month may be partial</p>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 16 }}>
           {detailCard('NB/RW Count', formatNumber(currentCount), current.legacySplitMissing ? 'Includes combined legacy NB/RW (split unavailable)' : `${formatNumber(current.nb)} NEW · ${formatNumber(current.rw)} RWR`)}
@@ -812,7 +819,7 @@ const ThirteenMonthDataReport = ({ month, scope, officeCodes, agentEmail, onClos
 
 // Custom Reports use detailed transaction uploads only. Historical monthly_sales
 // cannot support arbitrary dates, agent attribution, or collected premium.
-const CustomReportsPanel = ({ officeRegions, allowedOfficeCodes, agentOptions, isAdmin, assignedRegion }) => {
+const CustomReportsPanel = ({ officeRegions, allowedOfficeCodes, agentOptions, cacheScopeKey }) => {
   const today = new Date();
   const isoToday = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   const [startDate, setStartDate] = useState(`${isoToday.slice(0,7)}-01`);
@@ -850,7 +857,7 @@ const CustomReportsPanel = ({ officeRegions, allowedOfficeCodes, agentOptions, i
       for (let i = 0; i < months.length; i += 3) {
         const chunk = await Promise.all(months.slice(i,i+3).map(async m => {
           const dates = getMonthDetails(m);
-          return getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay);
+          return getCachedRawRange(dates.firstDay, dates.nextMonthFirstDay, false, cacheScopeKey);
         }));
         chunk.forEach(part => fetched.push(...part));
       }
@@ -859,7 +866,6 @@ const CustomReportsPanel = ({ officeRegions, allowedOfficeCodes, agentOptions, i
         const office = normalizeOffice(row.office);
         const date = cleanStr(row.date_time).slice(0,10);
         if (!permitted.has(office) || date < startDate || date > endDate) return false;
-        if (!isAdmin && assignedRegion && cleanStr(officeRegions[office]).toUpperCase() !== cleanStr(assignedRegion).toUpperCase()) return false;
         if (scopeType === 'region') return cleanStr(officeRegions[office]).toUpperCase() === selected;
         if (scopeType === 'office') return office === selected;
         return cleanStr(row.agent_email).toLowerCase() === selected.toLowerCase();
@@ -1079,20 +1085,29 @@ const OfficeNumbers = () => {
 
   const currentRole = cleanStr(currentProfile?.role).toLowerCase();
   const isAdmin = currentRole === 'admin';
-  const canEditGoals = ['admin', 'regional'].includes(currentRole);
-  const assignedRegion = cleanStr(currentProfile?.region);
-  const normalizedAssignedRegion = assignedRegion.toUpperCase();
+  const isTerritoryManager = currentRole === 'territory_manager';
+  const canEditGoals = ['admin', 'regional', 'territory_manager'].includes(currentRole);
+  const assignedRegions = useMemo(() => isTerritoryManager
+    ? getAssignedRegions(currentProfile)
+    : [normalizeRegionName(currentProfile?.region)].filter(Boolean),
+    [isTerritoryManager, currentProfile]);
+  const assignedRegion = assignedRegions.join(' / ');
+  const normalizedAssignedRegion = assignedRegion;
+  const cacheScopeKey = currentProfile?.id ? JSON.stringify([
+    currentProfile.id, currentRole, currentProfile.office, assignedRegions,
+  ]) : '';
+
 
   const canViewOffice = useCallback((officeCode) => {
     if (isAdmin) return true;
-    if (!normalizedAssignedRegion) return false;
+    if (!assignedRegions.length) return false;
 
     const officeRegion = cleanStr(
       officeRegions[normalizeOffice(officeCode)]
-    ).toUpperCase();
+    );
 
-    return officeRegion === normalizedAssignedRegion;
-  }, [isAdmin, normalizedAssignedRegion, officeRegions]);
+    return assignedRegions.includes(normalizeRegionName(officeRegion));
+  }, [isAdmin, assignedRegions, officeRegions]);
 
 
   const selectedMetricConfig = useMemo(() => {
@@ -1142,7 +1157,7 @@ const OfficeNumbers = () => {
 
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('id, role, office, region')
+        .select('id, role, office, region, assigned_regions')
         .eq('id', user.id)
         .single();
 
@@ -1220,6 +1235,8 @@ const OfficeNumbers = () => {
       setEditingOfficeGoals({});
       setEditingAgentGoals({});
     } catch (error) {
+      setCurrentProfile(null);
+      setOfficeRegions({});
       console.error('Error loading dashboard settings:', error);
       setErrorMessage(
         error?.message || 'Unable to load dashboard settings.'
@@ -1231,12 +1248,13 @@ const OfficeNumbers = () => {
 
   const fetchDashboardData = useCallback(async (options = {}) => {
     const { force = false, includeAgents = ['agent', 'leaderboard'].includes(viewMode) } = options;
+    if (!cacheScopeKey) return;
 
     setLoading(true);
     setErrorMessage('');
 
     try {
-      const combinedRows = await getCachedDashboardRows(selectedMonth, force);
+      const combinedRows = await getCachedDashboardRows(selectedMonth, force, cacheScopeKey);
       const currentRows = combinedRows.filter(
         (row) => cleanStr(row.comparison_period).toLowerCase() === 'current'
       );
@@ -1255,9 +1273,9 @@ const OfficeNumbers = () => {
       // The office dashboard RPC is reused from cache instead of being called again.
       if (includeAgents) {
         const [currentAgentRows, previousAgentRows, previousYearAgentRows] = await Promise.all([
-          getCachedRawRange(monthDetails.firstDay, monthDetails.nextMonthFirstDay, force),
-          getCachedRawRange(comparisonMonths.lastMonth.firstDay, comparisonMonths.lastMonth.nextMonthFirstDay, force),
-          getCachedRawRange(comparisonMonths.lastYear.firstDay, comparisonMonths.lastYear.nextMonthFirstDay, force),
+          getCachedRawRange(monthDetails.firstDay, monthDetails.nextMonthFirstDay, force, cacheScopeKey),
+          getCachedRawRange(comparisonMonths.lastMonth.firstDay, comparisonMonths.lastMonth.nextMonthFirstDay, force, cacheScopeKey),
+          getCachedRawRange(comparisonMonths.lastYear.firstDay, comparisonMonths.lastYear.nextMonthFirstDay, force, cacheScopeKey),
         ]);
         setAgentMonthlyRows(currentAgentRows);
         setAgentLastMonthRows(previousAgentRows);
@@ -1286,12 +1304,13 @@ const OfficeNumbers = () => {
     comparisonMonths.lastMonth.nextMonthFirstDay,
     comparisonMonths.lastYear.firstDay,
     comparisonMonths.lastYear.nextMonthFirstDay,
+    cacheScopeKey,
   ]);
 
   const fetchOfficeDetail = useCallback(async (officeName, options = {}) => {
     const { force = false } = options;
     const normalizedOffice = normalizeOffice(officeName);
-    if (!normalizedOffice || normalizedOffice === 'Unknown') return;
+    if (!cacheScopeKey || !normalizedOffice || normalizedOffice === 'Unknown' || !canViewOffice(normalizedOffice)) return;
 
     setOfficeDetailLoading(true);
     setOfficeDetailError('');
@@ -1301,7 +1320,8 @@ const OfficeNumbers = () => {
         selectedMonth,
         normalizedOffice,
         12,
-        force
+        force,
+        cacheScopeKey
       );
       setOfficeDetailData(payload);
     } catch (error) {
@@ -1311,18 +1331,18 @@ const OfficeNumbers = () => {
     } finally {
       setOfficeDetailLoading(false);
     }
-  }, [selectedMonth]);
+  }, [selectedMonth, cacheScopeKey, canViewOffice]);
 
   const fetchAgentDetail = useCallback(async (agentEmail, options = {}) => {
     const { force = false } = options;
     const normalizedEmail = cleanStr(agentEmail).toLowerCase();
-    if (!normalizedEmail || normalizedEmail === 'unknown agent') return;
+    if (!cacheScopeKey || !normalizedEmail || normalizedEmail === 'unknown agent') return;
 
     setAgentDetailLoading(true);
     setAgentDetailError('');
 
     try {
-      const payload = await getCachedAgentDetail(selectedMonth, normalizedEmail, 12, force);
+      const payload = await getCachedAgentDetail(selectedMonth, normalizedEmail, 12, force, cacheScopeKey);
       setAgentDetailData(payload);
     } catch (error) {
       console.error('Error fetching agent detail:', error);
@@ -1331,18 +1351,18 @@ const OfficeNumbers = () => {
     } finally {
       setAgentDetailLoading(false);
     }
-  }, [selectedMonth]);
+  }, [selectedMonth, cacheScopeKey]);
 
   const fetchAgentFeeRows = useCallback(async (agentEmail, options = {}) => {
     const { force = false } = options;
     const normalizedEmail = cleanStr(agentEmail).toLowerCase();
-    if (!normalizedEmail || normalizedEmail === 'unknown agent') return;
+    if (!cacheScopeKey || !normalizedEmail || normalizedEmail === 'unknown agent') return;
 
     setAgentFeeRowsLoading(true);
     setAgentFeeRowsError('');
 
     try {
-      const rows = await getCachedAgentFeeRows(selectedMonth, normalizedEmail, force);
+      const rows = await getCachedAgentFeeRows(selectedMonth, normalizedEmail, force, cacheScopeKey);
       setAgentFeeRows(rows.filter((row) => canViewOffice(row.office)));
     } catch (error) {
       console.error('Error fetching agent fee transactions:', error);
@@ -1351,7 +1371,7 @@ const OfficeNumbers = () => {
     } finally {
       setAgentFeeRowsLoading(false);
     }
-  }, [selectedMonth, canViewOffice]);
+  }, [selectedMonth, canViewOffice, cacheScopeKey]);
 
   // Month/profile/settings load. Fee changes do not participate in fetching.
   useEffect(() => {
@@ -1361,13 +1381,13 @@ const OfficeNumbers = () => {
   // The office RPC loads once per month and is deduped across StrictMode remounts.
   useEffect(() => {
     fetchDashboardData({ includeAgents: false });
-  }, [selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedMonth, cacheScopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Opening Agents lazy-loads raw rows, while reusing the cached office RPC result.
   useEffect(() => {
     if (!['agent', 'leaderboard'].includes(viewMode)) return;
     fetchDashboardData({ includeAgents: true });
-  }, [viewMode, selectedMonth]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewMode, selectedMonth, cacheScopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Office Detail uses a dedicated lightweight RPC. It does not load all-office raw agent rows.
   useEffect(() => {
@@ -2000,7 +2020,7 @@ const OfficeNumbers = () => {
   ]);
 
   const updateOfficeGoal = (officeName, value) => {
-    if (!isBrokerView || !canEditGoals) return;
+    if (!isBrokerView || !canEditGoals || !canViewOffice(officeName)) return;
 
     setOfficeGoals((current) => ({
       ...current,
@@ -2012,7 +2032,7 @@ const OfficeNumbers = () => {
   };
 
   const saveOfficeGoal = async (officeName) => {
-    if (!isBrokerView || !canEditGoals) return;
+    if (!isBrokerView || !canEditGoals || !canViewOffice(officeName)) return;
 
     const saveKey = `office-goal:${officeName}`;
     setSavingKey(saveKey);
@@ -2789,7 +2809,7 @@ const OfficeNumbers = () => {
           <div>
             <strong>No region assigned</strong>
             <div>
-              Add a region to this user's profile before the dashboard can show office or agent data.
+              Assign regions to this user's profile before the dashboard can show office or agent data.
             </div>
           </div>
         </div>
@@ -2810,7 +2830,8 @@ const OfficeNumbers = () => {
 
       {reportScope && (
         <ThirteenMonthDataReport
-          key={`${reportScope.label}|${selectedMonth}`}
+          cacheScopeKey={cacheScopeKey}
+          key={`${cacheScopeKey}|${reportScope.label}|${selectedMonth}`}
           month={selectedMonth}
           scope={reportScope.label}
           scopeType={reportScope.scopeType || 'region'}
@@ -2823,15 +2844,16 @@ const OfficeNumbers = () => {
 
       {!reportScope && (<>
       {viewMode === 'custom' && <CustomReportsPanel
+        key={cacheScopeKey}
+        cacheScopeKey={cacheScopeKey}
         officeRegions={officeRegions}
         allowedOfficeCodes={[...new Set(visibleMonthlyRows.map(row => normalizeOffice(row.office_code)))]}
         agentOptions={[...new Set(visibleAgentMonthlyRows.map(row => cleanStr(row.agent_email).toLowerCase()).filter(Boolean))].sort()}
-        isAdmin={isAdmin}
-        assignedRegion={assignedRegion}
       />}
 
       {viewMode === 'office' && selectedOfficeMetric && selectedAgentMetric && (
         <AgentDetail
+          cacheScopeKey={cacheScopeKey}
           agent={allAuthorizedAgentMetric || selectedAgentMetric}
           office={selectedOfficeMetric}
           reportOfficeCodes={[selectedOfficeMetric.officeName]}
@@ -2866,6 +2888,7 @@ const OfficeNumbers = () => {
 
       {viewMode === 'office' && selectedOfficeMetric && !selectedAgentMetric && (
         <OfficeDetail
+          cacheScopeKey={cacheScopeKey}
           office={selectedOfficeMetric}
           agents={selectedOfficeAgents}
           trend={selectedOfficeTrend}
@@ -2893,8 +2916,8 @@ const OfficeNumbers = () => {
       {viewMode === 'office' && !selectedOfficeMetric && (
         <>
       <div style={{ marginBottom: 12 }}>
-        <button type="button" style={{ ...styles.retryButton, padding: '7px 12px', background: '#fff', color: '#475569', border: '1px solid #cbd5e1', fontSize: 12, fontWeight: 700, boxShadow: 'none' }} onClick={() => setReportScope({ label: isAdmin ? 'All G&P' : normalizedAssignedRegion, scopeType: isAdmin ? 'company' : 'region', offices: Object.keys(officeRegions).filter((code) => canViewOffice(code)) })}>
-          View More Details · {isAdmin ? 'All G&P' : 'Region'}
+        <button type="button" style={{ ...styles.retryButton, padding: '7px 12px', background: '#fff', color: '#475569', border: '1px solid #cbd5e1', fontSize: 12, fontWeight: 700, boxShadow: 'none' }} onClick={() => setReportScope({ label: isAdmin ? 'All G&P' : normalizedAssignedRegion, scopeType: isAdmin ? 'company' : isTerritoryManager ? 'territory' : 'region', offices: Object.keys(officeRegions).filter((code) => canViewOffice(code)) })}>
+          View More Details · {isAdmin ? 'All G&P' : isTerritoryManager ? 'Territory' : 'Region'}
         </button>
       </div>
       <div style={styles.summaryGrid}>
@@ -3368,7 +3391,7 @@ const OfficeNumbers = () => {
             <SummaryCard
               label="Agents"
               value={formatNumber(agentMetrics.length)}
-              subtext={isAdmin ? "Grouped by office region" : `Showing ${assignedRegion || "assigned"} region only`}
+              subtext={isAdmin ? "Grouped by office region" : `Showing assigned regions: ${assignedRegion || "none"}`}
             />
           </div>
 
@@ -3933,7 +3956,7 @@ const MetricBar = ({ label, value, max, displayValue }) => {
 };
 
 const OfficeDetail = ({
-  office, agents, trend, detailData, detailLoading, detailError,
+  cacheScopeKey, office, agents, trend, detailData, detailLoading, detailError,
   selectedFeeConfig, selectedMetricConfig, selectedMonth, comparisonMonths,
   latestDataDate, pacingDetails, isBrokerView, onOpenAgent, onRefreshDetail, onBack,
 }) => {
@@ -4025,6 +4048,7 @@ const OfficeDetail = ({
       </div>
 
       <ThirteenMonthDataReport
+          cacheScopeKey={cacheScopeKey}
         month={selectedMonth}
         scope={office.officeName}
         officeCodes={[office.officeName]}
@@ -4102,6 +4126,7 @@ const OfficeDetail = ({
 
 
 const AgentDetail = ({
+  cacheScopeKey,
   agent,
   office,
   reportOfficeCodes, reportAgentEmail,
@@ -4306,7 +4331,7 @@ const AgentDetail = ({
       <div style={styles.detailSectionHeader}>
         <div>
           <div style={styles.detailDataPill}>Scope: All Authorized Offices</div>
-          <div style={styles.chartSubtext}>Admin = company-wide · Regional = assigned region · Supervisor = assigned office.</div>
+          <div style={styles.chartSubtext}>Admin = company-wide · Territory Manager = assigned regions · Regional = assigned region · Supervisor = assigned office.</div>
         </div>
         <button type="button" onClick={onRefresh} disabled={detailLoading} style={styles.primaryButton}>
           {detailLoading ? 'Refreshing...' : 'Refresh Agent Detail'}
@@ -4378,6 +4403,7 @@ const AgentDetail = ({
 
 
       <ThirteenMonthDataReport
+          cacheScopeKey={cacheScopeKey}
         month={selectedMonth}
         scope={agent.csrName || agent.name || 'Agent'}
         officeCodes={reportOfficeCodes || [office.officeName]}

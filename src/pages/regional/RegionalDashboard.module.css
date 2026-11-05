@@ -1824,3 +1824,83 @@
   font-size: 6.8px;
   font-weight: 950;
 }
+
+.regionSelector { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; }
+.regionSelector select { max-width: 260px; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; background: white; color: #1e293b; font: inherit; }
+
+/* Territory Manager: saturated green glass with neutral white panels. */
+.territoryPage {
+  background: #f2f3f4;
+  color: #17221b;
+}
+.territoryPage .header {
+  padding: 32px;
+  border: 1px solid #119b45;
+  border-radius: 22px;
+  background:
+    linear-gradient(150deg, transparent 0 59%, rgba(255,255,255,.09) 59.1%, rgba(255,255,255,.02) 80%, transparent 80.1%),
+    radial-gradient(ellipse at 78% 0%, rgba(0,218,78,.20), transparent 62%),
+    linear-gradient(115deg, #043719, #006c28 72%, #007b2d);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.20), 0 9px 24px rgba(0,57,22,.12);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.territoryPage .header h1 { font-size: clamp(30px, 3vw, 44px); letter-spacing: -.04em; }
+.territoryPage .header .eyebrow { color: #fff; letter-spacing: .16em; }
+.territoryPage .subtitle, .territoryPage .updatedAt { color: #f0f3f1; }
+.territoryPage .headerActions { flex-wrap: wrap; justify-content: flex-end; }
+.territoryPage .regionSelector { color: #fff; }
+.territoryPage .regionSelector select { border-color: #c4c9c6; background: #fff; color: #17221b; }
+.territoryPage .primaryButton, .territoryPage .fullButton {
+  background: linear-gradient(180deg, rgba(255,255,255,.15), transparent 48%), linear-gradient(110deg, #006b23, #007f2b);
+  border: 1px solid #159c42;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.15), 0 3px 9px rgba(0,50,18,.12);
+}
+.territoryPage .primaryButton:hover, .territoryPage .fullButton:hover {
+  background: linear-gradient(180deg, rgba(255,255,255,.12), transparent 48%), linear-gradient(110deg, #00581e, #006d26);
+}
+.territoryPage .header .secondaryButton {
+  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.04));
+  border: 1px solid rgba(255,255,255,.45);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+}
+.territoryPage .header .secondaryButton:hover { background: rgba(255,255,255,.20); }
+.territoryPage .executiveStrip {
+  background:
+    linear-gradient(153deg, transparent 0 35%, rgba(255,255,255,.10) 35.1%, rgba(255,255,255,.02) 57%, transparent 57.1%),
+    linear-gradient(110deg, #03441c, #006d28 65%, #007e30);
+  border: 1px solid #119c43;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.16), 0 6px 18px rgba(0,57,22,.10);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.territoryPage .executiveStrip > div { border-color: rgba(255,255,255,.25); }
+.territoryPage .executiveStrip span { color: #fff; }
+.territoryPage .executiveStrip strong { color: #fff; font-variant-numeric: tabular-nums; }
+.territoryPage .executiveStrip small { color: #f0f3f1; }
+.territoryPage .sectionKicker { color: #007326; }
+.territoryPage .panel, .territoryPage .metricCard, .territoryPage .leaderboardCard {
+  background: #fff;
+  border-color: #d6dad7;
+  box-shadow: 0 3px 12px rgba(20,35,25,.035);
+}
+.territoryPage .metricCard::before, .territoryPage .metricCard.live::before, .territoryPage .metricCard.closed::before { background: #008c32; }
+.territoryPage .metricCard.attention::before { background: #d18b00; }
+.territoryPage .metricCard > span, .territoryPage .metricCard p, .territoryPage .panelSubtitle, .territoryPage .empty { color: #58615c; }
+.territoryPage .emptySuccess { color: #235b36; background: #fafbfa; }
+.territoryPage .textButton { color: #006d25; }
+.territoryPage button:focus-visible, .territoryPage select:focus-visible { outline: 3px solid #009b36; outline-offset: 3px; }
+.territoryPage .header button:focus-visible { outline-color: #fff; }
+@media (max-width: 1100px) {
+  .territoryPage .header { flex-direction: column; }
+  .territoryPage .headerActions { justify-content: flex-start; }
+}
+@media (max-width: 600px) {
+  .territoryPage { padding: 16px 12px; }
+  .territoryPage .header { padding: 22px 18px; border-radius: 16px; }
+  .territoryPage .headerActions { width: 100%; }
+  .territoryPage .headerActions > button { flex: 1 1 130px; }
+}

@@ -16,6 +16,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
+import { getAssignedRegions } from '../../utils/regionAccess';
 import styles from './Dashboard.module.css';
 
 const Sidebar = ({ onLogout }) => {
@@ -42,9 +43,12 @@ const Sidebar = ({ onLogout }) => {
     .toLowerCase();
 
   const isSupervisor = ['supervisor', 'admin'].includes(role);
-  const isRegional = role === 'regional';
+  const isTerritoryManager = role === 'territory_manager';
+  const isRegional = role === 'regional' || isTerritoryManager;
+  const managerBasePath = isTerritoryManager ? '/territory' : '/regional';
+  const assignedRegions = getAssignedRegions(profile);
 
-  const dashboardPath = isRegional ? '/regional/dashboard' : '/dashboard';
+  const dashboardPath = isRegional ? `${managerBasePath}/dashboard` : '/dashboard';
 
   const menuItems = useMemo(() => {
     // Regionals intentionally keep the same floor / agent tools.
@@ -65,10 +69,10 @@ const Sidebar = ({ onLogout }) => {
 
     if (isRegional) {
       items.push(
-        { type: 'divider', label: 'Regional Tools' },
-        { path: '/regional/quote-operations', label: 'Quote Operations', icon: ClipboardList },
-        { path: '/regional/office-numbers', label: 'Office Performance', icon: BarChart3 },
-        { path: '/regional/tickets', label: 'Manage Tickets', icon: Ticket }
+        { type: 'divider', label: isTerritoryManager ? 'Territory Tools' : 'Regional Tools' },
+        { path: `${managerBasePath}/quote-operations`, label: 'Quote Operations', icon: ClipboardList },
+        { path: `${managerBasePath}/office-numbers`, label: 'Office Performance', icon: BarChart3 },
+        { path: `${managerBasePath}/tickets`, label: 'Manage Tickets', icon: Ticket }
 
         // Add once we build/verify a regional-scoped version:
         // { path: '/regional/tax-wip', label: 'Tax Wip', icon: Users }
@@ -86,7 +90,7 @@ const Sidebar = ({ onLogout }) => {
     }
 
     return items;
-  }, [dashboardPath, isRegional, isSupervisor]);
+  }, [dashboardPath, isRegional, isSupervisor, isTerritoryManager, managerBasePath]);
 
   const sidebarThemeClass = isSupervisor
     ? styles.supervisorSidebar
@@ -97,7 +101,7 @@ const Sidebar = ({ onLogout }) => {
   const dashboardTitle = isSupervisor
     ? 'Supervisor Dashboard'
     : isRegional
-      ? 'Regional Dashboard'
+      ? isTerritoryManager ? 'Territory Manager Dashboard' : 'Regional Dashboard'
       : 'Agent Dashboard';
 
   return (
@@ -112,8 +116,8 @@ const Sidebar = ({ onLogout }) => {
         <div className={styles.dashboardTitle}>{dashboardTitle}</div>
         <div className={styles.userName}>{displayName}</div>
 
-        {isRegional && profile?.region && (
-          <div className={styles.regionalRegionLabel}>{profile.region}</div>
+        {isRegional && (
+          <div className={styles.regionalRegionLabel}>{assignedRegions.join(' / ') || 'No regions assigned'}</div>
         )}
       </div>
 
