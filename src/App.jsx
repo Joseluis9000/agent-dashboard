@@ -77,6 +77,7 @@ import RegionalTickets from './pages/regional/RegionalTickets';
 // Underwriting pages
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
 import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
+import VehiclePhotoLibrary from './pages/uw/VehiclePhotoLibrary';
 import UnderwritingLog from './pages/uw/UnderwritingLog';
 import PendingUnderwriting from './pages/uw/PendingUnderwriting';
 import UnderwritingScoreboard from './pages/uw/UnderwritingScoreboard';
@@ -456,6 +457,11 @@ function AppRoutes() {
         </Route>
       </Route>
 
+      {/* Shared agent photo library; database policies enforce access. */}
+      <Route element={<ProtectedRoute allowedRoles={['agent', 'regional', 'territory_manager', 'underwriter', 'uw_manager', 'supervisor', 'admin']} />}>
+        <Route path="/vehicle-photos" element={<VehiclePhotoLibrary />} />
+      </Route>
+
       {/* PROTECTED: Underwriter area */}
       <Route
         element={
@@ -471,6 +477,7 @@ function AppRoutes() {
           <Route path="log" element={<UnderwritingLog />} />
           <Route path="scoreboard" element={<UnderwritingScoreboard />} />
           <Route path="office-pacing" element={<UnderwritingOfficePacing />} />
+          <Route path="vehicle-photos" element={<VehiclePhotoLibrary />} />
           <Route path="retention" element={<RetentionQueue />} />
 
           {/* ✅ ADDED: relative child route under /uw */}
