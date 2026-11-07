@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
+  Camera,
   ChartNoAxesCombined,
   Gauge,
   HeartHandshake,
@@ -17,6 +18,7 @@ const navigation = [
   { to: '/uw', label: 'Underwriting Dashboard', icon: LayoutDashboard, end: true },
   { to: '/uw/scoreboard', label: 'Scoreboard', icon: ChartNoAxesCombined },
   { to: '/uw/office-pacing', label: 'Office Pacing', icon: Gauge },
+  { to: '/uw/vehicle-photos', label: 'Vehicle Photos', icon: Camera },
   { to: '/uw/retention', label: 'Retention', icon: HeartHandshake },
 ];
 

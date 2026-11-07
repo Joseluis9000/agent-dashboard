@@ -154,6 +154,16 @@ export default function UnderwritingDashboard() {
       )}
 
       <section className={styles.moduleGrid}>
+        <button type="button" className={`${styles.moduleCard} ${styles.moduleCardActive}`} onClick={() => navigate('/uw/vehicle-photos')}>
+          <span className={styles.moduleIcon}>P</span>
+          <span className={styles.moduleContent}>
+            <span className={styles.moduleTopLine}><strong>Vehicle Photos</strong><span className={styles.activePill}>Active</span></span>
+            <span>Upload, search, and view vehicle photos with policy details.</span>
+          </span>
+          <span className={styles.moduleArrow}>→</span>
+        </button>
+
+
         <button
           type="button"
           className={`${styles.moduleCard} ${styles.moduleCardActive}`}
