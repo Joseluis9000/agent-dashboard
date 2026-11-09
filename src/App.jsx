@@ -1,7 +1,7 @@
 // src/App.jsx
 import React, { useEffect, useState } from 'react';
 // ⛔️ REMOVED 'BrowserRouter as Router' FROM THIS IMPORT
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { APP_VERSION } from './version'; // 🔁 version for auto-update
 
@@ -78,6 +78,11 @@ import RegionalTickets from './pages/regional/RegionalTickets';
 import UnderwritingSubmit from './pages/agent/UnderwritingSubmit';
 import UnderwritingDashboard from './pages/uw/UnderwritingDashboard';
 import VehiclePhotoLibrary from './pages/uw/VehiclePhotoLibrary';
+import AgentVehiclePhotos from './pages/agent/AgentVehiclePhotos';
+import AgentPhotoHistory from './pages/agent/AgentPhotoHistory';
+import PhotoEntryLogin from './pages/agent/PhotoEntryLogin';
+import PhotoEntryGate from './pages/agent/PhotoEntryGate';
+import { PHOTO_ENTRY_ROLES, wantsPhotoEntry, clearPhotoEntry, isPhotoRecoveryVisit } from './pages/agent/photoEntryAuth';
 import UnderwritingLog from './pages/uw/UnderwritingLog';
 import PendingUnderwriting from './pages/uw/PendingUnderwriting';
 import UnderwritingScoreboard from './pages/uw/UnderwritingScoreboard';
@@ -267,6 +272,11 @@ function LockScreen({ onContinue }) {
 function AppRoutes() {
   const { user, profile, loading } = useAuth();
   const [showLock, setShowLock] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (user && (pathname === '/vehicle-photos' || (profile?.role && !PHOTO_ENTRY_ROLES.includes(profile.role)))) clearPhotoEntry();
+    else if (!user && !['/photo-login','/login','/forgot-password','/reset-password','/vehicle-photos'].includes(pathname)) clearPhotoEntry();
+  }, [user, profile?.role, pathname]);
 
   // 🔁 Version check: reload tab if a new deploy is available
   const checkVersion = async () => {
@@ -393,11 +403,17 @@ function AppRoutes() {
     return <LockScreen onContinue={() => setShowLock(false)} />;
   }
 
+  // Photo-entry sign-in returns to the phone page even if Login uses a role home.
+  if (user && wantsPhotoEntry() && !isPhotoRecoveryVisit() && pathname !== '/vehicle-photos' && !['/reset-password','/forgot-password'].includes(pathname)) {
+    return <Navigate to="/vehicle-photos" replace />;
+  }
+
   // ⛔️ REMOVED THE <Router> WRAPPER FROM AROUND <Routes>
   // NOTE: Make sure BrowserRouter is wrapping <App /> in your src/main.jsx or src/index.jsx.
   return (
     <Routes>
       {/* PUBLIC */}
+      <Route path="/photo-login" element={!user ? <PhotoEntryLogin /> : <Navigate to="/vehicle-photos" replace />} />
       <Route
         path="/login"
         element={!user ? <Login /> : <Navigate to={getHomeRoute()} replace />}
@@ -457,9 +473,12 @@ function AppRoutes() {
         </Route>
       </Route>
 
-      {/* Shared agent photo library; database policies enforce access. */}
-      <Route element={<ProtectedRoute allowedRoles={['agent', 'regional', 'territory_manager', 'underwriter', 'uw_manager', 'supervisor', 'admin']} />}>
-        <Route path="/vehicle-photos" element={<VehiclePhotoLibrary />} />
+      {/* Phone-first entry: reuse normal login and existing role checks. */}
+      <Route element={<PhotoEntryGate />}>
+        <Route path="/vehicle-photos" element={<AgentVehiclePhotos />} />
+        <Route element={<AuthLayout />}>
+          <Route path="/agent/vehicle-photos" element={<AgentPhotoHistory />} />
+        </Route>
       </Route>
 
       {/* PROTECTED: Underwriter area */}

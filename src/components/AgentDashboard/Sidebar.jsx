@@ -4,9 +4,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home,
   DollarSign,
-  ShieldAlert,
+  Camera,
   FileText,
-  Ban,
   CalendarDays,
   ClipboardList,
   Building2,
@@ -56,12 +55,11 @@ const Sidebar = ({ onLogout }) => {
       { path: dashboardPath, label: 'Dashboard', icon: Home },
       { path: '/agent/commission', label: 'Insurance Commission', icon: DollarSign },
       { path: '/agent/tax-commission', label: 'Tax Commission', icon: DollarSign },
-      { path: '/agent/violations', label: 'My Violations', icon: ShieldAlert },
       ...(!isRegional && !isSupervisor
         ? [{ path: '/agent/quotes', label: 'My Quotes', icon: ClipboardList }]
         : []),
+      { path: '/agent/vehicle-photos', label: 'My Vehicle Photos', icon: Camera },
       { path: '/uw/submit', label: 'Underwriting Submit', icon: FileText },
-      { path: '/disqualified-policies', label: 'Disqualified Policies', icon: Ban },
       { path: '/ticketing-system', label: 'Appointment Calendar', icon: CalendarDays },
       { path: '/eod-report', label: 'EOD Report', icon: ClipboardList },
       { path: '/office-eods', label: 'Office & Agent EODs', icon: Building2 },

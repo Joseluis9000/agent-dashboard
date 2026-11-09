@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useState,
   useCallback,
+  useRef,
 } from 'react';
 import { supabase } from './supabaseClient';
 
@@ -50,18 +51,24 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const logoutInFlight = useRef(false);
+  const currentUserId = useRef(null);
+
   // toggle verbose logs in dev
   const debug = process.env.NODE_ENV !== 'production';
 
   /** ✅ Centralized logout helper (used by timers & UI) */
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async ({ broadcast = true } = {}) => {
+    if (logoutInFlight.current) return;
+    logoutInFlight.current = true;
     if (debug) console.log('[AuthContext] signOut called');
 
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch (e) {
       if (debug) console.warn('[AuthContext] supabase.signOut error:', e.message);
     } finally {
+      currentUserId.current = null;
       setUser(null);
       setProfile(null);
 
@@ -71,10 +78,11 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem(LS_SESSION_START);
         localStorage.removeItem(LS_SOFT_LOCK);
         // broadcast to other tabs
-        localStorage.setItem(LS_FORCE_LOGOUT, String(Date.now()));
+        if (broadcast) localStorage.setItem(LS_FORCE_LOGOUT, String(Date.now()));
       } catch (e) {
         if (debug) console.warn('[AuthContext] localStorage cleanup failed:', e.message);
       }
+      logoutInFlight.current = false;
     }
   }, [debug]);
 
@@ -87,8 +95,12 @@ export const AuthProvider = ({ children }) => {
     };
 
     const fetchOrCreateProfile = async (sessUser) => {
+      const requestedId = sessUser?.id ?? null;
+      const applyProfile = (value) => {
+        if (currentUserId.current === requestedId) setSafe(() => setProfile(value));
+      };
       if (!sessUser?.id) {
-        setSafe(() => setProfile(null));
+        applyProfile(null);
         return;
       }
 
@@ -135,14 +147,14 @@ export const AuthProvider = ({ children }) => {
           if (!insert.error) data = insert.data;
         }
 
-        setSafe(() => setProfile(data ?? null));
+        applyProfile(data ?? null);
       } catch (e) {
         if (debug)
           console.warn(
             '[AuthContext] profile fetch/insert failed or timed out (ignored):',
             e.message
           );
-        setSafe(() => setProfile(null));
+        applyProfile(null);
       }
     };
 
@@ -168,6 +180,7 @@ export const AuthProvider = ({ children }) => {
             sessUser?.email || null
           );
 
+        currentUserId.current = sessUser?.id ?? null;
         setSafe(() => setUser(sessUser));
 
         // track who was last logged in (optional but handy)
@@ -216,6 +229,8 @@ export const AuthProvider = ({ children }) => {
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!isMounted) return;
       const sessUser = session?.user ?? null;
+      if (currentUserId.current !== (sessUser?.id ?? null)) setProfile(null);
+      currentUserId.current = sessUser?.id ?? null;
       setUser(sessUser);
       if (debug)
         console.log(
@@ -275,7 +290,7 @@ export const AuthProvider = ({ children }) => {
     const handleStorage = (e) => {
       if (e.key === LS_FORCE_LOGOUT && e.newValue) {
         if (debug) console.log('[AuthContext] forced logout from other tab');
-        signOut();
+        signOut({ broadcast: false });
       }
     };
     window.addEventListener('storage', handleStorage);
