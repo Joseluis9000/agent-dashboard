@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ClipboardList,
   Building2,
+  MapPin,
   BarChart3,
   Ticket,
   Users,
@@ -61,6 +62,7 @@ const Sidebar = ({ onLogout }) => {
       { path: '/agent/vehicle-photos', label: 'My Vehicle Photos', icon: Camera },
       { path: '/uw/submit', label: 'Underwriting Submit', icon: FileText },
       { path: '/ticketing-system', label: 'Appointment Calendar', icon: CalendarDays },
+      { path: '/office-finder', label: 'Office Finder', icon: MapPin },
       { path: '/eod-report', label: 'EOD Report', icon: ClipboardList },
       { path: '/office-eods', label: 'Office & Agent EODs', icon: Building2 },
     ];

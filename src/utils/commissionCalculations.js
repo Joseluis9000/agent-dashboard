@@ -656,6 +656,7 @@ export function getActiveDisqualifications(
   const inactiveStatuses =
     new Set([
       "VOIDED",
+      "VOID",
       "RESOLVED",
       "CLEARED",
       "REMOVED",
@@ -673,98 +674,41 @@ export function getActiveDisqualifications(
   );
 }
 
+// A verified transaction link identifies the receipt used for both the NB
+// exclusion and associated commission fees. Never match on customer/name/amount:
+// those can accidentally remove another policy's revenue.
+export function getDisqualifiedTransactionScope({
+  transactions = [],
+  disqualifiedPolicies = [],
+} = {}) {
+  const bySyncKey = new Map(
+    getValidTransactions(transactions)
+      .filter((row) => String(row?.sync_key ?? '').trim())
+      .map((row) => [String(row.sync_key).trim(), row])
+  );
+  const receiptIds = new Set();
+  const syncKeys = new Set();
+
+  for (const policy of getActiveDisqualifications(disqualifiedPolicies)) {
+    const key = String(policy?.linked_sync_key ?? '').trim();
+    const linked = bySyncKey.get(key);
+    if (!linked) continue;
+    syncKeys.add(key);
+    const receipt = String(linked.receipt_id ?? '').trim();
+    if (receipt) receiptIds.add(receipt);
+  }
+  return { receiptIds, syncKeys };
+}
+
 export function getDisqualifiedNbReceipts({
   transactions = [],
   disqualifiedPolicies = [],
   grossNbReceipts = new Set(),
 }) {
-  const validTransactions =
-    getValidTransactions(
-      transactions
-    );
-
-  const activeDisqualified =
-    getActiveDisqualifications(
-      disqualifiedPolicies
-    );
-
-  const transactionsBySyncKey =
-    new Map();
-
-  for (
-    const row
-    of validTransactions
-  ) {
-    if (
-      !row?.sync_key
-    ) {
-      continue;
-    }
-
-    transactionsBySyncKey.set(
-      String(
-        row.sync_key
-      ),
-      row
-    );
-  }
-
-  const disqualifiedReceipts =
-    new Set();
-
-  for (
-    const disqualified
-    of activeDisqualified
-  ) {
-    const linkedSyncKey =
-      String(
-        disqualified
-          ?.linked_sync_key ??
-          ""
-      ).trim();
-
-    if (
-      !linkedSyncKey
-    ) {
-      continue;
-    }
-
-    const linkedTransaction =
-      transactionsBySyncKey.get(
-        linkedSyncKey
-      );
-
-    if (
-      !linkedTransaction
-    ) {
-      continue;
-    }
-
-    const receiptId =
-      String(
-        linkedTransaction
-          .receipt_id ??
-          ""
-      ).trim();
-
-    if (
-      !receiptId
-    ) {
-      continue;
-    }
-
-    if (
-      grossNbReceipts.has(
-        receiptId
-      )
-    ) {
-      disqualifiedReceipts.add(
-        receiptId
-      );
-    }
-  }
-
-  return disqualifiedReceipts;
+  const { receiptIds } = getDisqualifiedTransactionScope({
+    transactions, disqualifiedPolicies,
+  });
+  return new Set([...receiptIds].filter((receipt) => grossNbReceipts.has(receipt)));
 }
 
 export function getActiveViolations(
@@ -1108,13 +1052,33 @@ export function calculateAgentCommission({
       transactions
     );
 
-  const {
-    breakdown,
-    activeFeeRows,
-  } =
-    calculateFeeBreakdown(
-      validTransactions
-    );
+  // Gross production keeps the original NB count. Active disqualifications
+  // remove NB credit separately and remove the signed fee revenue of the linked
+  // receipt before royalty, net revenue and tier selection are calculated.
+  const grossNbReceipts = getGrossNbReceipts(validTransactions);
+  const grossNbCount = grossNbReceipts.size;
+  const activeDisqualifiedPolicies = getActiveDisqualifications(disqualifiedPolicies);
+  const disqualifiedScope = getDisqualifiedTransactionScope({
+    transactions: validTransactions,
+    disqualifiedPolicies: activeDisqualifiedPolicies,
+  });
+  const disqualifiedNbReceipts = new Set(
+    [...disqualifiedScope.receiptIds].filter((receipt) => grossNbReceipts.has(receipt))
+  );
+  const disqualifiedNbCount = disqualifiedNbReceipts.size;
+  const netNbCount = Math.max(grossNbCount - disqualifiedNbCount, 0);
+  const isDisqualifiedTransaction = (row) =>
+    disqualifiedScope.receiptIds.has(String(row.receipt_id ?? '').trim()) ||
+    disqualifiedScope.syncKeys.has(String(row.sync_key ?? '').trim());
+  const commissionableTransactions = validTransactions.filter(
+    (row) => !isDisqualifiedTransaction(row)
+  );
+  const disqualifiedFeeRevenue = roundMoney(validTransactions.reduce(
+    (sum, row) => sum + (
+      isDisqualifiedTransaction(row) && getCommissionFeeType(row) ? toNumber(row.fee) : 0
+    ), 0
+  ));
+  const { breakdown, activeFeeRows } = calculateFeeBreakdown(commissionableTransactions);
 
   const brokerFeeRevenue =
     breakdown
@@ -1169,40 +1133,6 @@ export function calculateAgentCommission({
     endorsementFeeCount +
     reinstatementFeeCount +
     renewalFeeCount;
-
-  const grossNbReceipts =
-    getGrossNbReceipts(
-      validTransactions
-    );
-
-  const grossNbCount =
-    grossNbReceipts.size;
-
-  const activeDisqualifiedPolicies =
-    getActiveDisqualifications(
-      disqualifiedPolicies
-    );
-
-  const disqualifiedNbReceipts =
-    getDisqualifiedNbReceipts({
-      transactions:
-        validTransactions,
-
-      disqualifiedPolicies:
-        activeDisqualifiedPolicies,
-
-      grossNbReceipts,
-    });
-
-  const disqualifiedNbCount =
-    disqualifiedNbReceipts.size;
-
-  const netNbCount =
-    Math.max(
-      grossNbCount -
-        disqualifiedNbCount,
-      0
-    );
 
   const grossPayAmount =
     roundMoney(
@@ -1358,6 +1288,9 @@ export function calculateAgentCommission({
 
   return {
     grossRevenue,
+    grossRevenueBeforeDisqualifications: roundMoney(grossRevenue + disqualifiedFeeRevenue),
+    disqualifiedFeeRevenue,
+    disqualifiedFeeReceiptIds: Array.from(disqualifiedScope.receiptIds),
 
     grossPay:
       grossPayAmount,

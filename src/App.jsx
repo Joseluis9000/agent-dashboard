@@ -19,6 +19,7 @@ import Dashboard from './pages/Dashboard';
 import SVARPage from './pages/SVARPage';
 import DisqualifiedPolicies from './pages/DisqualifiedPolicies';
 import TicketingSystem from './pages/TicketingSystem';
+import OfficeFinder from './pages/OfficeFinder';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminTickets from './pages/AdminTickets';
 import SupervisorDashboard from './pages/SupervisorDashboard';
@@ -457,6 +458,7 @@ function AppRoutes() {
           <Route path="/sv-ar" element={<SVARPage />} />
           <Route path="/disqualified-policies" element={<DisqualifiedPolicies />} />
           <Route path="/ticketing-system" element={<TicketingSystem />} />
+          <Route path="/office-finder" element={<OfficeFinder />} />
           <Route path="/eod-report" element={<EODReport />} />
           <Route path="/office-eods" element={<EODHistory />} />
           <Route path="/agent/violations" element={<AgentViolations />} />

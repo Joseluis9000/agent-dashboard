@@ -4,6 +4,7 @@ import styles from './AgentCommission.module.css';
 import {
   addDaysKey,
   calculateAgentCommission,
+  getActiveDisqualifications,
   getWeekRange,
 } from "../../utils/commissionCalculations";
 
@@ -12,6 +13,7 @@ const TABLE_VIOLATIONS = 'violations';
 const TABLE_DISQUALIFIED = 'disqualified_policies';
 const TABLE_DISQUALIFIED_HISTORY = 'disqualified_policy_history';
 const TABLE_COMMISSION_RECORDS = 'agent_commission_records';
+const TABLE_ADJUSTMENTS = 'agent_commission_adjustments';
 const TABLE_BALANCE_LEDGER = 'agent_commission_balance_ledger';
 
 const PRODUCTION_PAGE_SIZE = 15;
@@ -113,14 +115,11 @@ const isOpenBalanceViolation = (row) => {
   ]).has(status);
 };
 
-const paymentStatusLabel = (record) => {
-  const status = clean(record?.payment_status).toLowerCase();
-  if (status === 'paid') return 'Paid';
-  if (status === 'partial') return 'Partially Paid';
-  if (status === 'withheld') return 'Withheld';
-  if (status === 'pending') return 'Pending';
-  return 'Finalized';
-};
+// Original commission records are paid by publication under the established
+// workflow. Adjustment cash uses its separate explicit payment status.
+const publishedCommissionPaid = (record) => Number(record?.final_payable_commission) || 0;
+const paymentStatusLabel = (record) =>
+  publishedCommissionPaid(record) > 0 ? 'Paid on publication' : 'No cash payable';
 
 const formatDate = (value) => {
   if (!value) return '—';
@@ -219,6 +218,57 @@ async function fetchAll(buildQuery, pageSize = 1000) {
   return allRows;
 }
 
+const summarizeAdjustments = (rows = []) => {
+  const totals = rows.reduce((sum, row) => {
+    const cents = (value) => Math.round((Number(value) || 0) * 100);
+    sum.earned += cents(row.additional_commission);
+    sum.ledger += cents(row.balance_applied);
+    sum.cash += cents(row.cash_payable);
+    if (row.payment_status === 'paid') sum.paid += cents(row.cash_payable);
+    if (row.payment_status === 'pending') sum.pending += cents(row.cash_payable);
+    return sum;
+  }, { earned: 0, ledger: 0, cash: 0, paid: 0, pending: 0 });
+  return Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, value / 100]));
+};
+
+function FinalizedAdjustments({ rows = [], originalCash = 0 }) {
+  const totals = summarizeAdjustments(rows);
+  return (
+    <section className={`${styles.card} ${styles.adjustmentCard}`} aria-label="Finalized commission adjustments">
+      <div className={styles.sectionHeader}>
+        <div><h2>Commission Adjustments</h2><p>Finalized by management for this production week. Your original publication stays unchanged.</p></div>
+        <div className={styles.countBadge}>{rows.length}</div>
+      </div>
+      {rows.length === 0 ? <p>No finalized adjustments for this week.</p> : (
+        <>
+          <div className={styles.adjustmentMetrics}>
+            <Metric label="Original published cash" value={money(originalCash)} />
+            <Metric label="Additional cash payable" value={money(totals.cash)} />
+            <Metric label="Adjustment applied to AR / SV" value={money(totals.ledger)} />
+            <Metric label="Total cash payable including adjustments" value={money((Number(originalCash) || 0) + totals.cash)} />
+          </div>
+          {rows.map((row) => (
+            <article key={row.id} className={styles.adjustmentEntry}>
+              <div className={styles.adjustmentEntryHeader}>
+                <strong>Additional commission: {money(row.additional_commission)}</strong>
+                <span className={styles.historyStatus}>{row.payment_status === 'paid' ? 'Cash paid' : row.payment_status === 'no_cash' ? 'Applied to ledger — no cash payable' : 'Cash pending payment'}</span>
+              </div>
+              <p>Finalized {formatDate(row.finalized_at)} · {row.reason}</p>
+              <dl className={styles.adjustmentFacts}>
+                <div><dt>Applied to eligible AR / SV</dt><dd>{money(row.balance_applied)}</dd></div>
+                <div><dt>Additional cash payable</dt><dd>{money(row.cash_payable)}</dd></div>
+                {Number(row.cash_payable) > 0 && <div><dt>Scheduled payout</dt><dd>{formatDate(row.payout_date)}</dd></div>}
+                {row.payment_status === 'paid' && <div><dt>Paid</dt><dd>{formatDate(row.paid_at)}{row.payment_reference ? ` · ${row.payment_reference}` : ''}</dd></div>}
+              </dl>
+            </article>
+          ))}
+          <p>Adjustment cash still pending payment: <strong>{money(totals.pending)}</strong>. Amounts applied to AR / SV reduce your balance and are not cash payments.</p>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function AgentCommission() {
   const payContext = useMemo(() => getPayContext(new Date()), []);
   const dashboardView = new URLSearchParams(window.location.search).get('view');
@@ -244,6 +294,8 @@ export default function AgentCommission() {
   const [disqualified, setDisqualified] = useState([]);
   const [publishedRecord, setPublishedRecord] = useState(null);
   const [historyRecords, setHistoryRecords] = useState([]);
+  const [adjustments, setAdjustments] = useState([]);
+  const [adjustmentError, setAdjustmentError] = useState('');
   const [balanceLedger, setBalanceLedger] = useState([]);
   const [allViolations, setAllViolations] = useState([]);
   const [allDisqualified, setAllDisqualified] = useState([]);
@@ -286,6 +338,7 @@ export default function AgentCommission() {
         balanceLedgerResult,
         allViolationsResult,
         allDisqualifiedResult,
+        adjustmentResult,
       ] = await Promise.all([
         supabase
           .from('profiles')
@@ -364,6 +417,13 @@ export default function AgentCommission() {
             .eq('agent_email', email)
             .order('created_at', { ascending: false })
         ),
+        fetchAll(() => supabase.from(TABLE_ADJUSTMENTS)
+          .select('id,commission_record_id,agent_email,week_start_date,additional_commission,balance_applied,cash_payable,payout_date,reason,finalized_at,payment_status,paid_at,payment_reference')
+          .eq('agent_email', email)
+          .gte('week_start_date', historyStart).lt('week_start_date', nextYearStart)
+          .order('finalized_at', { ascending: true }).order('id', { ascending: true }))
+          .then((rows) => ({ rows, error: '' }))
+          .catch(() => ({ rows: [], error: 'Commission adjustments could not be loaded. Adjustment amounts are excluded from the totals shown until access is restored. Please refresh or contact management.' })),
       ]);
 
       if (profileResult.error) throw profileResult.error;
@@ -375,6 +435,8 @@ export default function AgentCommission() {
       setDisqualified(disqualifiedResult);
       setPublishedRecord(publishedResult.data || null);
       setHistoryRecords(historyResult || []);
+      setAdjustments(adjustmentResult.rows);
+      setAdjustmentError(adjustmentResult.error);
       setBalanceLedger(balanceLedgerResult || []);
       setAllViolations(allViolationsResult || []);
       setAllDisqualified(allDisqualifiedResult || []);
@@ -416,6 +478,8 @@ export default function AgentCommission() {
       setDisqualified([]);
       setPublishedRecord(null);
       setHistoryRecords([]);
+      setAdjustments([]);
+      setAdjustmentError('Commission adjustments could not be loaded.');
       setBalanceLedger([]);
       setAllViolations([]);
       setAllDisqualified([]);
@@ -428,6 +492,19 @@ export default function AgentCommission() {
   useEffect(() => {
     loadCommissionWeek();
   }, [loadCommissionWeek]);
+
+  const adjustmentsByRecord = useMemo(() => {
+    const map = new Map();
+    adjustments.forEach((row) => {
+      const rows = map.get(row.commission_record_id) || [];
+      rows.push(row); map.set(row.commission_record_id, rows);
+    });
+    return map;
+  }, [adjustments]);
+  const selectedAdjustments = adjustmentsByRecord.get(publishedRecord?.id) || [];
+  const adjustmentTotalsByRecord = useMemo(() => new Map(
+    [...adjustmentsByRecord].map(([id, rows]) => [id, summarizeAdjustments(rows)])
+  ), [adjustmentsByRecord]);
 
   const liveResult = useMemo(() => {
     const grossPay = Number(publishedRecord?.gross_pay) || 0;
@@ -611,7 +688,7 @@ export default function AgentCommission() {
   ), [violations]);
 
   const activeDisqualified = useMemo(() => (
-    disqualified.filter((row) => clean(row.status).toLowerCase() !== 'voided')
+    getActiveDisqualifications(disqualified)
   ), [disqualified]);
 
   const visibleProductionRows = useMemo(
@@ -659,15 +736,19 @@ export default function AgentCommission() {
       return start >= selectedYearStart && start <= selectedYearEnd;
     });
 
-    const finalizedCommission = finalized.reduce(
+    const originalFinalizedCommission = finalized.reduce(
       (sum, record) => sum + (Number(record.final_payable_commission) || 0),
       0
     );
 
-    const paidCommission = finalized.reduce((sum, record) => {
-      const amountPaid = Number(record.amount_paid) || 0;
-      return sum + amountPaid;
-    }, 0);
+    const originalPaidCommission = finalized.reduce(
+      (sum, record) => sum + publishedCommissionPaid(record), 0
+    );
+
+    const annualAdjustments = adjustments.filter((row) => row.week_start_date >= selectedYearStart && row.week_start_date <= selectedYearEnd);
+    const adjustmentTotals = summarizeAdjustments(annualAdjustments);
+    const finalizedCommission = originalFinalizedCommission + adjustmentTotals.cash;
+    const paidCommission = originalPaidCommission + adjustmentTotals.paid;
 
     const netNb = finalized.reduce(
       (sum, record) => sum + (Number(record.net_nb_count) || 0),
@@ -679,12 +760,10 @@ export default function AgentCommission() {
       0
     );
 
-    const paidWeeks = finalized.filter(
-      (record) => clean(record.payment_status).toLowerCase() === 'paid'
-    ).length;
+    const paidWeeks = finalized.length;
 
     const commissionWeeks = finalized.filter(
-      (record) => Number(record.final_payable_commission) > 0
+      (record) => (Number(record.final_payable_commission) || 0) + (adjustmentTotalsByRecord.get(record.id)?.cash || 0) > 0
     );
 
     const averageWeeklyCommission =
@@ -694,14 +773,15 @@ export default function AgentCommission() {
       finalized.length > 0
         ? [...finalized].sort(
             (a, b) =>
-              (Number(b.final_payable_commission) || 0) -
-              (Number(a.final_payable_commission) || 0)
+              ((Number(b.final_payable_commission) || 0) + (adjustmentTotalsByRecord.get(b.id)?.cash || 0)) -
+              ((Number(a.final_payable_commission) || 0) + (adjustmentTotalsByRecord.get(a.id)?.cash || 0))
           )[0]
         : null;
 
     return {
       finalizedCommission,
       paidCommission,
+      adjustmentTotals,
       netNb,
       deductions,
       paidWeeks,
@@ -709,7 +789,7 @@ export default function AgentCommission() {
       bestWeek,
       finalizedWeeks: finalized.length,
     };
-  }, [historyRecords, selectedYearStart, selectedYearEnd]);
+  }, [historyRecords, selectedYearStart, selectedYearEnd, adjustments, adjustmentTotalsByRecord]);
 
   const activeUnledgeredViolations = useMemo(() => {
     const linkedViolationIds = new Set(
@@ -820,7 +900,7 @@ export default function AgentCommission() {
   const chartMax = Math.max(
     1,
     ...commissionChartRecords.map(
-      (record) => Number(record.final_payable_commission) || 0
+      (record) => (Number(record.final_payable_commission) || 0) + (adjustmentTotalsByRecord.get(record.id)?.cash || 0)
     )
   );
 
@@ -944,6 +1024,7 @@ export default function AgentCommission() {
   const currentDisqualifiedPolicies = useMemo(() => {
     const historicalStatuses = new Set([
       'VOIDED',
+      'VOID',
       'RESOLVED',
       'CLEARED',
       'REMOVED',
@@ -959,6 +1040,7 @@ export default function AgentCommission() {
   const historicalDisqualifiedPolicies = useMemo(() => {
     const historicalStatuses = new Set([
       'VOIDED',
+      'VOID',
       'RESOLVED',
       'CLEARED',
       'REMOVED',
@@ -1291,6 +1373,7 @@ export default function AgentCommission() {
       )}
 
       {errorMessage && <div className={styles.errorBox}>{errorMessage}</div>}
+      {adjustmentError && <div className={styles.errorBox} role="alert">{adjustmentError}</div>}
 
       {activeView === 'balance' && (
         <div className={styles.tabPanel}>
@@ -1753,13 +1836,13 @@ export default function AgentCommission() {
         <DashboardMetric
           label={`${selectedYear} Commission Paid`}
           value={money(ytdStats.paidCommission)}
-          sub={`${ytdStats.paidWeeks} paid week${ytdStats.paidWeeks === 1 ? '' : 's'}`}
+          sub={`${ytdStats.paidWeeks} published weeks counted as paid · includes ${money(ytdStats.adjustmentTotals.paid)} paid adjustment cash`}
           tone="success"
         />
         <DashboardMetric
-          label={`${selectedYear} Finalized Commission`}
+          label={`${selectedYear} Total Finalized Cash Commission`}
           value={money(ytdStats.finalizedCommission)}
-          sub={`${ytdStats.finalizedWeeks} finalized week${ytdStats.finalizedWeeks === 1 ? '' : 's'}`}
+          sub={`${ytdStats.finalizedWeeks} published weeks · includes ${money(ytdStats.adjustmentTotals.cash)} adjustment cash`}
         />
         <DashboardMetric
           label="Outstanding AR / Scanning"
@@ -1768,17 +1851,28 @@ export default function AgentCommission() {
           tone={balanceStats.outstandingBalance > 0 ? 'danger' : 'success'}
         />
         <DashboardMetric
-          label={`${selectedYear} Net NB`}
+          label={`${selectedYear} Published Net NB`}
           value={ytdStats.netNb}
           sub={`Avg weekly commission ${money(ytdStats.averageWeeklyCommission)}`}
         />
       </section>
 
           <section className={styles.card}>
+            <h2>{selectedYear} Finalized Adjustments</h2>
+            <p>Grouped by original production year. Ledger repayments are separate from cash payable and cash paid.</p>
+            <div className={styles.adjustmentMetrics}>
+              <Metric label="Additional commission finalized" value={money(ytdStats.adjustmentTotals.earned)} />
+              <Metric label="Applied to AR / SV" value={money(ytdStats.adjustmentTotals.ledger)} />
+              <Metric label="Adjustment cash paid" value={money(ytdStats.adjustmentTotals.paid)} />
+              <Metric label="Adjustment cash pending" value={money(ytdStats.adjustmentTotals.pending)} />
+            </div>
+          </section>
+
+          <section className={styles.card}>
             <div className={styles.sectionHeader}>
               <div>
                 <h2>Commission Trend</h2>
-                <p>Your last {commissionChartRecords.length} finalized commission weeks.</p>
+                <p>Your last {commissionChartRecords.length} published weeks, including finalized adjustment cash.</p>
               </div>
               <div className={styles.countBadge}>{selectedYear}</div>
             </div>
@@ -1788,7 +1882,7 @@ export default function AgentCommission() {
             ) : (
               <div className={styles.miniChart}>
                 {commissionChartRecords.map((record) => {
-                  const amount = Number(record.final_payable_commission) || 0;
+                  const amount = (Number(record.final_payable_commission) || 0) + (adjustmentTotalsByRecord.get(record.id)?.cash || 0);
                   const height = Math.max(4, Math.round((amount / chartMax) * 100));
                   return (
                     <button
@@ -1953,6 +2047,7 @@ export default function AgentCommission() {
                       const status = clean(row.status).toUpperCase() || 'DISQUALIFIED';
                       const isHistorical = [
                         'VOIDED',
+                        'VOID',
                         'RESOLVED',
                         'CLEARED',
                         'REMOVED',
@@ -2046,8 +2141,9 @@ export default function AgentCommission() {
                 <th>Deductions</th>
                 <th>Commission Earned</th>
                 <th>AR / SV Applied</th>
-                <th>Cash Payable</th>
-                <th>Paid</th>
+                <th>Original Cash Payable</th>
+                <th>Adjustments: Earned / AR-SV / Cash</th>
+                <th>Paid Including Adjustments</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -2055,7 +2151,7 @@ export default function AgentCommission() {
             <tbody>
               {paginatedHistoryRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className={styles.emptyCell}>
+                  <td colSpan={12} className={styles.emptyCell}>
                     No finalized commission history yet.
                   </td>
                 </tr>
@@ -2072,10 +2168,15 @@ export default function AgentCommission() {
                     <td><strong>{money(record.commission_before_balance ?? ((Number(record.final_payable_commission) || 0) + (Number(record.balance_applied) || 0)))}</strong></td>
                     <td>{money(record.balance_applied)}</td>
                     <td><strong>{money(record.final_payable_commission)}</strong></td>
-                    <td>{money(record.amount_paid)}</td>
+                    <td className={styles.adjustmentHistoryCell}>
+                      <strong>{money(adjustmentTotalsByRecord.get(record.id)?.earned || 0)} earned</strong>
+                      <small>{money(adjustmentTotalsByRecord.get(record.id)?.ledger || 0)} AR / SV</small>
+                      <small>{money(adjustmentTotalsByRecord.get(record.id)?.cash || 0)} cash · {money(adjustmentTotalsByRecord.get(record.id)?.pending || 0)} pending</small>
+                    </td>
+                    <td>{money(publishedCommissionPaid(record) + (adjustmentTotalsByRecord.get(record.id)?.paid || 0))}</td>
                     <td>
                       <span className={styles.historyStatus}>
-                        {paymentStatusLabel(record)}
+                        {paymentStatusLabel(record)} (original)
                       </span>
                     </td>
                     <td>
@@ -2109,7 +2210,7 @@ export default function AgentCommission() {
           <section className={styles.heroGrid}>
             <div className={styles.commissionHero}>
               <span className={styles.cardLabel}>
-                {isPublished ? 'Cash Commission Payable' : 'Projected Cash Commission Payable'}
+                {isPublished ? 'Original Published Cash Commission' : 'Projected Cash Commission Payable'}
               </span>
               <div className={styles.heroAmount}>{money(displayResult.finalPayableCommission)}</div>
               <div className={styles.heroMeta}>
@@ -2137,6 +2238,8 @@ export default function AgentCommission() {
               }
             />
           </section>
+
+          {isPublished && <FinalizedAdjustments rows={selectedAdjustments} originalCash={displayResult.finalPayableCommission} />}
 
           <section className={styles.currentSectionHeading}>
             <div>
@@ -2202,8 +2305,9 @@ export default function AgentCommission() {
       <section className={styles.card}>
         <div className={styles.sectionHeader}>
           <div>
-            <h2>Revenue Breakdown</h2>
-            <p>Commissionable fee categories from your transaction detail.</p>
+            <h2>Current Source Revenue Breakdown</h2>
+            <p>{isPublished ? 'Live values after current exclusions. These can differ from the original publication; only finalized adjustments above change your additional payable commission.' : 'Commissionable fees after active disqualifications and reversals.'}</p>
+            {Number(liveResult.disqualifiedFeeRevenue || 0) !== 0 && <p>Fee revenue excluded by active disqualifications: <strong>{money(liveResult.disqualifiedFeeRevenue)}</strong>.</p>}
           </div>
         </div>
         <div className={styles.feeGrid}>
@@ -2292,7 +2396,7 @@ export default function AgentCommission() {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Disqualified Policies</h2>
-              <p>Disqualified qualifying policies reduce your Net NB count and may affect your tier.</p>
+              <p>Active disqualifications remove qualifying NB credit and associated receipt fee revenue before royalty, net revenue and tier calculations. Clearing restores eligibility; published weeks require management to finalize any additional commission.</p>
             </div>
             <div className={styles.countBadge}>{activeDisqualified.length}</div>
           </div>
@@ -2495,9 +2599,9 @@ export default function AgentCommission() {
                   value={money(historyModalRecord.gross_revenue)}
                 />
                 <SmallStat
-                  label="Amount Paid"
-                  value={money(historyModalRecord.amount_paid)}
-                  success={Number(historyModalRecord.amount_paid) > 0}
+                  label="Original cash paid on publication"
+                  value={money(publishedCommissionPaid(historyModalRecord))}
+                  success={publishedCommissionPaid(historyModalRecord) > 0}
                 />
                 <SmallStat
                   label="Deductions"
@@ -2558,6 +2662,8 @@ export default function AgentCommission() {
                 final
               />
             </div>
+
+            <FinalizedAdjustments rows={adjustmentsByRecord.get(historyModalRecord.id) || []} originalCash={historyModalRecord.final_payable_commission} />
 
             <div className={styles.modalFooter}>
               <button
