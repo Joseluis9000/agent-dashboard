@@ -14,6 +14,7 @@ const TABLE_DISQUALIFIED = 'disqualified_policies';
 const TABLE_COMMISSION_RECORDS = 'agent_commission_records';
 const TABLE_BALANCE_LEDGER = 'agent_commission_balance_ledger';
 const TABLE_GROSS_PAY_DRAFTS = 'commission_gross_pay_drafts';
+const TABLE_ADJUSTMENTS = 'agent_commission_adjustments';
 const TABLE_AGENT_COMMISSION_SETTINGS = 'agent_commission_settings';
 
 const BUSINESS_TIME_ZONE = 'America/Los_Angeles';
@@ -218,6 +219,31 @@ const hasPublishedDrift = (live, saved) => {
   );
 };
 
+// Compare earned commission before carried AR/SV. Today's ledger balance may
+// include later activity or settlements, so it cannot reconstruct an old payout.
+const commissionReconciliation = (live, saved, adjustments = []) => {
+  if (!saved) return null;
+  const cents = (value) => Math.round(numberOrZero(value) * 100);
+  const publishedBeforeBalance = saved.commission_before_balance ??
+    (numberOrZero(saved.final_payable_commission) + numberOrZero(saved.balance_applied));
+  const updatedBeforeBalance = Math.max(0, numberOrZero(
+    live.commissionBeforeBalance ?? live.finalPayableCommission
+  ));
+  const baselineCents = Math.max(cents(publishedBeforeBalance), ...adjustments.map((row) => cents(row.updated_commission_before_balance)));
+  const differenceCents = cents(updatedBeforeBalance) - cents(publishedBeforeBalance);
+  const pendingCents = cents(updatedBeforeBalance) - baselineCents;
+  return {
+    publishedBeforeBalance: cents(publishedBeforeBalance) / 100,
+    updatedBeforeBalance: cents(updatedBeforeBalance) / 100,
+    difference: differenceCents / 100,
+    baseline: baselineCents / 100,
+    previouslyFinalized: (baselineCents - cents(publishedBeforeBalance)) / 100,
+    pendingDifference: pendingCents / 100,
+    additionalCommission: Math.max(0, pendingCents) / 100,
+    reduction: Math.max(0, -pendingCents) / 100,
+  };
+};
+
 const paginate = (rows, page, size) => {
   const pages = Math.max(1, Math.ceil(rows.length / size));
   const current = Math.min(Math.max(page, 1), pages);
@@ -275,7 +301,110 @@ function Metric({ label, value, sub, tone = 'blue' }) {
   );
 }
 
-function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
+function AdjustmentControls({ bundle, onChanged, setupError }) {
+  const [review, setReview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [reason, setReason] = useState('');
+  const [payoutDate, setPayoutDate] = useState(businessDate());
+  const [references, setReferences] = useState({});
+  const record = bundle.publishedRecord;
+  const reviewAdjustment = async () => {
+    setBusy(true); setError(''); setReview(null);
+    try {
+      const { data, error: rpcError } = await supabase.rpc('get_commission_adjustment_context', { p_record_id: record.id });
+      if (rpcError) throw rpcError;
+      // Calculate from the fresh source snapshot returned with its fingerprint.
+      const calculated = calculateAgentCommission({
+        transactions: data.source.transactions, violations: data.source.violations,
+        disqualifiedPolicies: data.source.disqualified,
+        grossPay: numberOrZero(data.record.gross_pay),
+        isLicensedCaDoi: data.record.is_licensed_ca_doi !== false,
+        weekStart: data.record.week_start_date,
+      });
+      const reconciliation = commissionReconciliation(calculated, data.record, data.adjustments);
+      const applied = Math.min(reconciliation.additionalCommission, numberOrZero(data.eligible_balance));
+      setReview({ ...data, calculated, reconciliation, applied, cash: Math.round((reconciliation.additionalCommission - applied) * 100) / 100 });
+    } catch (e) { setError(e.message || 'Unable to review adjustment.'); }
+    finally { setBusy(false); }
+  };
+  const finalize = async () => {
+    if (!review || busy) return;
+    setBusy(true); setError('');
+    try {
+      const { data, error: rpcError } = await supabase.rpc('finalize_commission_adjustment', {
+        p_record_id: record.id,
+        p_updated_commission: review.reconciliation.updatedBeforeBalance,
+        p_expected_baseline: review.reconciliation.baseline,
+        p_source_token: review.source_token,
+        p_calculation_snapshot: { ...review.calculated, commissionBeforeBalance: review.reconciliation.updatedBeforeBalance },
+        p_reason: reason, p_payout_date: payoutDate,
+      });
+      if (rpcError) throw rpcError;
+      setReview(null);
+      await onChanged(`Adjustment ${data.already_finalized ? 'already finalized' : 'finalized'}: ${money(data.balance_applied)} applied to eligible AR / SV; ${money(data.cash_payable)} additional cash payable. Cash is not marked paid until payment is recorded.`);
+    } catch (e) { setError(e.message || 'Unable to finalize adjustment.'); setReview(null); }
+    finally { setBusy(false); }
+  };
+  const markPaid = async (adjustment) => {
+    setBusy(true); setError('');
+    try {
+      const { error: rpcError } = await supabase.rpc('mark_commission_adjustment_paid', {
+        p_adjustment_id: adjustment.id, p_payment_reference: references[adjustment.id] || '',
+      });
+      if (rpcError) throw rpcError;
+      await onChanged('Adjustment cash payment recorded.');
+    } catch (e) { setError(e.message || 'Unable to record payment.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className={styles.subPanel} aria-label="Finalize commission adjustment">
+      <h3>Finalize Adjustment</h3>
+      <p>Review a fresh calculation before finalizing. Only outstanding linked AR / SV assigned to {displayDate(record.week_start_date)} or an earlier commission week is eligible. Later weeks remain untouched.</p>
+      {setupError && <p role="alert">Adjustment setup is unavailable: {setupError}. Run commission_adjustments.sql before using these actions.</p>}
+      <button type="button" onClick={reviewAdjustment} disabled={busy || Boolean(setupError)}>
+        {busy ? 'Please wait...' : 'Review Adjustment'}
+      </button>
+      {error && <p role="alert">{error}</p>}
+      {review && (
+        <div>
+          <div className={styles.detailMetrics}>
+            <Metric label="Additional commission not yet finalized" value={money(review.reconciliation.additionalCommission)} />
+            <Metric label="Eligible same-week / earlier AR / SV" value={money(review.eligible_balance)} />
+            <Metric label="Apply to eligible ledger" value={money(review.applied)} />
+            <Metric label="Additional cash payable" value={money(review.cash)} tone="green" />
+          </div>
+          <p>Later-week balance excluded: {money(review.later_week_balance)}. Unlinked / unknown-week balance: {money(review.unlinked_balance)}.</p>
+          {review.reconciliation.pendingDifference <= 0 && <p>No positive adjustment remains. A decrease below previously finalized commission requires manual review.</p>}
+          {numberOrZero(review.unlinked_balance) > 0 && <p role="alert">Link the unknown-week ledger balance before finalizing.</p>}
+          <label>Reason <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Explain the source change" disabled={busy} /></label>
+          <label>Cash payout date <input type="date" value={payoutDate} onChange={(e) => setPayoutDate(e.target.value)} disabled={busy} /></label>
+          <p>Finalizing records the adjustment and immediately applies eligible ledger repayments. It schedules remaining cash; it does not send money.</p>
+          <button type="button" onClick={finalize} disabled={busy || review.reconciliation.additionalCommission <= 0 || numberOrZero(review.unlinked_balance) > 0 || reason.trim().length < 5 || !payoutDate}>Finalize Adjustment</button>
+        </div>
+      )}
+      <h3>Adjustment history</h3>
+      {bundle.adjustments.length === 0 ? <p>No finalized adjustments.</p> : bundle.adjustments.map((a) => (
+        <div key={a.id} className={styles.subPanel}>
+          <strong>{money(a.additional_commission)} finalized {displayDateTime(a.finalized_at)}</strong>
+          <p>{money(a.balance_applied)} applied to AR / SV · {money(a.cash_payable)} cash · Payout {displayDate(a.payout_date)}</p>
+          <p>{a.reason} · By {a.finalized_by}</p>
+          <Badge tone={a.payment_status === 'pending' ? 'amber' : 'green'}>{a.payment_status === 'no_cash' ? 'Settled to ledger — no cash' : a.payment_status === 'paid' ? 'Cash paid' : 'Cash pending payment'}</Badge>
+          {a.payment_status === 'paid' && <p>{a.payment_reference} · {displayDateTime(a.paid_at)} · {a.paid_by}</p>}
+          {a.payment_status === 'pending' && (
+            <div>
+              <label>Payroll / payment reference <input value={references[a.id] || ''} onChange={(e) => setReferences((old) => ({ ...old, [a.id]: e.target.value }))} disabled={busy} /></label>
+              <button type="button" disabled={busy || (references[a.id] || '').trim().length < 3} onClick={() => markPaid(a)}>Mark Paid</button>
+              <small>Use only after the cash payment has actually been made.</small>
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function AgentDetail({ bundle, publishedRecord, balance, weekStart, onAdjustmentChanged, adjustmentSetupError }) {
   if (!bundle) {
     return (
       <section className={styles.panel}>
@@ -285,6 +414,20 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
   }
 
   const { agent, liveResult, displayResult, transactions, violations, disqualified } = bundle;
+  const reconciliation = commissionReconciliation(liveResult, publishedRecord, bundle.adjustments);
+  const sourceChanged = Boolean(publishedRecord) && (
+    hasPublishedDrift(liveResult, publishedRecord) || reconciliation.difference !== 0
+  );
+  const comparisonRows = [
+    ['Gross revenue', money(displayResult.grossRevenue), money(liveResult.grossRevenue)],
+    ['Net revenue', money(displayResult.netRevenue), money(liveResult.netRevenue)],
+    ['Net NB', displayResult.netNbCount, liveResult.netNbCount],
+    ['Disqualified NB', displayResult.disqualifiedNbCount, liveResult.disqualifiedNbCount],
+    ['Tier / rate', `${displayResult.tierName} / ${percent(displayResult.commissionRate)}`, `${liveResult.tierName} / ${percent(liveResult.commissionRate)}`],
+    ['Base commission', money(displayResult.basePayout), money(liveResult.basePayout)],
+    ['Violation deductions', money(displayResult.totalDeductions), money(liveResult.totalDeductions)],
+    ['Commission before carried AR / SV', money(reconciliation?.publishedBeforeBalance), money(reconciliation?.updatedBeforeBalance)],
+  ];
   const activeViolations = violations.filter((row) => !['VOID', 'VOIDED'].includes(upper(row.status)));
   const activeDisqualified = disqualified.filter((row) => !['VOID', 'VOIDED', 'CLEARED', 'RESOLVED', 'REMOVED', 'REINSTATED', 'CLOSED'].includes(upper(row.status)));
   const feeRows = [
@@ -312,7 +455,7 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
         </div>
       </header>
 
-      {publishedRecord && hasPublishedDrift(liveResult, publishedRecord) && (
+      {sourceChanged && (
         <div className={styles.warningBox}>
           <strong>Source data changed after this commission was published.</strong>
           <p>
@@ -328,6 +471,55 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
         <Metric label="Gross revenue" value={money(displayResult.grossRevenue)} />
         <Metric label="Current AR / SV balance" value={balance == null ? '—' : money(balance)} sub={displayResult.balanceApplied > 0 ? `${money(displayResult.balanceApplied)} will be / was applied` : 'No balance application'} tone="amber" />
       </div>
+
+      {reconciliation && (
+        <section className={styles.subPanel} aria-label="Published commission reconciliation">
+          <div className={styles.subHeader}>
+            <div>
+              <h3>Published vs. updated commission</h3>
+              <p>The original publication remains unchanged. Updated values use current source data with the published gross pay and licensing.</p>
+            </div>
+            <Badge tone={reconciliation.pendingDifference !== 0 ? 'amber' : 'green'}>
+              {reconciliation.pendingDifference !== 0 ? 'Adjustment review required' : 'No unfinalized commission difference'}
+            </Badge>
+          </div>
+          <div className={styles.detailMetrics}>
+            <Metric label="Original published cash payable" value={money(displayResult.finalPayableCommission)} sub="Saved publication" />
+            <Metric label="Original commission before carried AR / SV" value={money(reconciliation.publishedBeforeBalance)} />
+            <Metric label="Updated commission before carried AR / SV" value={money(reconciliation.updatedBeforeBalance)} />
+            <Metric
+              label={reconciliation.reduction > 0 ? 'Commission decrease — review required' : 'Additional commission — pending review'}
+              value={money(reconciliation.reduction || reconciliation.additionalCommission)}
+              sub={`${money(reconciliation.previouslyFinalized)} already finalized separately`}
+              tone={reconciliation.pendingDifference !== 0 ? 'amber' : 'green'}
+            />
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse' }}>
+              <caption>Comparison for {weekLabel(weekStart)}</caption>
+              <thead><tr><th scope="col">Calculation</th><th scope="col">Originally published</th><th scope="col">Updated source</th></tr></thead>
+              <tbody>
+                {comparisonRows.map(([label, original, updated]) => (
+                  <tr key={label}>
+                    <th scope="row" style={{ padding: '8px 0' }}>{label}</th>
+                    <td>{original}</td><td>{updated}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The comparison preserves the original publication. The pending amount subtracts
+            all adjustments already finalized through this page, including ledger repayments and cash awaiting payment.
+            Payments made outside this adjustment history require separate review.
+            Current source changes may include more than cleared disqualifications.
+          </p>
+        </section>
+      )}
+
+      {publishedRecord && (
+        <AdjustmentControls key={publishedRecord.id} bundle={bundle} onChanged={onAdjustmentChanged} setupError={adjustmentSetupError} />
+      )}
 
       <div className={styles.detailGrid}>
         <section className={styles.subPanel}>
@@ -367,7 +559,8 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
       </div>
 
       <section className={styles.subPanel}>
-        <h3>Commissionable revenue breakdown</h3>
+        <h3>Current source revenue breakdown</h3>
+        {publishedRecord && <p>Live source values; these may differ from the original publication above.</p>}
         <div className={styles.feeGrid}>
           {feeRows.map(([category, revenue, count]) => (
             <Metric key={category} label={category} value={money(revenue)} sub={`${count} active item${count === 1 ? '' : 's'}`} />
@@ -378,7 +571,7 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
       <div className={styles.detailGrid}>
         <section className={styles.subPanel}>
           <div className={styles.subHeader}>
-            <div><h3>Violations & charges</h3><p>Assigned to this commission week.</p></div>
+            <div><h3>Violations & charges</h3><p>Current source records assigned to this commission week.</p></div>
             <Badge tone={activeViolations.length ? 'amber' : 'green'}>{activeViolations.length}</Badge>
           </div>
           <div className={styles.compactList}>
@@ -397,7 +590,7 @@ function AgentDetail({ bundle, publishedRecord, balance, weekStart }) {
 
         <section className={styles.subPanel}>
           <div className={styles.subHeader}>
-            <div><h3>Disqualified policies</h3><p>Verified production exclusions for this week.</p></div>
+            <div><h3>Disqualified policies</h3><p>Current active exclusions for this week; published counts remain unchanged above.</p></div>
             <Badge tone={activeDisqualified.length ? 'purple' : 'green'}>{activeDisqualified.length}</Badge>
           </div>
           <div className={styles.compactList}>
@@ -465,6 +658,9 @@ export default function AdminTaxWip() {
   const [disqualified, setDisqualified] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [publishedRecords, setPublishedRecords] = useState([]);
+  const [adjustments, setAdjustments] = useState([]);
+  const [adjustmentSetupError, setAdjustmentSetupError] = useState('');
+  const [adjustmentNotice, setAdjustmentNotice] = useState('');
   const [balanceLedger, setBalanceLedger] = useState([]);
   const [grossPayDrafts, setGrossPayDrafts] = useState([]);
   const [agentCommissionSettings, setAgentCommissionSettings] = useState([]);
@@ -502,7 +698,7 @@ export default function AdminTaxWip() {
     setLoadingText('Loading production, violations, policies and published records...');
 
     try {
-      const [tx, vio, dp, published, allProfiles, ledger, drafts, commissionSettings] = await Promise.all([
+      const [tx, vio, dp, published, allProfiles, ledger, drafts, commissionSettings, adjustmentResult] = await Promise.all([
         fetchAll(() =>
           supabase
             .from(TABLE_TRANSFERS)
@@ -562,8 +758,14 @@ export default function AdminTaxWip() {
             .select('agent_email,is_licensed_ca_doi,license_status_notes,updated_at,updated_by')
             .order('agent_email', { ascending: true })
         ),
+        fetchAll(() => supabase.from(TABLE_ADJUSTMENTS).select('*')
+          .eq('week_start_date', weekStart).order('finalized_at', { ascending: true }))
+          .then((rows) => ({ rows, error: '' }))
+          .catch((e) => ({ rows: [], error: e.message || 'Adjustment history could not be loaded' })),
       ]);
 
+      setAdjustments(adjustmentResult.rows);
+      setAdjustmentSetupError(adjustmentResult.error);
       setTransactions(tx);
       setViolations(vio);
       setDisqualified(dp);
@@ -621,6 +823,8 @@ export default function AdminTaxWip() {
       setViolations([]);
       setDisqualified([]);
       setPublishedRecords([]);
+      setAdjustments([]);
+      setAdjustmentSetupError('Adjustment data could not be loaded');
       setProfiles([]);
       setBalanceLedger([]);
       setGrossPayDrafts([]);
@@ -866,6 +1070,9 @@ export default function AdminTaxWip() {
         ? resultFromPublished(liveResult, publishedRecord, weekStart)
         : draftResult;
 
+      const agentAdjustments = adjustments.filter((a) => a.commission_record_id === publishedRecord?.id);
+      const reconciliation = commissionReconciliation(liveResult, publishedRecord, agentAdjustments);
+
       const offices = [...new Set(
         agentTransactions.map((row) => normalizeOffice(row.office)).filter(Boolean)
       )].sort();
@@ -889,6 +1096,8 @@ export default function AdminTaxWip() {
         publishedRecord,
         liveResult,
         displayResult,
+        reconciliation,
+        adjustments: agentAdjustments,
         grossPayReady,
         balance: currentBalance,
         linkedBalance,
@@ -896,11 +1105,13 @@ export default function AdminTaxWip() {
         weeklyViolationLedgerApplied,
         carriedBalanceAfterWeekly,
         autoBalanceReady: currentBalance <= linkedBalance + 0.009,
-        drift: hasPublishedDrift(liveResult, publishedRecord),
+        drift: hasPublishedDrift(liveResult, publishedRecord) ||
+          Boolean(reconciliation?.difference),
       };
     });
   }, [
     agentEmails,
+    adjustments,
     profileMap,
     txByAgent,
     violationsByAgent,
@@ -1338,6 +1549,15 @@ export default function AdminTaxWip() {
         buildMissedBy(result),
         row.publishedRecord?.published_at || '',
         row.publishedRecord?.published_by || '',
+        row.reconciliation?.publishedBeforeBalance ?? '',
+        row.reconciliation?.updatedBeforeBalance ?? '',
+        row.reconciliation?.difference ?? '',
+        row.reconciliation?.pendingDifference ? 'Review required' : '',
+        row.reconciliation?.previouslyFinalized ?? '',
+        row.reconciliation?.additionalCommission ?? '',
+        row.adjustments.reduce((sum, a) => sum + numberOrZero(a.balance_applied), 0),
+        row.adjustments.reduce((sum, a) => sum + numberOrZero(a.cash_payable), 0),
+        row.adjustments.filter((a) => a.payment_status === 'pending').reduce((sum, a) => sum + numberOrZero(a.cash_payable), 0),
       ];
     });
 
@@ -1349,6 +1569,10 @@ export default function AdminTaxWip() {
       'Final Payable Commission', 'Violation Count', 'Disqualified Count',
       'Current AR/SV Balance', 'License Status', 'Status', 'Qualification / Next Tier',
       'Published At', 'Published By',
+      'Original Commission Before Carried AR/SV', 'Updated Commission Before Carried AR/SV',
+      'Commission Difference Before Carried AR/SV', 'Adjustment Review',
+      'Adjustments Already Finalized', 'Additional Commission Not Yet Finalized',
+      'Adjustment Ledger Repayments', 'Adjustment Cash Payable', 'Adjustment Cash Still Pending Payment',
     ];
 
     const csvCell = (value) => {
@@ -1933,6 +2157,11 @@ export default function AdminTaxWip() {
                     <td className={styles.payableCell}>
                       <strong>{money(result.finalPayableCommission)}</strong>
                       <small>{published ? `${money(result.balanceApplied || 0)} balance applied` : `${money(result.balanceApplied || 0)} projected to balance`}</small>
+                      {row.reconciliation && row.reconciliation.pendingDifference !== 0 && (
+                        <small>
+                          {row.reconciliation.pendingDifference > 0 ? 'Additional commission' : 'Commission decrease'}: {money(Math.abs(row.reconciliation.pendingDifference))} · review required (before carried AR / SV)
+                        </small>
+                      )}
                     </td>
 
                     <td>
@@ -1967,11 +2196,17 @@ export default function AdminTaxWip() {
         <Pager info={pageInfo} onPage={setPage} />
       </section>
 
+      {adjustmentNotice && <p role="status" className={styles.warningBox}>{adjustmentNotice}</p>}
       <AgentDetail
         bundle={selectedBundle}
         publishedRecord={selectedBundle?.publishedRecord}
         balance={selectedBundle?.balance}
         weekStart={weekStart}
+        adjustmentSetupError={adjustmentSetupError}
+        onAdjustmentChanged={async (message) => {
+          await loadWeeklyData();
+          setAdjustmentNotice(message);
+        }}
       />
 
         </>

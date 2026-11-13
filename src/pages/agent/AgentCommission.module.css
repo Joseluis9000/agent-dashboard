@@ -2600,3 +2600,17 @@
     width: 100%;
   }
 }
+
+
+/* Finalized adjustments remain separate from the original publication. */
+.adjustmentCard { border-top: 3px solid #15803d; }
+.adjustmentMetrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.adjustmentEntry { border: 1px solid #dbe4ee; border-radius: 12px; padding: 16px; margin-top: 12px; overflow-wrap: anywhere; }
+.adjustmentEntryHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.adjustmentEntry p { color: #526174; font-size: 13px; line-height: 1.5; }
+.adjustmentFacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; }
+.adjustmentFacts dt { color: #526174; font-size: 12px; }
+.adjustmentFacts dd { margin: 4px 0 0; font-weight: 700; }
+.adjustmentHistoryCell small { display: block; margin-top: 4px; }
+@media (max-width: 900px) { .adjustmentMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .adjustmentMetrics, .adjustmentFacts { grid-template-columns: 1fr; } }
